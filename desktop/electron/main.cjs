@@ -15,29 +15,37 @@ const BACKEND_DIR = path.join(__dirname, "..", "..", "backend");
 let backendProc = null;
 let mainWindow = null;
 
-function pythonBin() {
-  // Dev: backend virtualenv. Packaging (PyInstaller binary) comes later.
-  const venv = path.join(BACKEND_DIR, ".venv", "bin", "python");
-  return venv;
-}
-
-function startBackend() {
+function backendCommand() {
+  // Packaged: run the PyInstaller-bundled binary from resources.
+  // Dev: run uvicorn from the backend virtualenv.
   const env = {
     ...process.env,
+    HOST: "127.0.0.1",
+    PORT: String(API_PORT),
     LOCAL_API_TOKEN: API_TOKEN,
     DB_PATH: path.join(app.getPath("userData"), "chart_volume.db"),
   };
-  backendProc = spawn(
-    pythonBin(),
-    ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(API_PORT)],
-    { cwd: BACKEND_DIR, env }
-  );
+  if (app.isPackaged) {
+    const bin = path.join(process.resourcesPath, "backend", "chart-volume-backend");
+    return { cmd: bin, args: [], options: { env } };
+  }
+  const py = path.join(BACKEND_DIR, ".venv", "bin", "python");
+  return {
+    cmd: py,
+    args: ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(API_PORT)],
+    options: { cwd: BACKEND_DIR, env },
+  };
+}
+
+function startBackend() {
+  const { cmd, args, options } = backendCommand();
+  backendProc = spawn(cmd, args, options);
   backendProc.stdout.on("data", (d) => console.log("[backend]", d.toString().trim()));
   backendProc.stderr.on("data", (d) => console.error("[backend]", d.toString().trim()));
   backendProc.on("exit", (code) => console.log("[backend] exited", code));
 }
 
-function waitForHealth(onReady, attempts = 60) {
+function waitForHealth(onReady, attempts = 120) {
   const tick = (left) => {
     const req = http.get(`${API_BASE}/health`, (res) => {
       res.resume();

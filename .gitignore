@@ -6,10 +6,18 @@ __pycache__/
 .env
 .pytest_cache/
 
+# PyInstaller / build artifacts (machine-generated)
+backend/build/
+backend/dist/
+backend/*.spec
+backend/mpl_cache/
+backend/mpl-cache/
+
 # Node / desktop
 desktop/node_modules/
 desktop/dist/
 desktop/.env
+desktop/release/
 
 # OS
 .DS_Store

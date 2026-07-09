@@ -2,6 +2,7 @@
   "name": "chart-volume-desktop",
   "version": "0.1.0",
   "description": "Electron + React UI for Chart-Volume Wyckoff analysis",
+  "author": "Son Ngo",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
@@ -10,7 +11,34 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
-    "electron": "electron ."
+    "electron": "electron .",
+    "dist": "npm run build && electron-builder"
+  },
+  "build": {
+    "appId": "com.dinhson.chartvolume",
+    "productName": "Chart-Volume",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend/dist/chart-volume-backend",
+        "to": "backend"
+      }
+    ],
+    "mac": {
+      "target": [
+        "dir",
+        "dmg"
+      ],
+      "category": "public.app-category.finance",
+      "identity": null
+    }
   },
   "dependencies": {
     "lightweight-charts": "^4.2.3",
@@ -24,6 +52,7 @@
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
     "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
     "wait-on": "^8.0.1"

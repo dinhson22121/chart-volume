@@ -50,11 +50,36 @@ Lệnh khác: `npm run typecheck`, `npm run build` (đóng gói renderer), `npm 
 
 Scheduler tự crawl + phân tích VN30 + watchlist sau phiên sáng (~11:35), phiên chiều (~15:05) và sau close (~15:15).
 
+## Đóng gói app độc lập (.app / .dmg)
+
+Backend Python được đóng bằng **PyInstaller** (onedir) rồi nhúng vào app Electron qua **electron-builder** — user cài xong chạy được ngay, không cần Python/Node.
+
+```bash
+# 1) Bundle backend (ra backend/dist/chart-volume-backend/)
+cd backend
+.venv/bin/pip install pyinstaller
+cp ~/.matplotlib/fontlist-*.json mpl_cache/    # seed font cache -> khởi động nhanh
+.venv/bin/pyinstaller run_server.py --name chart-volume-backend --onedir --noconfirm --clean \
+  --collect-all vnstock --collect-submodules uvicorn --collect-submodules app \
+  --collect-submodules apscheduler --collect-submodules anthropic \
+  --add-data "mpl_cache:mpl_cache" \
+  --exclude-module tkinter --exclude-module PyQt5 --exclude-module PyQt6
+
+# 2) Đóng gói Electron (ra desktop/release/)
+cd ../desktop
+npm run dist            # -> release/mac/Chart-Volume.app + release/Chart-Volume-0.1.0.dmg
+```
+
+Chi tiết kỹ thuật:
+- `run_server.py` ép `MPLCONFIGDIR` sang thư mục ghi được cạnh DB và pre-seed font cache (vnstock kéo matplotlib) → cold start ~8–13s thay vì ~90s.
+- Prod: `electron/main.cjs` spawn binary `Resources/backend/chart-volume-backend`; dev: spawn uvicorn từ venv.
+- App **chưa ký (unsigned)** → lần đầu mở phải chuột phải → Open (hoặc `xattr -dr com.apple.quarantine Chart-Volume.app`).
+- Muốn có nhận định AI trong bản đóng gói: đặt `ANTHROPIC_API_KEY` trong môi trường trước khi mở app (Electron truyền env xuống backend). *(Settings UI cho key là việc về sau.)*
+
 ## Lưu ý
 - **vnstock là API không chính thức** → mọi call có retry + fail mềm; danh sách VN30 fallback về seed tĩnh khi endpoint lỗi (cập nhật thủ công theo quý).
 - Phân tích Wyckoff là **heuristic**, luôn kèm disclaimer — **không phải khuyến nghị đầu tư**.
 - Chi phí Claude giới hạn bằng cache theo `as_of` (chỉ gọi lại khi có nến mới).
-- Đóng gói (PyInstaller + electron-builder) **chưa làm** — ngoài phạm vi MVP.
 
 ## Cấu trúc
 - `backend/app/{crawler,wyckoff,ai,services,api}` — crawl, rule engine, narrative, ingest/analysis, REST.

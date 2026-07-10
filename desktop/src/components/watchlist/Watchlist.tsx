@@ -1,6 +1,9 @@
 import { useMemo, useState, type FormEvent } from "react";
 import type { SymbolItem } from "../../types";
+import { CryptoDiscovery } from "./CryptoDiscovery";
 import "./watchlist.css";
+
+export type WatchlistTab = "vn30" | "crypto";
 
 interface Props {
   symbols: SymbolItem[];
@@ -9,10 +12,24 @@ interface Props {
   onAdd: (ticker: string) => void;
   onRemove: (ticker: string) => void;
   onSeedVn30: () => void;
+  onCryptoPromoted: (ticker: string) => void;
+  activeTab: WatchlistTab;
+  onTabChange: (tab: WatchlistTab) => void;
   busy: boolean;
 }
 
-export function Watchlist({ symbols, selected, onSelect, onAdd, onRemove, onSeedVn30, busy }: Props) {
+export function Watchlist({
+  symbols,
+  selected,
+  onSelect,
+  onAdd,
+  onRemove,
+  onSeedVn30,
+  onCryptoPromoted,
+  activeTab,
+  onTabChange,
+  busy,
+}: Props) {
   const [input, setInput] = useState("");
 
   const { vn30, watchlist } = useMemo(() => {
@@ -32,26 +49,53 @@ export function Watchlist({ symbols, selected, onSelect, onAdd, onRemove, onSeed
     }
   };
 
-  const renderRow = (s: SymbolItem, removable: boolean) => (
+  const renderRow = (s: SymbolItem, removable: boolean, card = false) => (
     <li key={s.ticker}>
       <button
-        className={`wl-row ${selected === s.ticker ? "is-selected" : ""}`}
+        className={`${card ? "wl-crypto-card wl-row-card" : "wl-row"} ${
+          selected === s.ticker ? "is-selected" : ""
+        }`}
         onClick={() => onSelect(s.ticker)}
       >
-        <span className="wl-row__ticker mono">{s.ticker}</span>
-        {s.name && <span className="wl-row__name faint">{s.name}</span>}
-        {removable && (
-          <span
-            className="wl-row__remove"
-            role="button"
-            aria-label={`Bỏ ${s.ticker}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove(s.ticker);
-            }}
-          >
-            ×
-          </span>
+        {card ? (
+          <>
+            <div className="wl-crypto-card__row1">
+              <span className="wl-row__ticker mono">{s.ticker}</span>
+              {removable && (
+                <span
+                  className="wl-row__remove"
+                  role="button"
+                  aria-label={`Bỏ ${s.ticker}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemove(s.ticker);
+                  }}
+                >
+                  ×
+                </span>
+              )}
+            </div>
+            {s.name && <div className="wl-crypto-card__row2 faint">{s.name}</div>}
+          </>
+        ) : (
+          <>
+            <span className="wl-row__ticker mono">{s.ticker}</span>
+            {s.asset_class === "crypto" && <span title="Crypto">🪙</span>}
+            {s.name && <span className="wl-row__name faint">{s.name}</span>}
+            {removable && (
+              <span
+                className="wl-row__remove"
+                role="button"
+                aria-label={`Bỏ ${s.ticker}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemove(s.ticker);
+                }}
+              >
+                ×
+              </span>
+            )}
+          </>
         )}
       </button>
     </li>
@@ -81,18 +125,34 @@ export function Watchlist({ symbols, selected, onSelect, onAdd, onRemove, onSeed
         )}
 
         <section className="wl-group">
-          <div className="wl-group__head">
-            <h3 className="wl-group__title">VN30</h3>
-            {vn30.length === 0 && (
-              <button className="wl-seed" onClick={onSeedVn30} disabled={busy}>
-                Tải VN30
-              </button>
-            )}
+          <div className="wl-tabs">
+            <button
+              className={activeTab === "vn30" ? "is-active" : ""}
+              onClick={() => onTabChange("vn30")}
+            >
+              VN30
+            </button>
+            <button
+              className={activeTab === "crypto" ? "is-active" : ""}
+              onClick={() => onTabChange("crypto")}
+            >
+              Crypto mới
+            </button>
           </div>
-          {vn30.length === 0 ? (
-            <p className="wl-empty faint">Chưa có dữ liệu VN30.</p>
+
+          {activeTab === "vn30" ? (
+            vn30.length === 0 ? (
+              <div className="wl-accordion__body">
+                <p className="wl-empty faint">Chưa có dữ liệu VN30.</p>
+                <button className="wl-seed" onClick={onSeedVn30} disabled={busy}>
+                  Tải VN30
+                </button>
+              </div>
+            ) : (
+              <ul className="wl-list--scroll wl-list--cards">{vn30.map((s) => renderRow(s, false, true))}</ul>
+            )
           ) : (
-            <ul>{vn30.map((s) => renderRow(s, false))}</ul>
+            <CryptoDiscovery onPromoted={onCryptoPromoted} />
           )}
         </section>
       </div>

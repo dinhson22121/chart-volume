@@ -8,6 +8,8 @@ import os
 os.environ.setdefault("LOCAL_API_TOKEN", "test-token")
 os.environ.setdefault("DB_PATH", "test_chart_volume.db")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
+# Fixed key so app.crypto never writes a settings.key file during test runs.
+os.environ.setdefault("SETTINGS_KEY", "0" * 64)
 
 import pytest
 from sqlalchemy.pool import StaticPool

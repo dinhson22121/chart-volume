@@ -1,22 +1,29 @@
+import types
+
 import pandas as pd
+from sqlmodel import select
 
 from app.ai.narrative import DISCLAIMER
-from app.models import Analysis, Candle, Timeframe
+from app.models import Analysis, Candle, SignalOutcome, Timeframe
 from app.services import analysis as analysis_svc
+from app.services import settings_service
+from app.strategies import registry as strategy_registry
+from app.wyckoff import AnalysisResult, Levels
 
 BASE = dict(open=100.0, high=101.0, low=99.0, close=100.0, volume=1000.0)
 SPRING_BAR = dict(open=98.0, high=99.8, low=97.0, close=99.3, volume=1500.0)
+SOS_BAR = dict(open=101.2, high=103.0, low=101.0, close=102.8, volume=1800.0)
 
 CANNED = "NHẬN ĐỊNH:\nCổ phiếu đang trong giai đoạn tích lũy.\n\nLỜI KHUYÊN:\n- Theo dõi vùng hỗ trợ."
 
 
-def _seed_candles(session, bars):
+def _seed_candles(session, bars, timeframe=Timeframe.DAILY, ticker="FPT"):
     t0 = pd.Timestamp("2025-01-01")
     for i, b in enumerate(bars):
         session.add(
             Candle(
-                ticker="FPT",
-                timeframe=Timeframe.DAILY,
+                ticker=ticker,
+                timeframe=timeframe,
                 bucket_start=(t0 + pd.Timedelta(days=i)).to_pydatetime(),
                 **b,
             )
@@ -44,7 +51,7 @@ def test_run_analysis_caches_and_skips_llm(session, mocker):
     analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY)  # same as_of -> cached
 
     assert spy.call_count == 1
-    assert len(session.exec(__import__("sqlmodel").select(Analysis)).all()) == 1
+    assert len(session.exec(select(Analysis)).all()) == 1
 
 
 def test_force_reruns_llm(session, mocker):
@@ -69,3 +76,117 @@ def test_use_ai_false_stores_without_narrative(session, mocker):
 
 def test_no_candles_returns_none(session):
     assert analysis_svc.run_analysis(session, "NOPE", Timeframe.DAILY) is None
+
+
+# --- Multi-timeframe context: half_session analysis reads the latest daily phase ---
+
+def test_half_session_uses_daily_trend_context(session, mocker):
+    mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
+    _seed_candles(session, [dict(BASE) for _ in range(25)] + [SOS_BAR], timeframe=Timeframe.DAILY)
+    analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY)  # -> Markup (bullish)
+
+    _seed_candles(session, [dict(BASE) for _ in range(25)] + [SOS_BAR], timeframe=Timeframe.HALF_SESSION)
+    half = analysis_svc.run_analysis(session, "FPT", Timeframe.HALF_SESSION)
+
+    assert half.daily_trend == "bullish"
+    assert half.mtf_alignment == "aligned"
+
+
+def test_half_session_without_daily_analysis_has_no_context(session, mocker):
+    mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
+    _seed_candles(session, [dict(BASE) for _ in range(25)] + [SOS_BAR], timeframe=Timeframe.HALF_SESSION)
+
+    half = analysis_svc.run_analysis(session, "FPT", Timeframe.HALF_SESSION)
+
+    assert half.daily_trend is None
+    assert half.mtf_alignment is None
+
+
+def test_daily_analysis_never_gets_mtf_context(session, mocker):
+    mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
+    _seed_candles(session, [dict(BASE) for _ in range(25)] + [SOS_BAR], timeframe=Timeframe.DAILY)
+
+    daily = analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY)
+
+    assert daily.daily_trend is None
+    assert daily.mtf_alignment is None
+
+
+# --- Signal outcomes: forward-return bookkeeping runs as a side effect of analysis ---
+
+def test_run_analysis_records_signal_outcomes(session, mocker):
+    mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
+    _seed_candles(session, [dict(BASE) for _ in range(25)] + [SPRING_BAR] + [dict(BASE) for _ in range(20)])
+
+    analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY)
+
+    outcomes = session.exec(select(SignalOutcome).where(SignalOutcome.event_type == "Spring")).all()
+    assert len(outcomes) == 1
+    assert outcomes[0].return_20 is not None  # 20 bars of flat data followed the Spring
+
+
+def test_signal_outcomes_backfill_as_more_candles_arrive(session, mocker):
+    mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
+    _seed_candles(session, [dict(BASE) for _ in range(25)] + [SPRING_BAR])
+
+    analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY)
+    outcome = session.exec(select(SignalOutcome).where(SignalOutcome.event_type == "Spring")).first()
+    assert outcome.return_5 is None  # Spring is the last bar -> no future bars yet
+    assert outcome.return_20 is None
+
+    t0 = pd.Timestamp("2025-01-01")
+    for i in range(26, 46):
+        session.add(
+            Candle(
+                ticker="FPT",
+                timeframe=Timeframe.DAILY,
+                bucket_start=(t0 + pd.Timedelta(days=i)).to_pydatetime(),
+                **BASE,
+            )
+        )
+    session.commit()
+
+    analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY)  # as_of moved -> fresh run
+
+    outcome = session.exec(select(SignalOutcome).where(SignalOutcome.event_type == "Spring")).first()
+    assert outcome.return_5 is not None
+    assert outcome.return_20 is not None
+
+
+# --- Strategy switching must not mix results across strategies ---
+
+def _fake_analyze(candles, cfg, daily_trend=None):
+    return AnalysisResult(
+        phase="FakePhase",
+        confidence=0.99,
+        events=[],
+        levels=Levels(support=0.0, resistance=0.0),
+        as_of=candles[-1].bucket_start,
+    )
+
+
+def test_switching_strategy_creates_a_separate_analysis_row(session, mocker):
+    mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
+    _seed_candles(session, [dict(BASE) for _ in range(25)] + [SPRING_BAR])
+
+    wyckoff_result = analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY)
+    assert wyckoff_result.strategy == "wyckoff"
+    assert wyckoff_result.phase == "Accumulation"
+
+    fake_strategy = types.SimpleNamespace(analyze=_fake_analyze, BULLISH_EVENTS=set())
+    mocker.patch.dict(strategy_registry.REGISTRY, {"fake-strategy": fake_strategy})
+    settings_service.update(session, {"strategy": "fake-strategy"})
+
+    fake_result = analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY)
+    assert fake_result.strategy == "fake-strategy"
+    assert fake_result.phase == "FakePhase"
+
+    # Same ticker/timeframe/as_of, different strategy -> two independent rows,
+    # neither overwrote the other.
+    rows = session.exec(
+        select(Analysis).where(Analysis.ticker == "FPT", Analysis.timeframe == Timeframe.DAILY)
+    ).all()
+    assert len(rows) == 2
+    assert {r.strategy for r in rows} == {"wyckoff", "fake-strategy"}
+    wyckoff_row = next(r for r in rows if r.strategy == "wyckoff")
+    assert wyckoff_row.phase == "Accumulation"  # untouched by the fake-strategy run

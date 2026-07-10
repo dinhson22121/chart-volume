@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createChart,
   ColorType,
@@ -11,8 +11,9 @@ import {
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
-import type { Analysis, Candle } from "../../types";
-import { signalIsBullish } from "../../lib/wyckoff";
+import { api } from "../../api/client";
+import type { Analysis, Candle, IndicatorSeries } from "../../types";
+import { signalIsBullish, signalIsEntry } from "../../lib/wyckoff";
 import "./chart.css";
 
 const COLORS = {
@@ -26,6 +27,9 @@ const COLORS = {
   bear: "#e0574b",
   grid: "rgba(255,255,255,0.05)",
   text: "#a9b2c0",
+  dragon: "#9575cd",
+  t3Fast: "#4fc3f7",
+  t3Slow: "#ffb74d",
 };
 
 function toTime(iso: string): UTCTimestamp {
@@ -35,14 +39,25 @@ function toTime(iso: string): UTCTimestamp {
 interface Props {
   candles: Candle[];
   analysis: Analysis | null;
+  onBarClick?: (bucketStartIso: string) => void;
 }
 
-export function CandleChart({ candles, analysis }: Props) {
+export function CandleChart({ candles, analysis, onBarClick }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const dragonSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const t3FastSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const t3SlowSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
+  const [indicators, setIndicators] = useState<IndicatorSeries | null>(null);
+  // Click handling is wired once at chart creation; keep the latest candles
+  // and callback in refs so that closure isn't stale across re-renders.
+  const candlesRef = useRef<Candle[]>(candles);
+  const onBarClickRef = useRef(onBarClick);
+  candlesRef.current = candles;
+  onBarClickRef.current = onBarClick;
 
   // Create the chart once.
   useEffect(() => {
@@ -79,18 +94,78 @@ export function CandleChart({ candles, analysis }: Props) {
       scaleMargins: { top: 0.82, bottom: 0 },
     });
 
+    // Sonic R overlay lines -- empty until analysis.strategy === "sonicr" data
+    // arrives (see the fetch effect below), harmless no-op otherwise.
+    const dragonSeries = chart.addLineSeries({
+      color: COLORS.dragon,
+      lineWidth: 2,
+      title: "Dragon",
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    const t3FastSeries = chart.addLineSeries({
+      color: COLORS.t3Fast,
+      lineWidth: 1,
+      title: "T3 fast",
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    const t3SlowSeries = chart.addLineSeries({
+      color: COLORS.t3Slow,
+      lineWidth: 1,
+      title: "T3 slow",
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
+    dragonSeriesRef.current = dragonSeries;
+    t3FastSeriesRef.current = t3FastSeries;
+    t3SlowSeriesRef.current = t3SlowSeries;
+
+    const handleClick = (param: { time?: Time }) => {
+      if (!param.time || !onBarClickRef.current) return;
+      const match = candlesRef.current.find((c) => toTime(c.bucket_start) === param.time);
+      if (match) onBarClickRef.current(match.bucket_start);
+    };
+    chart.subscribeClick(handleClick);
 
     return () => {
+      chart.unsubscribeClick(handleClick);
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
+      dragonSeriesRef.current = null;
+      t3FastSeriesRef.current = null;
+      t3SlowSeriesRef.current = null;
       priceLinesRef.current = [];
     };
   }, []);
+
+  // Fetch Sonic R's Dragon/T3 series whenever the active analysis is Sonic R.
+  // Self-contained (like TracePanel) rather than threaded through App.tsx,
+  // since it's purely a chart-presentation concern keyed off ticker/timeframe.
+  useEffect(() => {
+    if (analysis?.strategy !== "sonicr") {
+      setIndicators(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .getIndicators(analysis.ticker, analysis.timeframe)
+      .then((data) => {
+        if (!cancelled) setIndicators(data);
+      })
+      .catch(() => {
+        if (!cancelled) setIndicators(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [analysis?.strategy, analysis?.ticker, analysis?.timeframe]);
 
   // Update data, markers and support/resistance lines.
   useEffect(() => {
@@ -119,17 +194,20 @@ export function CandleChart({ candles, analysis }: Props) {
     priceLinesRef.current.forEach((line) => candleSeries.removePriceLine(line));
     priceLinesRef.current = [];
 
-    // Markers for detected Wyckoff events.
+    // Markers for detected Wyckoff events. LPS/LPSY are confirmed entry points
+    // (a pullback re-testing a broken level) -- rendered as a filled circle so
+    // they stand out from the arrow markers of the other 8 raw detectors.
     const markers: SeriesMarker<Time>[] = (analysis?.signals ?? [])
       .filter((s) => s.ts)
       .map((s) => {
         const bull = signalIsBullish(s.type);
+        const entry = signalIsEntry(s.type);
         return {
           time: toTime(s.ts as string),
           position: bull ? "belowBar" : "aboveBar",
           color: bull ? COLORS.bull : COLORS.bear,
-          shape: bull ? "arrowUp" : "arrowDown",
-          text: s.type,
+          shape: entry ? "circle" : bull ? "arrowUp" : "arrowDown",
+          text: entry ? `${s.type} ●` : s.type,
         } as SeriesMarker<Time>;
       })
       .sort((a, b) => (a.time as number) - (b.time as number));
@@ -160,5 +238,23 @@ export function CandleChart({ candles, analysis }: Props) {
     chartRef.current?.timeScale().fitContent();
   }, [candles, analysis]);
 
-  return <div className="chart" ref={containerRef} />;
+  // Sonic R Dragon/T3 overlay lines -- separate effect since `indicators`
+  // arrives asynchronously after `analysis`/`candles` are already rendered.
+  useEffect(() => {
+    const dragonSeries = dragonSeriesRef.current;
+    const t3FastSeries = t3FastSeriesRef.current;
+    const t3SlowSeries = t3SlowSeriesRef.current;
+    if (!dragonSeries || !t3FastSeries || !t3SlowSeries) return;
+
+    dragonSeries.setData(indicators ? indicators.dragon.map((p) => ({ time: toTime(p.ts), value: p.value })) : []);
+    t3FastSeries.setData(indicators ? indicators.t3_fast.map((p) => ({ time: toTime(p.ts), value: p.value })) : []);
+    t3SlowSeries.setData(indicators ? indicators.t3_slow.map((p) => ({ time: toTime(p.ts), value: p.value })) : []);
+  }, [indicators]);
+
+  return (
+    <div className="chart-wrap">
+      <div className="chart" ref={containerRef} />
+      {onBarClick && <span className="chart-hint faint">Click vào nến để xem lý do</span>}
+    </div>
+  );
 }

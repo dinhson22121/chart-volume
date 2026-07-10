@@ -38,6 +38,22 @@
   font-size: var(--text-xs);
 }
 
+.ap-mtf-badge {
+  align-self: flex-start;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+.ap-mtf-badge--aligned {
+  color: var(--bull);
+  background: oklch(72% 0.17 150 / 0.15);
+}
+.ap-mtf-badge--conflicting {
+  color: var(--warn);
+  background: oklch(78% 0.15 75 / 0.15);
+}
+
 .ap-levels {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -1,17 +1,22 @@
-"""Claude narrative generation from a structured Wyckoff result.
+"""Wyckoff narrative generation from a structured analysis result.
 
 The LLM receives the *already-computed* phase, events and levels plus a compact
 recent-candle table, and writes a Vietnamese assessment + advice. It never
 decides the phase itself. A disclaimer is always appended so it can't be lost.
+
+Two interchangeable providers: Anthropic's hosted API (paid, needs an API key)
+or a local Ollama model (free, runs on the user's machine). Both take the same
+prompt and return the same NHẬN ĐỊNH/LỜI KHUYÊN format.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
+import httpx
 from anthropic import Anthropic
 
-from app.config import get_settings
 from app.wyckoff import AnalysisResult
 
 logger = logging.getLogger("chart_volume.ai")
@@ -21,9 +26,24 @@ DISCLAIMER = "⚠️ Đây là phân tích kỹ thuật tự động dựa trên
 _ADVICE_MARKER = "LỜI KHUYÊN:"
 _NARRATIVE_MARKER = "NHẬN ĐỊNH:"
 
+PROVIDER_ANTHROPIC = "anthropic"
+PROVIDER_OLLAMA = "ollama"
 
-def is_available() -> bool:
-    return bool(get_settings().anthropic_api_key)
+_OLLAMA_TIMEOUT = 120.0  # local inference on modest hardware can be slow
+
+
+@dataclass(frozen=True)
+class ProviderConfig:
+    provider: str  # PROVIDER_ANTHROPIC | PROVIDER_OLLAMA
+    model: str
+    api_key: str = ""  # anthropic only
+    base_url: str = "http://localhost:11434"  # ollama only
+
+
+def is_available(cfg: ProviderConfig) -> bool:
+    if cfg.provider == PROVIDER_OLLAMA:
+        return bool(cfg.model)
+    return bool(cfg.api_key)
 
 
 def _candle_table(recent) -> str:
@@ -67,17 +87,26 @@ Hãy viết bằng tiếng Việt, ngắn gọn, dễ hiểu cho nhà đầu tư
 """
 
 
-def _call_claude(prompt: str) -> str:
-    settings = get_settings()
-    client = Anthropic(api_key=settings.anthropic_api_key)
+def _call_claude(prompt: str, api_key: str, model: str) -> str:
+    client = Anthropic(api_key=api_key)
     resp = client.messages.create(
-        model=settings.anthropic_model,
+        model=model,
         max_tokens=1024,
         messages=[{"role": "user", "content": prompt}],
     )
     return "".join(
         getattr(block, "text", "") for block in resp.content if getattr(block, "type", "text") == "text"
     )
+
+
+def _call_ollama(prompt: str, model: str, base_url: str) -> str:
+    resp = httpx.post(
+        f"{base_url}/api/generate",
+        json={"model": model, "prompt": prompt, "stream": False},
+        timeout=_OLLAMA_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.json().get("response", "")
 
 
 def _parse(raw: str) -> tuple[str, str]:
@@ -92,7 +121,12 @@ def _parse(raw: str) -> tuple[str, str]:
     return narrative, advice
 
 
-def generate(ticker: str, timeframe: str, result: AnalysisResult, recent) -> tuple[str, str]:
+def generate(
+    ticker: str, timeframe: str, result: AnalysisResult, recent, cfg: ProviderConfig
+) -> tuple[str, str]:
     prompt = build_prompt(ticker, timeframe, result, recent)
-    raw = _call_claude(prompt)
+    if cfg.provider == PROVIDER_OLLAMA:
+        raw = _call_ollama(prompt, cfg.model, cfg.base_url)
+    else:
+        raw = _call_claude(prompt, cfg.api_key, cfg.model)
     return _parse(raw)

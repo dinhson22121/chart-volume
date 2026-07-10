@@ -3,20 +3,30 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
 from app.auth import require_token
 from app.crawler.vnstock_client import fetch_vn30
 from app.db import get_session
-from app.models import Symbol
+from app.models import AssetClass, Symbol
 
 router = APIRouter(prefix="/symbols", tags=["symbols"], dependencies=[Depends(require_token)])
+
+_VALID_ASSET_CLASSES = {AssetClass.STOCK, AssetClass.CRYPTO}
 
 
 class SymbolIn(BaseModel):
     ticker: str
     name: str = ""
+    asset_class: str = AssetClass.STOCK
+
+    @field_validator("asset_class")
+    @classmethod
+    def _validate_asset_class(cls, value: str) -> str:
+        if value not in _VALID_ASSET_CLASSES:
+            raise ValueError(f"unknown asset_class: {value}")
+        return value
 
 
 @router.get("")
@@ -38,7 +48,7 @@ def add_symbol(payload: SymbolIn, session: Session = Depends(get_session)) -> Sy
         session.commit()
         session.refresh(existing)
         return existing
-    symbol = Symbol(ticker=ticker, name=payload.name, is_watchlist=True)
+    symbol = Symbol(ticker=ticker, name=payload.name, asset_class=payload.asset_class, is_watchlist=True)
     session.add(symbol)
     session.commit()
     session.refresh(symbol)

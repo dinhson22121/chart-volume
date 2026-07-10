@@ -1,13 +1,24 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api/client";
 import type { Analysis, Candle, SymbolItem, Timeframe } from "./types";
-import { Watchlist } from "./components/watchlist/Watchlist";
+import { Watchlist, type WatchlistTab } from "./components/watchlist/Watchlist";
 import { CandleChart } from "./components/chart/CandleChart";
 import { AnalysisPanel } from "./components/analysis/AnalysisPanel";
+import { SettingsModal } from "./components/settings/SettingsModal";
+import { TracePanel } from "./components/trace/TracePanel";
+import { SignalStatsModal } from "./components/stats/SignalStatsModal";
+import { DashboardModal } from "./components/dashboard/DashboardModal";
+import logoIcon from "./assets/logo-icon.png";
 
-const TIMEFRAMES: { key: Timeframe; label: string }[] = [
+const STOCK_TIMEFRAMES: { key: Timeframe; label: string }[] = [
   { key: "daily", label: "Ngày" },
   { key: "half_session", label: "Nửa phiên" },
+];
+
+const CRYPTO_TIMEFRAMES: { key: Timeframe; label: string }[] = [
+  { key: "1h", label: "1 giờ" },
+  { key: "4h", label: "4 giờ" },
+  { key: "daily", label: "1 ngày" },
 ];
 
 export default function App() {
@@ -21,6 +32,21 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [dashboardOpen, setDashboardOpen] = useState(false);
+  const [traceBarTs, setTraceBarTs] = useState<string | null>(null);
+  const [sidebarTab, setSidebarTab] = useState<WatchlistTab>("vn30");
+
+  const selectedSymbol = useMemo(
+    () => symbols.find((s) => s.ticker === selected) ?? null,
+    [symbols, selected],
+  );
+  // Falls back to the active sidebar tab when nothing (matching) is selected
+  // yet, so the timeframe toggle previews the right options as soon as you
+  // switch tabs, not just after clicking a specific ticker.
+  const timeframeAssetClass = selectedSymbol?.asset_class ?? (sidebarTab === "crypto" ? "crypto" : "stock");
+  const availableTimeframes = timeframeAssetClass === "crypto" ? CRYPTO_TIMEFRAMES : STOCK_TIMEFRAMES;
 
   const loadSymbols = useCallback(async () => {
     try {
@@ -53,7 +79,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Switching to a symbol whose asset class doesn't support the current
+    // timeframe (e.g. a stock's "half_session" while viewing a crypto ticker)
+    // snaps to that asset class's first valid option instead of erroring.
+    if (!availableTimeframes.some((tf) => tf.key === timeframe)) {
+      setTimeframe(availableTimeframes[0].key);
+    }
+  }, [availableTimeframes, timeframe]);
+
+  useEffect(() => {
     if (selected) void loadData(selected, timeframe);
+    setTraceBarTs(null); // switching ticker/timeframe invalidates any open trace popup
   }, [selected, timeframe, loadData]);
 
   const handleRefresh = useCallback(async () => {
@@ -97,22 +133,42 @@ export default function App() {
 
   const handleSeed = () => void withBusy(() => api.seedVn30().then(loadSymbols));
 
+  const handleCryptoPromoted = (ticker: string) =>
+    void withBusy(async () => {
+      await loadSymbols();
+      setSelected(ticker);
+    });
+
+  const handleTabChange = (tab: WatchlistTab) => {
+    setSidebarTab(tab);
+    // Switching tabs jumps to a matching ticker so the chart/timeframe
+    // toggle stay in sync with what's shown in the sidebar, instead of
+    // leaving a stock selected while browsing the crypto tab (or vice versa).
+    const match =
+      tab === "vn30"
+        ? symbols.filter((s) => s.is_vn30).sort((a, b) => a.ticker.localeCompare(b.ticker))[0]
+        : symbols
+            .filter((s) => s.asset_class === "crypto" && s.is_watchlist)
+            .sort((a, b) => a.ticker.localeCompare(b.ticker))[0];
+    setSelected(match?.ticker ?? null);
+  };
+
   const hasData = candles.length > 0;
 
   return (
     <div className="app">
       <header className="app__header">
         <div className="brand">
+          <img src={logoIcon} alt="" className="brand__icon" />
           <span className="brand__mark">
             Chart<span className="brand__accent">Volume</span>
           </span>
-          <span className="brand__tag">Wyckoff · VN30</span>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}>
           {selected && <span className="mono" style={{ fontWeight: 600 }}>{selected}</span>}
           <div className="tf-toggle">
-            {TIMEFRAMES.map((tf) => (
+            {availableTimeframes.map((tf) => (
               <button
                 key={tf.key}
                 className={timeframe === tf.key ? "is-active" : ""}
@@ -129,6 +185,30 @@ export default function App() {
           >
             {refreshing ? "Đang cập nhật…" : "Cập nhật"}
           </button>
+          <button
+            className="btn btn--icon"
+            onClick={() => setDashboardOpen(true)}
+            aria-label="Dashboard theo dõi"
+            title="Dashboard theo dõi"
+          >
+            🗂️
+          </button>
+          <button
+            className="btn btn--icon"
+            onClick={() => setStatsOpen(true)}
+            aria-label="Thống kê tín hiệu"
+            title="Thống kê tín hiệu"
+          >
+            📊
+          </button>
+          <button
+            className="btn btn--icon"
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Cài đặt"
+            title="Cài đặt"
+          >
+            ⚙
+          </button>
         </div>
       </header>
 
@@ -141,13 +221,16 @@ export default function App() {
             onAdd={handleAdd}
             onRemove={handleRemove}
             onSeedVn30={handleSeed}
+            onCryptoPromoted={handleCryptoPromoted}
+            activeTab={sidebarTab}
+            onTabChange={handleTabChange}
             busy={busy}
           />
         </aside>
 
         <main className="panel panel--main">
           {hasData ? (
-            <CandleChart candles={candles} analysis={analysis} />
+            <CandleChart candles={candles} analysis={analysis} onBarClick={setTraceBarTs} />
           ) : (
             <div
               className="faint"
@@ -173,6 +256,20 @@ export default function App() {
           <AnalysisPanel analysis={analysis} loading={refreshing && !analysis} error={null} />
         </aside>
       </div>
+
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      {statsOpen && <SignalStatsModal onClose={() => setStatsOpen(false)} />}
+      {dashboardOpen && (
+        <DashboardModal onClose={() => setDashboardOpen(false)} onSelect={setSelected} />
+      )}
+      {traceBarTs && selected && (
+        <TracePanel
+          ticker={selected}
+          timeframe={timeframe}
+          barTs={traceBarTs}
+          onClose={() => setTraceBarTs(null)}
+        />
+      )}
     </div>
   );
 }

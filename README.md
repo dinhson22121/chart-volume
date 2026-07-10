@@ -44,11 +44,22 @@ Lệnh khác: `npm run typecheck`, `npm run build` (đóng gói renderer), `npm 
 
 ## Cách dùng
 1. Mở app → bấm **Tải VN30** để nạp rổ VN30.
-2. Chọn một mã → bấm **Cập nhật** để crawl + phân tích.
-3. Xem biểu đồ nến + volume, marker sự kiện Wyckoff, đường hỗ trợ/kháng cự và panel nhận định.
-4. Thêm mã ngoài VN30 bằng ô nhập ở sidebar.
+2. Bấm nút **⚙ Cài đặt** (header) để nhập Anthropic API key, chọn model, chỉnh độ sâu crawl, bật/tắt và chỉnh giờ scheduler, tinh chỉnh ngưỡng Wyckoff. Không cần restart app — lưu là áp dụng ngay.
+3. Chọn một mã → bấm **Cập nhật** để crawl + phân tích.
+4. Xem biểu đồ nến + volume, marker sự kiện Wyckoff, đường hỗ trợ/kháng cự và panel nhận định.
+5. Thêm mã ngoài VN30 bằng ô nhập ở sidebar.
 
-Scheduler tự crawl + phân tích VN30 + watchlist sau phiên sáng (~11:35), phiên chiều (~15:05) và sau close (~15:15).
+Scheduler tự crawl + phân tích VN30 + watchlist theo giờ đã cấu hình (mặc định sau phiên sáng ~11:35, phiên chiều ~15:05, sau close ~15:15); có thể tắt hẳn trong Cài đặt.
+
+## Cấu hình (Settings)
+
+Toàn bộ config runtime đều là **user input** qua UI (`GET/PUT /settings`), không cần sửa file:
+- **Claude AI**: API key (mã hoá Fernet khi lưu vào SQLite, không bao giờ trả về client — chỉ có cờ `has_anthropic_key`) + chọn model.
+- **Độ sâu crawl**: số ngày lịch sử cho nến ngày / nửa phiên.
+- **Scheduler**: bật/tắt, giờ chạy 3 job (sau phiên sáng/chiều, sau đóng cửa) — áp dụng ngay không cần khởi động lại nhờ APScheduler reschedule.
+- **Ngưỡng Wyckoff**: 5 hệ số detector (volume cao trào, spread rộng/hẹp, volume thấp, volume bứt phá SOS/SOW).
+
+Khoá mã hoá (`SETTINGS_KEY`) do Electron sinh và lưu qua OS Keychain (`safeStorage`), truyền xuống backend qua env; khi chạy backend standalone (dev), nó tự sinh và lưu vào `backend/settings.key` (đã gitignore).
 
 ## Đóng gói app độc lập (.app / .dmg)
 
@@ -74,7 +85,7 @@ Chi tiết kỹ thuật:
 - `run_server.py` ép `MPLCONFIGDIR` sang thư mục ghi được cạnh DB và pre-seed font cache (vnstock kéo matplotlib) → cold start ~8–13s thay vì ~90s.
 - Prod: `electron/main.cjs` spawn binary `Resources/backend/chart-volume-backend`; dev: spawn uvicorn từ venv.
 - App **chưa ký (unsigned)** → lần đầu mở phải chuột phải → Open (hoặc `xattr -dr com.apple.quarantine Chart-Volume.app`).
-- Muốn có nhận định AI trong bản đóng gói: đặt `ANTHROPIC_API_KEY` trong môi trường trước khi mở app (Electron truyền env xuống backend). *(Settings UI cho key là việc về sau.)*
+- Nhận định AI: nhập Anthropic API key trong **⚙ Cài đặt** sau khi mở app (xem mục Cấu hình bên dưới) — không cần set env thủ công nữa.
 
 ## Lưu ý
 - **vnstock là API không chính thức** → mọi call có retry + fail mềm; danh sách VN30 fallback về seed tĩnh khi endpoint lỗi (cập nhật thủ công theo quý).

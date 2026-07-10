@@ -41,6 +41,15 @@ export function AnalysisPanel({ analysis, loading, error }: Props) {
             <span>Độ tin cậy {confidencePct}%</span>
             <span>· {formatDate(analysis.as_of)}</span>
           </div>
+          {analysis.mtf_alignment && (
+            <span
+              className={`ap-mtf-badge ${
+                analysis.mtf_alignment === "aligned" ? "ap-mtf-badge--aligned" : "ap-mtf-badge--conflicting"
+              }`}
+            >
+              {analysis.mtf_alignment === "aligned" ? "Khớp xu hướng ngày" : "Ngược xu hướng ngày"}
+            </span>
+          )}
         </header>
 
         <div className="ap-levels">

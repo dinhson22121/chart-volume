@@ -12,9 +12,21 @@ from datetime import datetime
 
 import pandas as pd
 
+from app.wyckoff.config import DEFAULT_CONFIG, WyckoffConfig
 from app.wyckoff.events import WyckoffEvent, detect_events
 from app.wyckoff.indicators import compute_features, latest_levels
-from app.wyckoff.phase import classify_phase
+from app.wyckoff.phase import BEARISH_EVENTS, BULLISH_EVENTS, classify_phase, phase_trend
+
+__all__ = [
+    "AnalysisResult",
+    "Levels",
+    "MIN_BARS",
+    "BULLISH_EVENTS",
+    "BEARISH_EVENTS",
+    "phase_trend",
+    "analyze",
+    "candles_to_dataframe",
+]
 
 MIN_BARS = 15
 
@@ -33,6 +45,8 @@ class AnalysisResult:
     levels: Levels
     as_of: datetime | None
     drivers: list[str] = field(default_factory=list)
+    daily_trend: str | None = None
+    mtf_alignment: str | None = None
 
     def events_as_dicts(self) -> list[dict]:
         return [
@@ -46,7 +60,7 @@ class AnalysisResult:
         ]
 
 
-def _to_dataframe(candles) -> pd.DataFrame:
+def candles_to_dataframe(candles) -> pd.DataFrame:
     rows = [
         {
             "time": c.bucket_start,
@@ -65,8 +79,10 @@ def _to_dataframe(candles) -> pd.DataFrame:
     return df
 
 
-def analyze(candles) -> AnalysisResult:
-    df = _to_dataframe(candles)
+def analyze(
+    candles, config: WyckoffConfig = DEFAULT_CONFIG, daily_trend: str | None = None
+) -> AnalysisResult:
+    df = candles_to_dataframe(candles)
     if len(df) < MIN_BARS:
         return AnalysisResult(
             phase="Insufficient data",
@@ -77,9 +93,9 @@ def analyze(candles) -> AnalysisResult:
         )
 
     feat = compute_features(df)
-    events = detect_events(feat)
+    events = detect_events(feat, config)
     support, resistance = latest_levels(feat)
-    phase, confidence, drivers = classify_phase(feat, events)
+    phase, confidence, drivers, mtf_alignment = classify_phase(feat, events, daily_trend)
 
     return AnalysisResult(
         phase=phase,
@@ -88,4 +104,6 @@ def analyze(candles) -> AnalysisResult:
         levels=Levels(support=support, resistance=resistance),
         as_of=df["time"].iloc[-1].to_pydatetime(),
         drivers=drivers,
+        daily_trend=daily_trend,
+        mtf_alignment=mtf_alignment,
     )

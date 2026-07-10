@@ -51,8 +51,14 @@ input {
 
 .brand {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-2);
+}
+.brand__icon {
+  height: 26px;
+  width: 26px;
+  display: block;
+  border-radius: 7px;
 }
 .brand__mark {
   font-size: var(--text-lg);
@@ -61,12 +67,6 @@ input {
 }
 .brand__accent {
   color: var(--accent);
-}
-.brand__tag {
-  font-size: var(--text-xs);
-  color: var(--text-faint);
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
 }
 
 .app__body {
@@ -147,6 +147,11 @@ input {
 }
 .btn--primary:hover {
   background: var(--accent-strong);
+}
+.btn--icon {
+  padding: 7px 10px;
+  font-size: var(--text-lg);
+  line-height: 1;
 }
 .btn:disabled {
   opacity: 0.5;

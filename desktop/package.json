@@ -37,7 +37,8 @@
         "dmg"
       ],
       "category": "public.app-category.finance",
-      "identity": null
+      "identity": null,
+      "icon": "build/icon.icns"
     }
   },
   "dependencies": {

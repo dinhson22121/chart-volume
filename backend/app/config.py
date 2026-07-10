@@ -2,7 +2,10 @@
 
 Electron mints ``LOCAL_API_TOKEN`` per launch and passes it via env; when the
 backend is started standalone (dev) without one, a random token is generated so
-the auth gate is always active. The value is logged at startup for dev use.
+the auth gate is always active. Never logged -- it's the only thing gating
+this API, so leaking it into logs would defeat the auth model entirely. When
+testing standalone without Electron, read it back via ``get_settings().resolved_token()``
+in-process, or set ``LOCAL_API_TOKEN`` explicitly yourself before starting uvicorn.
 """
 
 from __future__ import annotations

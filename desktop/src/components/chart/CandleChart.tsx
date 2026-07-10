@@ -14,6 +14,7 @@ import {
 import { api } from "../../api/client";
 import type { Analysis, Candle, IndicatorSeries } from "../../types";
 import { signalIsBullish, signalIsEntry } from "../../lib/wyckoff";
+import { formatPrice, priceMinMove } from "../../lib/price";
 import "./chart.css";
 
 const COLORS = {
@@ -172,6 +173,18 @@ export function CandleChart({ candles, analysis, onBarClick }: Props) {
     const candleSeries = candleSeriesRef.current;
     const volumeSeries = volumeSeriesRef.current;
     if (!candleSeries || !volumeSeries) return;
+
+    // Fixed 2-decimal precision rounds sub-cent crypto prices (e.g.
+    // 0.00000123) down to "0.00" on the axis/price lines -- a custom
+    // formatter keyed off the latest close's own magnitude fixes that, and
+    // switches to compact "0.0<n>xxx" notation for extreme micro-cap prices
+    // the same way formatPrice() does for the analysis panel.
+    if (candles.length > 0) {
+      const sample = candles[candles.length - 1].close;
+      candleSeries.applyOptions({
+        priceFormat: { type: "custom", formatter: formatPrice, minMove: priceMinMove(sample) },
+      });
+    }
 
     candleSeries.setData(
       candles.map((c) => ({

@@ -1,5 +1,6 @@
 import type { Analysis } from "../../types";
 import { phaseColor, phaseLabel, signalLabel } from "../../lib/wyckoff";
+import { formatPrice } from "../../lib/price";
 import "./analysis.css";
 
 interface Props {
@@ -56,13 +57,13 @@ export function AnalysisPanel({ analysis, loading, error }: Props) {
           <div className="ap-level">
             <span className="ap-level__label faint">Kháng cự</span>
             <span className="ap-level__value mono" style={{ color: "var(--warn)" }}>
-              {analysis.levels.resistance.toFixed(2)}
+              {formatPrice(analysis.levels.resistance)}
             </span>
           </div>
           <div className="ap-level">
             <span className="ap-level__label faint">Hỗ trợ</span>
             <span className="ap-level__value mono" style={{ color: "var(--bull)" }}>
-              {analysis.levels.support.toFixed(2)}
+              {formatPrice(analysis.levels.support)}
             </span>
           </div>
         </div>

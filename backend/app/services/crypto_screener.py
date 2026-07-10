@@ -93,10 +93,14 @@ def _tradeable_symbol_exchanges(exchanges: tuple[str, ...]) -> dict[str, str] | 
 
     Built in reverse of ingest_crypto's own fallback priority (MEXC, then
     KuCoin, then Binance) so a symbol listed on multiple exchanges ends up
-    mapped to whichever one ingest would actually try first. Returns None if
-    every enabled exchange failed to respond, so a transient network hiccup
-    doesn't silently zero out a scan.
+    mapped to whichever one ingest would actually try first. Returns an empty
+    dict if the user has no centralized exchange enabled at all (nothing is
+    tradeable via a CEX, by their own choice -- distinct from a fetch
+    failure). Returns None if every *enabled* exchange failed to respond, so
+    a transient network hiccup doesn't silently zero out a scan.
     """
+    if not any(ex in exchanges for ex in (CryptoExchange.MEXC, CryptoExchange.KUCOIN, CryptoExchange.BINANCE)):
+        return {}
     by_symbol: dict[str, str] = {}
     fetched_any = False
     if CryptoExchange.MEXC in exchanges:

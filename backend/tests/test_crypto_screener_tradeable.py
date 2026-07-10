@@ -52,3 +52,19 @@ def test_tradeable_symbol_exchanges_returns_none_when_all_exchanges_fail(mocker)
     )
 
     assert crypto_screener._tradeable_symbol_exchanges(("binance", "kucoin")) is None
+
+
+def test_tradeable_symbol_exchanges_returns_empty_dict_when_no_cex_enabled(mocker):
+    # Only geckoterminal enabled (no binance/kucoin/mexc): distinct from a
+    # fetch failure -- this is the user's own choice, and must not be
+    # confused with "network hiccup, skip the filter" (which returns None).
+    binance_spy = mocker.patch.object(crypto_screener.binance_client, "fetch_tradeable_symbols")
+    kucoin_spy = mocker.patch.object(crypto_screener.kucoin_client, "fetch_tradeable_symbols")
+    mexc_spy = mocker.patch.object(crypto_screener.mexc_client, "fetch_tradeable_symbols")
+
+    result = crypto_screener._tradeable_symbol_exchanges(("geckoterminal",))
+
+    assert result == {}
+    binance_spy.assert_not_called()
+    kucoin_spy.assert_not_called()
+    mexc_spy.assert_not_called()

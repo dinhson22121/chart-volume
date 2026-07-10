@@ -1,4 +1,5 @@
 from app.ai.narrative import PROVIDER_ANTHROPIC, PROVIDER_OLLAMA
+from app.models import ConfigChangeLog
 from app.services import settings_service
 
 
@@ -20,6 +21,42 @@ def test_update_non_secret_values(session):
     out = settings_service.get_public(session)
     assert out["daily_lookback_days"] == 365
     assert out["climax_vol_mult"] == 3.5
+
+
+def test_update_logs_config_changes_with_old_and_new_value(session):
+    settings_service.update(session, {"daily_lookback_days": "365"})  # default is 730
+
+    from sqlmodel import select
+
+    entries = session.exec(select(ConfigChangeLog)).all()
+    assert len(entries) == 1
+    assert entries[0].key == "daily_lookback_days"
+    assert entries[0].old_value == "730"
+    assert entries[0].new_value == "365"
+
+
+def test_update_does_not_log_when_resubmitting_the_same_value(session):
+    settings_service.update(session, {"daily_lookback_days": "365"})
+    settings_service.update(session, {"daily_lookback_days": "365"})  # no real change the 2nd time
+
+    from sqlmodel import select
+
+    entries = session.exec(select(ConfigChangeLog)).all()
+    assert len(entries) == 1
+
+
+def test_update_api_key_log_never_contains_the_real_value(session):
+    settings_service.update(session, {"anthropic_api_key": "sk-ant-real-secret"})
+
+    from sqlmodel import select
+
+    entries = session.exec(select(ConfigChangeLog)).all()
+    assert len(entries) == 1
+    assert entries[0].key == "anthropic_api_key"
+    assert "sk-ant-real-secret" not in entries[0].new_value
+    assert "enc:" not in entries[0].new_value
+    assert entries[0].new_value == "(đã đặt)"
+    assert entries[0].old_value == "(trống)"
 
 
 def test_update_api_key_is_encrypted_at_rest(session):

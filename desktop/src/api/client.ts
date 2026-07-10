@@ -7,6 +7,7 @@ import type {
   Candle,
   DashboardRow,
   IndicatorSeries,
+  ConfigLogPage,
   OllamaPullEvent,
   OllamaStatus,
   ScanStatus,
@@ -16,6 +17,7 @@ import type {
   SignalStat,
   StrategyOption,
   SymbolItem,
+  SystemLogPage,
   Timeframe,
 } from "../types";
 
@@ -120,6 +122,10 @@ export const api = {
     req<{ ticker: string; asset_class: string }>(`/crypto/screener/candidates/${coinId}/promote`, {
       method: "POST",
     }),
+  getConfigLogs: (page: number, pageSize: number) =>
+    req<ConfigLogPage>(`/logs/config?page=${page}&page_size=${pageSize}`),
+  getSystemLogs: (page: number, pageSize: number) =>
+    req<SystemLogPage>(`/logs/system?page=${page}&page_size=${pageSize}`),
 };
 
 export { API_BASE };

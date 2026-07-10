@@ -1,9 +1,17 @@
 import pandas as pd
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.models import AssetClass, Symbol, Timeframe
-from app.scheduler import build_scheduler, reschedule, run_batch, run_crypto_batch
+from app.models import AssetClass, Symbol, SystemActionLog, Timeframe
+from app.scheduler import (
+    _crypto_batch_job,
+    _daily_job,
+    _half_session_job,
+    build_scheduler,
+    reschedule,
+    run_batch,
+    run_crypto_batch,
+)
 from app.services import analysis as analysis_svc
 from app.services import ingest, settings_service
 
@@ -236,3 +244,54 @@ def test_run_batch_isolates_ticker_failures(session, mocker):
     ok = run_batch(session, Timeframe.DAILY)
 
     assert ok == 1  # GOOD succeeded, BAD failed but didn't abort the batch
+
+
+def test_daily_job_logs_a_scheduled_system_action(mocker):
+    engine = _fresh_engine()
+    mocker.patch("app.scheduler.get_engine", return_value=engine)
+    mocker.patch("app.scheduler.run_batch", return_value=3)
+
+    _daily_job()
+
+    with Session(engine) as s:
+        entries = s.exec(select(SystemActionLog)).all()
+        assert len(entries) == 1
+        assert entries[0].action == "daily_close"
+        assert entries[0].trigger == "scheduled"
+        assert entries[0].status == "success"
+        assert entries[0].detail == "3 mã"
+        assert entries[0].finished_at is not None
+
+
+def test_half_session_job_logs_morning_and_afternoon_separately(mocker):
+    # Both cron slots share the same function (see _add_jobs()'s
+    # functools.partial binding) -- the `action` argument is what lets the
+    # log tell a morning run from an afternoon run.
+    engine = _fresh_engine()
+    mocker.patch("app.scheduler.get_engine", return_value=engine)
+    mocker.patch("app.scheduler.run_batch", return_value=0)
+
+    _half_session_job("half_session_morning")
+    _half_session_job("half_session_afternoon")
+
+    with Session(engine) as s:
+        actions = {e.action for e in s.exec(select(SystemActionLog)).all()}
+        assert actions == {"half_session_morning", "half_session_afternoon"}
+
+
+def test_crypto_batch_job_logs_error_status_on_failure(mocker):
+    engine = _fresh_engine()
+    mocker.patch("app.scheduler.get_engine", return_value=engine)
+    mocker.patch("app.scheduler.run_crypto_batch", side_effect=RuntimeError("boom"))
+
+    try:
+        _crypto_batch_job()
+    except RuntimeError:
+        pass
+
+    with Session(engine) as s:
+        entries = s.exec(select(SystemActionLog)).all()
+        assert len(entries) == 1
+        assert entries[0].action == "crypto_analysis_refresh"
+        assert entries[0].status == "error"
+        assert entries[0].detail == "boom"

@@ -1,7 +1,7 @@
 import pytest
 from sqlmodel import select
 
-from app.models import CryptoVolumeSnapshot, ScreenerCandidate
+from app.models import CryptoVolumeSnapshot, ScreenerCandidate, SystemActionLog
 from app.services import crypto_screener
 
 
@@ -156,6 +156,33 @@ def test_run_scan_guarded_skips_when_already_running(session, mocker):
     finally:
         crypto_screener._scan_lock.release()
 
+    # A skipped/duplicate trigger never actually scanned -- no log row for it.
+    assert session.exec(select(SystemActionLog)).all() == []
+
+
+def test_run_scan_guarded_logs_the_given_trigger(session, mocker):
+    mocker.patch("time.sleep")
+    mocker.patch.object(crypto_screener.coingecko_client, "fetch_markets_page", return_value=[])
+
+    crypto_screener.run_scan_guarded(session, mcap_max=50_000_000, min_volume_change_pct=50, trigger="scheduled")
+
+    entries = session.exec(select(SystemActionLog)).all()
+    assert len(entries) == 1
+    assert entries[0].action == "screener_scan"
+    assert entries[0].trigger == "scheduled"
+    assert entries[0].status == "success"
+    assert entries[0].finished_at is not None
+
+
+def test_run_scan_guarded_defaults_trigger_to_manual(session, mocker):
+    mocker.patch("time.sleep")
+    mocker.patch.object(crypto_screener.coingecko_client, "fetch_markets_page", return_value=[])
+
+    crypto_screener.run_scan_guarded(session, mcap_max=50_000_000, min_volume_change_pct=50)
+
+    entries = session.exec(select(SystemActionLog)).all()
+    assert entries[0].trigger == "manual"
+
 
 def test_run_scan_guarded_records_error_without_raising(session, mocker):
     mocker.patch("time.sleep")
@@ -167,6 +194,10 @@ def test_run_scan_guarded_records_error_without_raising(session, mocker):
 
     assert status["running"] is False
     assert "boom" in status["last_error"]
+
+    entries = session.exec(select(SystemActionLog)).all()
+    assert entries[0].status == "error"
+    assert "boom" in entries[0].detail
 
 
 def test_scan_stops_early_when_cancel_requested(session, mocker):

@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import analysis, candles, crypto, ollama, settings as settings_api, signals, strategies, symbols
+from app.api import analysis, candles, crypto, logs, ollama, settings as settings_api, signals, strategies, symbols
 from app.config import get_settings
 from app.db import init_db
 from app.scheduler import build_scheduler
@@ -55,6 +55,7 @@ app.include_router(signals.router)
 app.include_router(ollama.router)
 app.include_router(strategies.router)
 app.include_router(crypto.router)
+app.include_router(logs.router)
 
 
 @app.get("/health")

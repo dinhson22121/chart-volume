@@ -181,6 +181,46 @@ export interface ScanStatus {
   hits_so_far: number | null;
 }
 
+export interface ConfigChangeLogEntry {
+  id: number;
+  changed_at: string;
+  key: string;
+  old_value: string;
+  new_value: string;
+}
+
+export interface ConfigLogPage {
+  items: ConfigChangeLogEntry[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export type SystemAction =
+  | "screener_scan"
+  | "vn30_seed"
+  | "half_session_morning"
+  | "half_session_afternoon"
+  | "daily_close"
+  | "crypto_analysis_refresh";
+
+export interface SystemActionLogEntry {
+  id: number;
+  action: SystemAction;
+  trigger: "manual" | "scheduled";
+  started_at: string;
+  finished_at: string | null;
+  status: "running" | "success" | "error" | "cancelled";
+  detail: string | null;
+}
+
+export interface SystemLogPage {
+  items: SystemActionLogEntry[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface DashboardSignal {
   type: string;
   ts: string;

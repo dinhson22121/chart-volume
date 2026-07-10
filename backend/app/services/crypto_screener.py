@@ -23,6 +23,7 @@ from sqlmodel import Session, func, select
 
 from app.crawler import binance_client, coingecko_client, geckoterminal_client, kucoin_client, mexc_client
 from app.models import CryptoExchange, CryptoVolumeSnapshot, ScreenerCandidate
+from app.services import activity_log
 
 logger = logging.getLogger("chart_volume.screener")
 
@@ -405,6 +406,7 @@ def run_scan_guarded(
     min_volume_change_pct: float,
     require_volume_rising: bool = True,
     exchanges: tuple[str, ...] = CryptoExchange.ALL,
+    trigger: str = "manual",
 ) -> dict:
     """Runs scan() guarded by a lock so an overlapping trigger (manual click
     while the scheduled job is mid-scan, or vice versa) is a no-op instead of
@@ -412,6 +414,7 @@ def run_scan_guarded(
     if not _scan_lock.acquire(blocking=False):
         logger.info("screener scan already running, ignoring duplicate trigger")
         return get_scan_status()
+    log_id = activity_log.log_action_start(session, "screener_scan", trigger)
     try:
         _cancel_requested.clear()
         _scan_state["running"] = True
@@ -435,6 +438,13 @@ def run_scan_guarded(
         _scan_state["running"] = False
         _scan_state["last_completed_at"] = _utcnow().isoformat()
         _scan_lock.release()
+    if _scan_state["last_cancelled"]:
+        log_action_status, log_detail = "cancelled", f"{_scan_state['last_hits']} candidate"
+    elif _scan_state["last_error"]:
+        log_action_status, log_detail = "error", _scan_state["last_error"]
+    else:
+        log_action_status, log_detail = "success", f"{_scan_state['last_hits']} candidate"
+    activity_log.log_action_finish(session, log_id, log_action_status, log_detail)
     return get_scan_status()
 
 

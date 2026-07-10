@@ -13,6 +13,7 @@ from app.ai.narrative import PROVIDER_ANTHROPIC, PROVIDER_OLLAMA, ProviderConfig
 from app.config import get_settings
 from app.crypto import decrypt, encrypt
 from app.models import CryptoExchange, Setting
+from app.services import activity_log
 from app.sonicr.config import SonicRConfig
 from app.strategies import registry as strategy_registry
 from app.wyckoff.config import WyckoffConfig
@@ -116,14 +117,24 @@ def _set(session: Session, key: str, value: str) -> None:
 
 
 def update(session: Session, partial: dict) -> None:
+    before = _stored(session)
     for key, value in partial.items():
         if key == KEY_API:
-            # Empty string clears the key; otherwise store encrypted.
-            _set(session, KEY_API, encrypt(str(value)) if value else "")
+            # Empty string clears the key; otherwise store encrypted. Never
+            # log the real (encrypted) value -- only whether it's set.
+            new_raw = encrypt(str(value)) if value else ""
+            old_present = "(đã đặt)" if before.get(KEY_API) else "(trống)"
+            new_present = "(đã đặt)" if new_raw else "(trống)"
+            activity_log.log_config_change(session, key, old_present, new_present)
+            _set(session, KEY_API, new_raw)
         elif key in _LIST_KEYS:
-            _set(session, key, ",".join(value) if isinstance(value, list) else str(value))
+            new_raw = ",".join(value) if isinstance(value, list) else str(value)
+            activity_log.log_config_change(session, key, before.get(key, DEFAULTS.get(key, "")), new_raw)
+            _set(session, key, new_raw)
         elif key in DEFAULTS:
-            _set(session, key, str(value))
+            new_raw = str(value)
+            activity_log.log_config_change(session, key, before.get(key, DEFAULTS.get(key, "")), new_raw)
+            _set(session, key, new_raw)
     session.commit()
 
 

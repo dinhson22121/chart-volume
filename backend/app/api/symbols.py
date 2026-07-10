@@ -10,6 +10,7 @@ from app.auth import require_token
 from app.crawler.vnstock_client import fetch_vn30
 from app.db import get_session
 from app.models import AssetClass, Symbol
+from app.services import activity_log
 
 router = APIRouter(prefix="/symbols", tags=["symbols"], dependencies=[Depends(require_token)])
 
@@ -80,6 +81,7 @@ def seed_vn30(session: Session = Depends(get_session)) -> dict:
     was live data or the static fallback list (see fetch_vn30), the same way
     the crypto screener surfaces its own last-run status instead of silently
     treating a degraded result as if it were fully fresh."""
+    log_id = activity_log.log_action_start(session, "vn30_seed", "manual")
     tickers, source = fetch_vn30()
     for ticker in tickers:
         symbol = session.get(Symbol, ticker)
@@ -89,4 +91,5 @@ def seed_vn30(session: Session = Depends(get_session)) -> dict:
         else:
             session.add(Symbol(ticker=ticker, display_symbol=ticker, is_vn30=True))
     session.commit()
+    activity_log.log_action_finish(session, log_id, "success", f"{len(tickers)} mã ({source})")
     return {"count": len(tickers), "source": source}

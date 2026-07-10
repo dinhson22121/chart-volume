@@ -5,7 +5,7 @@ from sqlmodel import select
 from app.api import symbols as symbols_api
 from app.db import get_session
 from app.main import app
-from app.models import Symbol
+from app.models import Symbol, SystemActionLog
 
 
 @pytest.fixture
@@ -28,6 +28,13 @@ def test_seed_vn30_reports_live_source(session, client, auth_header, mocker):
     assert resp.json() == {"count": 2, "source": "live"}
     tickers = {s.ticker for s in session.exec(select(Symbol)).all()}
     assert tickers == {"FPT", "HPG"}
+
+    entries = session.exec(select(SystemActionLog)).all()
+    assert len(entries) == 1
+    assert entries[0].action == "vn30_seed"
+    assert entries[0].trigger == "manual"
+    assert entries[0].status == "success"
+    assert "2 mã" in entries[0].detail
 
 
 def test_seed_vn30_reports_fallback_source(session, client, auth_header, mocker):

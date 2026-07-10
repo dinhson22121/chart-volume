@@ -213,3 +213,29 @@ class ScreenerCandidate(SQLModel, table=True):
     # KuCoin > MEXC) -- None for geckoterminal-sourced candidates, or if the
     # symbol isn't tradeable on any enabled exchange yet at scan time.
     exchange: Optional[str] = None
+
+
+class ConfigChangeLog(SQLModel, table=True):
+    """One row per Settings field that actually changed value (see
+    app.services.settings_service.update()). Never holds the real
+    anthropic_api_key value -- callers pass a presence placeholder instead."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    changed_at: datetime = Field(default_factory=_utcnow, index=True)
+    key: str
+    old_value: str
+    new_value: str
+
+
+class SystemActionLog(SQLModel, table=True):
+    """Start/finish record for a scheduled job or a user-triggered background
+    action (crypto screener scan, VN30 seed) -- lets the user see when
+    something ran and whether it succeeded."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    action: str
+    trigger: str  # "manual" | "scheduled"
+    started_at: datetime = Field(default_factory=_utcnow, index=True)
+    finished_at: Optional[datetime] = None
+    status: str = "running"  # "running" | "success" | "error" | "cancelled"
+    detail: Optional[str] = None

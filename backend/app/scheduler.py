@@ -13,6 +13,7 @@ Settings API apply changes (enable/disable, times) without restarting the app.
 from __future__ import annotations
 
 import logging
+from functools import partial
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -22,7 +23,7 @@ from sqlmodel import Session, select
 from app.config import TIMEZONE
 from app.db import get_engine
 from app.models import AssetClass, Symbol, Timeframe
-from app.services import crypto_screener, ingest, settings_service
+from app.services import activity_log, crypto_screener, ingest, settings_service
 from app.services.analysis import run_analysis
 
 logger = logging.getLogger("chart_volume.scheduler")
@@ -103,17 +104,38 @@ def run_crypto_batch(session: Session, use_ai: bool = True) -> int:
 
 def _daily_job() -> None:
     with Session(get_engine()) as session:
-        run_batch(session, Timeframe.DAILY)
+        log_id = activity_log.log_action_start(session, "daily_close", "scheduled")
+        try:
+            ok = run_batch(session, Timeframe.DAILY)
+            activity_log.log_action_finish(session, log_id, "success", f"{ok} mã")
+        except Exception as exc:  # noqa: BLE001 - isolate; run_batch already isolates per-ticker
+            activity_log.log_action_finish(session, log_id, "error", str(exc))
+            raise
 
 
-def _half_session_job() -> None:
+def _half_session_job(action: str) -> None:
+    # Same function backs both the morning and afternoon cron triggers (see
+    # _add_jobs()) -- `action` is bound via functools.partial at registration
+    # time so the log can still tell the two apart.
     with Session(get_engine()) as session:
-        run_batch(session, Timeframe.HALF_SESSION)
+        log_id = activity_log.log_action_start(session, action, "scheduled")
+        try:
+            ok = run_batch(session, Timeframe.HALF_SESSION)
+            activity_log.log_action_finish(session, log_id, "success", f"{ok} mã")
+        except Exception as exc:  # noqa: BLE001 - isolate; run_batch already isolates per-ticker
+            activity_log.log_action_finish(session, log_id, "error", str(exc))
+            raise
 
 
 def _crypto_batch_job() -> None:
     with Session(get_engine()) as session:
-        run_crypto_batch(session)
+        log_id = activity_log.log_action_start(session, "crypto_analysis_refresh", "scheduled")
+        try:
+            ok = run_crypto_batch(session)
+            activity_log.log_action_finish(session, log_id, "success", f"{ok} mã/khung")
+        except Exception as exc:  # noqa: BLE001 - isolate; run_crypto_batch already isolates per-symbol
+            activity_log.log_action_finish(session, log_id, "error", str(exc))
+            raise
 
 
 def _screener_job() -> None:
@@ -126,6 +148,7 @@ def _screener_job() -> None:
             cfg["min_volume_change_pct"],
             require_volume_rising=cfg["require_volume_rising"],
             exchanges=exchanges,
+            trigger="scheduled",
         )
 
 
@@ -145,12 +168,12 @@ def _add_jobs(scheduler: BackgroundScheduler, cfg: dict) -> None:
     daily_h, daily_m = _parse_hhmm(cfg["daily_time"], "15:15")
 
     scheduler.add_job(
-        _half_session_job,
+        partial(_half_session_job, "half_session_morning"),
         CronTrigger(hour=morning_h, minute=morning_m, day_of_week=_WEEKDAYS),
         id="half_session_morning",
     )
     scheduler.add_job(
-        _half_session_job,
+        partial(_half_session_job, "half_session_afternoon"),
         CronTrigger(hour=afternoon_h, minute=afternoon_m, day_of_week=_WEEKDAYS),
         id="half_session_afternoon",
     )

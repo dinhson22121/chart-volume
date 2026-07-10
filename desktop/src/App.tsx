@@ -8,6 +8,7 @@ import { SettingsModal } from "./components/settings/SettingsModal";
 import { TracePanel } from "./components/trace/TracePanel";
 import { SignalStatsModal } from "./components/stats/SignalStatsModal";
 import { DashboardModal } from "./components/dashboard/DashboardModal";
+import { ActivityLogModal } from "./components/logs/ActivityLogModal";
 import logoIcon from "./assets/logo-icon.png";
 
 const STOCK_TIMEFRAMES: { key: Timeframe; label: string }[] = [
@@ -35,6 +36,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
   const [dashboardOpen, setDashboardOpen] = useState(false);
+  const [logsOpen, setLogsOpen] = useState(false);
   const [traceBarTs, setTraceBarTs] = useState<string | null>(null);
   const [sidebarTab, setSidebarTab] = useState<WatchlistTab>("vn30");
 
@@ -221,6 +223,14 @@ export default function App() {
           </button>
           <button
             className="btn btn--icon"
+            onClick={() => setLogsOpen(true)}
+            aria-label="Nhật ký"
+            title="Nhật ký"
+          >
+            📜
+          </button>
+          <button
+            className="btn btn--icon"
             onClick={() => setSettingsOpen(true)}
             aria-label="Cài đặt"
             title="Cài đặt"
@@ -280,6 +290,7 @@ export default function App() {
       {dashboardOpen && (
         <DashboardModal onClose={() => setDashboardOpen(false)} onSelect={setSelected} />
       )}
+      {logsOpen && <ActivityLogModal onClose={() => setLogsOpen(false)} />}
       {traceBarTs && selected && (
         <TracePanel
           ticker={selected}

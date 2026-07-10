@@ -25,6 +25,7 @@ desktop/release/
 
 # Claude Code runtime state (not source)
 .claude/
+.agent/
 
 # Raw logo source material (already extracted into desktop/src/assets + desktop/build)
 Logo-chart-volume.zip

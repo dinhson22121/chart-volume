@@ -63,7 +63,7 @@ export function DashboardModal({ onClose, onSelect }: Props) {
 
         <div className="settings-modal__body">
           <p className="faint stats-hint">
-            Dữ liệu từ lần phân tích ngày (daily) gần nhất đã lưu — không crawl lại. Bấm "Cập nhật" ở mã
+            Dữ liệu từ lần phân tích ngày (daily) gần nhất đã lưu — không crawl lại. Bấm "Phân tích" ở mã
             tương ứng nếu muốn làm mới.
           </p>
 
@@ -106,7 +106,7 @@ export function DashboardModal({ onClose, onSelect }: Props) {
                     >
                       <td>
                         <span className="mono" style={{ fontWeight: 600 }}>
-                          {r.ticker}
+                          {r.display_symbol}
                         </span>{" "}
                         {r.asset_class === "crypto" && <span title="Crypto">🪙</span>}
                         {r.name && <span className="faint"> {r.name}</span>}

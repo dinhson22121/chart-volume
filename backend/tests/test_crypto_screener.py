@@ -25,7 +25,7 @@ def _no_exchange_filter_by_default(mocker):
     # Most tests care about the mcap/volume logic, not exchange tradeability --
     # default to "couldn't determine, don't filter" so they don't need to know
     # about Binance/KuCoin. Tests that exercise the filter override this.
-    mocker.patch.object(crypto_screener, "_tradeable_symbols", return_value=None)
+    mocker.patch.object(crypto_screener, "_tradeable_symbol_exchanges", return_value=None)
 
 
 @pytest.fixture(autouse=True)
@@ -186,6 +186,20 @@ def test_scan_stops_early_when_cancel_requested(session, mocker):
     fetch.assert_not_called()  # cancelled before even the first page
 
 
+def test_interruptible_sleep_stops_early_once_cancel_is_requested(mocker):
+    # A cancel requested mid-pause must take effect within one check interval
+    # (0.25s), not wait out the full 3-6s inter-page pause -- this is what
+    # makes the cancel button feel responsive instead of stuck for seconds.
+    sleep_spy = mocker.patch("time.sleep")
+    sleep_spy.side_effect = lambda _s: crypto_screener._cancel_requested.set()
+
+    crypto_screener._interruptible_sleep(crypto_screener.PAGE_PAUSE_SECONDS)
+
+    # Only the first chunk should have run before the flag stopped the loop --
+    # PAGE_PAUSE_SECONDS (3.0s) / 0.25s interval would otherwise take 12 calls.
+    assert sleep_spy.call_count == 1
+
+
 def test_run_scan_guarded_reports_cancelled_status(session, mocker):
     mocker.patch("time.sleep")
 
@@ -261,7 +275,7 @@ def test_run_scan_guarded_forwards_require_volume_rising(session, mocker):
 
 def test_scan_skips_coins_not_tradeable_on_any_enabled_exchange(session, mocker):
     mocker.patch("time.sleep")
-    mocker.patch.object(crypto_screener, "_tradeable_symbols", return_value={"ALTX"})
+    mocker.patch.object(crypto_screener, "_tradeable_symbol_exchanges", return_value={"ALTX": "binance"})
     mocker.patch.object(
         crypto_screener.coingecko_client, "fetch_markets_page",
         side_effect=[
@@ -279,6 +293,20 @@ def test_scan_skips_coins_not_tradeable_on_any_enabled_exchange(session, mocker)
 
     assert hits == 1
     assert session.get(ScreenerCandidate, "altcoin-x") is not None
+
+
+def test_scan_records_which_exchange_a_candidate_resolves_to(session, mocker):
+    mocker.patch("time.sleep")
+    mocker.patch.object(crypto_screener, "_tradeable_symbol_exchanges", return_value={"ALTX": "kucoin"})
+    mocker.patch.object(
+        crypto_screener.coingecko_client, "fetch_markets_page",
+        side_effect=[[_coin("altcoin-x", "altx", 20_000_000, 1_000_000)], []],
+    )
+
+    crypto_screener.scan(session, mcap_max=50_000_000, min_volume_change_pct=50, require_volume_rising=False)
+
+    candidate = session.get(ScreenerCandidate, "altcoin-x")
+    assert candidate.exchange == "kucoin"
     assert session.get(ScreenerCandidate, "dex-only") is None
     # untradeable coins are skipped before even snapshotting
     snapshots = {s.coin_id for s in session.exec(select(CryptoVolumeSnapshot)).all()}
@@ -287,7 +315,7 @@ def test_scan_skips_coins_not_tradeable_on_any_enabled_exchange(session, mocker)
 
 def test_scan_does_not_filter_when_exchange_lookup_unavailable(session, mocker):
     mocker.patch("time.sleep")
-    mocker.patch.object(crypto_screener, "_tradeable_symbols", return_value=None)
+    mocker.patch.object(crypto_screener, "_tradeable_symbol_exchanges", return_value=None)
     mocker.patch.object(
         crypto_screener.coingecko_client, "fetch_markets_page",
         side_effect=[[_coin("altcoin-x", "altx", 20_000_000, 1_000_000)], []],
@@ -471,6 +499,39 @@ def test_list_candidates_filters_by_name_substring(session):
 
     assert total == 1
     assert [c.coin_id for c in items] == ["pepe-coin"]
+
+
+def test_list_candidates_filters_by_exchange(session):
+    session.add(
+        ScreenerCandidate(coin_id="a", symbol="A", name="A", market_cap=1, volume_24h=1, exchange="binance")
+    )
+    session.add(
+        ScreenerCandidate(coin_id="b", symbol="B", name="B", market_cap=1, volume_24h=1, exchange="kucoin")
+    )
+    session.commit()
+
+    items, total = crypto_screener.list_candidates(session, exchange="kucoin")
+
+    assert total == 1
+    assert [c.coin_id for c in items] == ["b"]
+
+
+def test_list_candidates_filters_geckoterminal_by_source_not_exchange(session):
+    session.add(
+        ScreenerCandidate(
+            coin_id="a", symbol="A", name="A", market_cap=1, volume_24h=1,
+            source="geckoterminal", exchange=None,
+        )
+    )
+    session.add(
+        ScreenerCandidate(coin_id="b", symbol="B", name="B", market_cap=1, volume_24h=1, exchange="binance")
+    )
+    session.commit()
+
+    items, total = crypto_screener.list_candidates(session, exchange="geckoterminal")
+
+    assert total == 1
+    assert [c.coin_id for c in items] == ["a"]
 
 
 def test_list_candidates_query_no_match_returns_empty(session):

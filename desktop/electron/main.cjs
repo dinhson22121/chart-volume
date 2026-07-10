@@ -1,11 +1,17 @@
 // Electron main process: mint a per-launch token, spawn the Python backend as a
 // child process (loopback), then open the window once /health is reachable.
-const { app, BrowserWindow, ipcMain, safeStorage } = require("electron");
+const { app, BrowserWindow, ipcMain, safeStorage, shell } = require("electron");
 const { spawn } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
 const http = require("http");
+const os = require("os");
 const path = require("path");
+
+// Rounded down: used only to gate/recommend local-AI (Ollama) setup in
+// Settings, not a hard resource limit -- os.totalmem() is cross-platform
+// (Mac/Mac ARM/Windows/Linux) via Node itself, no native deps needed.
+const TOTAL_MEM_GB = Math.floor(os.totalmem() / 1024 ** 3);
 
 const API_PORT = 8787;
 const API_BASE = `http://127.0.0.1:${API_PORT}`;
@@ -60,10 +66,17 @@ function backendCommand() {
     SETTINGS_KEY: loadOrCreateSettingsKey(),
   };
   if (app.isPackaged) {
-    const bin = path.join(process.resourcesPath, "backend", "chart-volume-backend");
+    // PyInstaller doesn't cross-compile -- the bundled binary name/extension
+    // matches whatever OS it was built on (see package.json's per-platform
+    // extraResources: .exe on Windows, extension-less on Mac/Linux).
+    const binName = process.platform === "win32" ? "chart-volume-backend.exe" : "chart-volume-backend";
+    const bin = path.join(process.resourcesPath, "backend", binName);
     return { cmd: bin, args: [], options: { env } };
   }
-  const py = path.join(BACKEND_DIR, ".venv", "bin", "python");
+  // venv layout differs on Windows (Scripts/python.exe) vs Mac/Linux (bin/python).
+  const py = process.platform === "win32"
+    ? path.join(BACKEND_DIR, ".venv", "Scripts", "python.exe")
+    : path.join(BACKEND_DIR, ".venv", "bin", "python");
   return {
     cmd: py,
     args: ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(API_PORT)],
@@ -127,7 +140,21 @@ function createWindow() {
 
 // Synchronous config handshake so the renderer has apiBase + token before first fetch.
 ipcMain.on("get-config-sync", (event) => {
-  event.returnValue = { apiBase: API_BASE, token: API_TOKEN };
+  event.returnValue = {
+    apiBase: API_BASE,
+    token: API_TOKEN,
+    totalMemGB: TOTAL_MEM_GB,
+    platform: process.platform, // "darwin" | "win32" | "linux" -- Mac (incl. Apple Silicon), Win64, Linux
+  };
+});
+
+// Opens a URL in the user's default browser (e.g. the Ollama download page)
+// -- restricted to http(s) so this channel can never be used to open
+// arbitrary local files or custom protocol handlers from the renderer.
+ipcMain.handle("open-external", (_event, url) => {
+  if (typeof url === "string" && /^https:\/\//.test(url)) {
+    shell.openExternal(url);
+  }
 });
 
 function shutdownBackend() {

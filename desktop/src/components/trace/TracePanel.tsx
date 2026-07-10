@@ -6,6 +6,7 @@ import "./trace.css";
 
 interface Props {
   ticker: string;
+  displaySymbol: string;
   timeframe: Timeframe;
   barTs: string;
   onClose: () => void;
@@ -15,7 +16,7 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" });
 }
 
-export function TracePanel({ ticker, timeframe, barTs, onClose }: Props) {
+export function TracePanel({ ticker, displaySymbol, timeframe, barTs, onClose }: Props) {
   const [trace, setTrace] = useState<BarTrace | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,7 +44,7 @@ export function TracePanel({ ticker, timeframe, barTs, onClose }: Props) {
       <div className="trace-modal" onClick={(e) => e.stopPropagation()}>
         <header className="settings-modal__header">
           <h2>
-            Vì sao nến này? <span className="trace-ticker mono">{ticker}</span>
+            Vì sao nến này? <span className="trace-ticker mono">{displaySymbol}</span>
           </h2>
           <button className="settings-modal__close" onClick={onClose} aria-label="Đóng">
             ×

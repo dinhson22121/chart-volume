@@ -107,9 +107,12 @@ export const api = {
   triggerScreenerScan: () => req<{ status: string }>("/crypto/screener/scan", { method: "POST" }),
   cancelScreenerScan: () => req<ScanStatus>("/crypto/screener/cancel", { method: "POST" }),
   getScreenerStatus: () => req<ScanStatus>("/crypto/screener/status"),
-  getScreenerCandidates: (sort: CandidateSort, page: number, pageSize: number, q?: string) => {
+  getScreenerCandidates: (
+    sort: CandidateSort, page: number, pageSize: number, q?: string, exchange?: string,
+  ) => {
     const params = new URLSearchParams({ sort, page: String(page), page_size: String(pageSize) });
     if (q) params.set("q", q);
+    if (exchange) params.set("exchange", exchange);
     return req<CandidatesPage>(`/crypto/screener/candidates?${params.toString()}`);
   },
   promoteCandidate: (coinId: string) =>

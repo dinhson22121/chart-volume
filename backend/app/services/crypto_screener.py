@@ -33,6 +33,8 @@ MIN_MARKET_CAP_FLOOR = 100_000.0  # ignore near-zero/broken market cap entries
 DEX_PAGE_PAUSE_SECONDS = 6.0  # GeckoTerminal rate-limits at least as hard as CoinGecko
 DEX_MAX_PAGES = 5  # per discovery endpoint (new_pools, trending_pools) -- kept modest
 
+_CANCEL_CHECK_INTERVAL_SECONDS = 0.25
+
 # A scan takes minutes (rate-limited pagination) and can be triggered either by
 # the scheduler or a manual "scan now" click -- this lock/state is shared so
 # both paths go through run_scan_guarded() and never overlap.
@@ -61,6 +63,18 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _interruptible_sleep(total_seconds: float) -> None:
+    """Sleeps in small increments, checking _cancel_requested between each --
+    a single long time.sleep() would otherwise delay a cancel by up to the
+    full inter-page pause (3-6s), since the flag is only re-checked at the
+    top of the next loop iteration."""
+    elapsed = 0.0
+    while elapsed < total_seconds and not _cancel_requested.is_set():
+        chunk = min(_CANCEL_CHECK_INTERVAL_SECONDS, total_seconds - elapsed)
+        time.sleep(chunk)
+        elapsed += chunk
+
+
 def _previous_snapshot(session: Session, coin_id: str, before: datetime) -> CryptoVolumeSnapshot | None:
     return session.exec(
         select(CryptoVolumeSnapshot)
@@ -69,34 +83,44 @@ def _previous_snapshot(session: Session, coin_id: str, before: datetime) -> Cryp
     ).first()
 
 
-def _tradeable_symbols(exchanges: tuple[str, ...]) -> set[str] | None:
-    """Combined base-asset symbols (e.g. "BTC") tradeable on any enabled
-    exchange -- used to skip screener hits we could never chart anyway (see
-    the ARGN case: CoinGecko lists thousands of coins that never made it onto
-    a centralized exchange). Returns None if every enabled exchange failed to
-    respond, so a transient network hiccup doesn't silently zero out a scan.
+def _tradeable_symbol_exchanges(exchanges: tuple[str, ...]) -> dict[str, str] | None:
+    """Maps base-asset symbol (e.g. "BTC") -> the exchange that would actually
+    serve its candles -- used both to skip screener hits we could never chart
+    anyway (see the ARGN case: CoinGecko lists thousands of coins that never
+    made it onto a centralized exchange) and to tell the user which real
+    exchange a candidate resolves to, instead of just "CoinGecko" (which is
+    only the discovery source, identical for every non-DEX candidate).
+
+    Built in reverse of ingest_crypto's own fallback priority (MEXC, then
+    KuCoin, then Binance) so a symbol listed on multiple exchanges ends up
+    mapped to whichever one ingest would actually try first. Returns None if
+    every enabled exchange failed to respond, so a transient network hiccup
+    doesn't silently zero out a scan.
     """
-    symbols: set[str] = set()
+    by_symbol: dict[str, str] = {}
     fetched_any = False
-    if CryptoExchange.BINANCE in exchanges:
+    if CryptoExchange.MEXC in exchanges:
         try:
-            symbols |= binance_client.fetch_tradeable_symbols()
+            for sym in mexc_client.fetch_tradeable_symbols():
+                by_symbol[sym] = CryptoExchange.MEXC
             fetched_any = True
         except Exception as exc:  # noqa: BLE001 - degrade to "no filter", don't kill the scan
-            logger.warning("could not fetch Binance tradeable symbols: %s", exc)
+            logger.warning("could not fetch MEXC tradeable symbols: %s", exc)
     if CryptoExchange.KUCOIN in exchanges:
         try:
-            symbols |= kucoin_client.fetch_tradeable_symbols()
+            for sym in kucoin_client.fetch_tradeable_symbols():
+                by_symbol[sym] = CryptoExchange.KUCOIN
             fetched_any = True
         except Exception as exc:  # noqa: BLE001
             logger.warning("could not fetch KuCoin tradeable symbols: %s", exc)
-    if CryptoExchange.MEXC in exchanges:
+    if CryptoExchange.BINANCE in exchanges:
         try:
-            symbols |= mexc_client.fetch_tradeable_symbols()
+            for sym in binance_client.fetch_tradeable_symbols():
+                by_symbol[sym] = CryptoExchange.BINANCE
             fetched_any = True
         except Exception as exc:  # noqa: BLE001
-            logger.warning("could not fetch MEXC tradeable symbols: %s", exc)
-    return symbols if fetched_any else None
+            logger.warning("could not fetch Binance tradeable symbols: %s", exc)
+    return by_symbol if fetched_any else None
 
 
 def _upsert_candidate(
@@ -111,6 +135,7 @@ def _upsert_candidate(
     source: str = "coingecko",
     network: str | None = None,
     pool_address: str | None = None,
+    exchange: str | None = None,
 ) -> None:
     values = dict(
         symbol=symbol,
@@ -122,6 +147,7 @@ def _upsert_candidate(
         source=source,
         network=network,
         pool_address=pool_address,
+        exchange=exchange,
     )
     existing = session.get(ScreenerCandidate, coin_id)
     if existing:
@@ -145,6 +171,7 @@ def _maybe_add_candidate(
     source: str = "coingecko",
     network: str | None = None,
     pool_address: str | None = None,
+    exchange: str | None = None,
 ) -> bool:
     """Records a volume snapshot and, if it qualifies under
     ``require_volume_rising``, upserts it as a candidate. Returns whether it
@@ -159,7 +186,9 @@ def _maybe_add_candidate(
         change_pct = (volume_24h - prev.volume_24h) / prev.volume_24h * 100
     if require_volume_rising and not (change_pct is not None and change_pct >= min_volume_change_pct):
         return False
-    _upsert_candidate(session, coin_id, symbol, name, mcap, volume_24h, change_pct, now, source, network, pool_address)
+    _upsert_candidate(
+        session, coin_id, symbol, name, mcap, volume_24h, change_pct, now, source, network, pool_address, exchange
+    )
     return True
 
 
@@ -213,7 +242,7 @@ def _scan_dex_pools(
                     hits += 1
             session.commit()
             _scan_state["hits_so_far"] = base_hits + hits
-            time.sleep(DEX_PAGE_PAUSE_SECONDS)
+            _interruptible_sleep(DEX_PAGE_PAUSE_SECONDS)
     logger.info("DEX discovery complete: %d candidates found", hits)
     return hits
 
@@ -245,7 +274,7 @@ def scan(
     now = _utcnow()
     hits = 0
     page = 1
-    tradeable = _tradeable_symbols(exchanges)
+    tradeable = _tradeable_symbol_exchanges(exchanges)
     _scan_state["phase"] = "coingecko"
     _scan_state["current_page"] = page
     _scan_state["hits_so_far"] = 0
@@ -270,7 +299,8 @@ def scan(
             if mcap < mcap_min:
                 below_range_count += 1
                 continue
-            if tradeable is not None and coin.get("symbol", "").upper() not in tradeable:
+            coin_symbol = coin.get("symbol", "").upper()
+            if tradeable is not None and coin_symbol not in tradeable:
                 continue
 
             if _maybe_add_candidate(
@@ -283,6 +313,7 @@ def scan(
                 now,
                 require_volume_rising,
                 min_volume_change_pct,
+                exchange=tradeable.get(coin_symbol) if tradeable is not None else None,
             ):
                 hits += 1
 
@@ -295,7 +326,7 @@ def scan(
         if below_range_count == len(coins):
             break
         page += 1
-        time.sleep(PAGE_PAUSE_SECONDS)
+        _interruptible_sleep(PAGE_PAUSE_SECONDS)
 
     if CryptoExchange.GECKOTERMINAL in exchanges and not _cancel_requested.is_set():
         hits += _scan_dex_pools(
@@ -310,18 +341,26 @@ CANDIDATE_SORT_CHOICES = ("volume_change", "market_cap")
 DEFAULT_PAGE_SIZE = 50
 
 
+CANDIDATE_EXCHANGE_CHOICES = CryptoExchange.ALL  # binance, kucoin, mexc, geckoterminal
+
+
 def list_candidates(
     session: Session,
     sort: str = "volume_change",
     page: int = 1,
     page_size: int = DEFAULT_PAGE_SIZE,
     query: str | None = None,
+    exchange: str | None = None,
 ) -> tuple[list[ScreenerCandidate], int]:
     """Returns (items for this page, total candidate count).
 
     ``query`` filters by symbol/name substring (case-insensitive) server-side
     -- candidates can number in the hundreds and are paginated, so a
     client-side-only filter would miss matches not yet scrolled into view.
+
+    ``exchange`` filters to candidates that resolve to that centralized
+    exchange (see ScreenerCandidate.exchange); "geckoterminal" instead filters
+    by source, since DEX-pool hits don't resolve to a centralized exchange.
     """
     order_col = (
         ScreenerCandidate.market_cap.desc()
@@ -340,6 +379,12 @@ def list_candidates(
         ).contains(needle, autoescape=True)
         stmt = stmt.where(condition)
         count_stmt = count_stmt.where(condition)
+    if exchange == CryptoExchange.GECKOTERMINAL:
+        stmt = stmt.where(ScreenerCandidate.source == "geckoterminal")
+        count_stmt = count_stmt.where(ScreenerCandidate.source == "geckoterminal")
+    elif exchange:
+        stmt = stmt.where(ScreenerCandidate.exchange == exchange)
+        count_stmt = count_stmt.where(ScreenerCandidate.exchange == exchange)
 
     total = session.exec(count_stmt).one()
     items = session.exec(stmt.order_by(order_col).offset((page - 1) * page_size).limit(page_size)).all()

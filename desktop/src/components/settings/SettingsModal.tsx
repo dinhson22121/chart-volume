@@ -14,6 +14,32 @@ const MODEL_OPTIONS = [
 ];
 
 const OLLAMA_SUGGESTIONS = ["qwen2.5:7b", "qwen2.5:3b", "llama3.1:8b", "deepseek-r1:7b", "mistral:7b"];
+const OLLAMA_DOWNLOAD_URL = "https://ollama.com/download";
+
+// Below this, even the lightest usable model risks starving the OS + the
+// app itself of memory -- disable the local-AI option entirely rather than
+// let the user hit an opaque hang/crash mid-analysis.
+const MIN_RAM_GB_FOR_LOCAL_AI = 8;
+// Below this, still usable but only comfortably for the smaller model.
+const RAM_GB_FOR_7B_MODEL = 16;
+const RECOMMENDED_MODEL_LOW_RAM = { name: "qwen2.5:3b", sizeLabel: "~2GB" };
+const RECOMMENDED_MODEL_HIGH_RAM = { name: "qwen2.5:7b", sizeLabel: "~4.7GB" };
+
+// Renderer has no direct OS access -- Electron's preload bridges totalMemGB
+// from the main process (os.totalmem(), cross-platform on Mac/Mac ARM/Win64/
+// Linux). In a plain-browser dev session (no preload) there's no real
+// machine to gate, so default to "assume sufficient".
+function getTotalMemGB(): number {
+  return window.chartVolume?.totalMemGB ?? Infinity;
+}
+
+function openExternal(url: string): void {
+  if (window.chartVolume?.openExternal) {
+    void window.chartVolume.openExternal(url);
+  } else {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
 
 const MCAP_OPTIONS = [
   { value: "10000000", label: "Dưới 10 triệu $" },
@@ -193,6 +219,15 @@ export function SettingsModal({ onClose }: Props) {
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
 
+  // Deep-compares against the last-saved values (not just "something changed
+  // at some point") -- so flipping a setting and flipping it back leaves the
+  // Save button in its normal state instead of staying flagged dirty.
+  const isDirty = form !== null && loaded !== null && JSON.stringify(form) !== JSON.stringify(toForm(loaded));
+
+  const totalMemGB = getTotalMemGB();
+  const hasEnoughRamForLocalAI = totalMemGB >= MIN_RAM_GB_FOR_LOCAL_AI;
+  const recommendedModel = totalMemGB >= RAM_GB_FOR_7B_MODEL ? RECOMMENDED_MODEL_HIGH_RAM : RECOMMENDED_MODEL_LOW_RAM;
+
   const handleSave = async () => {
     if (!form) return;
     setSaving(true);
@@ -209,8 +244,8 @@ export function SettingsModal({ onClose }: Props) {
     }
   };
 
-  const handlePullModel = async () => {
-    const model = pullModelName.trim();
+  const handlePullModel = async (modelOverride?: string) => {
+    const model = (modelOverride ?? pullModelName).trim();
     if (!model) return;
     setPulling(true);
     setPullError(null);
@@ -297,10 +332,22 @@ export function SettingsModal({ onClose }: Props) {
                 <button
                   className={form.narrativeProvider === "ollama" ? "is-active" : ""}
                   onClick={() => set("narrativeProvider", "ollama")}
+                  disabled={!hasEnoughRamForLocalAI}
+                  title={
+                    hasEnoughRamForLocalAI
+                      ? undefined
+                      : `Máy cần tối thiểu ${MIN_RAM_GB_FOR_LOCAL_AI}GB RAM để chạy AI local (hiện có ~${totalMemGB}GB)`
+                  }
                 >
                   Ollama (local, miễn phí)
                 </button>
               </div>
+              {!hasEnoughRamForLocalAI && form.narrativeProvider === "anthropic" && (
+                <p className="settings-hint faint">
+                  Máy này có ~{totalMemGB}GB RAM, dưới mức tối thiểu ({MIN_RAM_GB_FOR_LOCAL_AI}GB) để chạy AI
+                  local mượt — mục Ollama đang tắt.
+                </p>
+              )}
 
               {form.narrativeProvider === "anthropic" ? (
                 <>
@@ -336,6 +383,12 @@ export function SettingsModal({ onClose }: Props) {
                 </>
               ) : (
                 <div className="settings-ollama">
+                  {!hasEnoughRamForLocalAI && (
+                    <p className="settings-hint settings-hint--warn">
+                      Máy này có ~{totalMemGB}GB RAM, dưới mức tối thiểu ({MIN_RAM_GB_FOR_LOCAL_AI}GB) khuyến
+                      nghị để chạy AI local — có thể rất chậm hoặc treo máy khi phân tích.
+                    </p>
+                  )}
                   <div className="settings-ollama__status">
                     {ollamaStatusLoading ? (
                       <span className="faint">Đang kiểm tra Ollama…</span>
@@ -350,10 +403,40 @@ export function SettingsModal({ onClose }: Props) {
                       Kiểm tra lại
                     </button>
                   </div>
+
                   {!ollamaStatusLoading && !ollamaStatus?.available && (
-                    <p className="settings-hint faint">
-                      Chưa cài Ollama? Tải miễn phí tại ollama.com, cài xong mở lại app này.
-                    </p>
+                    <div className="settings-wizard-card">
+                      <p className="settings-wizard-card__title">Bước 1 — Cài Ollama</p>
+                      <p className="settings-hint faint">
+                        Chưa phát hiện Ollama trên máy. Đây là app chạy AI local, miễn phí, riêng tư — dữ
+                        liệu không rời khỏi máy bạn.
+                      </p>
+                      <button className="btn btn--primary" onClick={() => openExternal(OLLAMA_DOWNLOAD_URL)}>
+                        Tải Ollama (mở trang)
+                      </button>
+                      <p className="settings-hint faint">
+                        Cài xong, mở app Ollama lên rồi bấm nút bên dưới.
+                      </p>
+                      <button className="btn" onClick={() => void refreshOllamaStatus()} disabled={ollamaStatusLoading}>
+                        Kiểm tra lại
+                      </button>
+                    </div>
+                  )}
+
+                  {ollamaStatus?.available && ollamaStatus.models.length === 0 && (
+                    <div className="settings-wizard-card">
+                      <p className="settings-wizard-card__title">✅ Ollama đang chạy — Bước 2, cài model</p>
+                      <p className="settings-hint faint">Chưa có model nào được cài.</p>
+                      <button
+                        className="btn btn--primary"
+                        onClick={() => void handlePullModel(recommendedModel.name)}
+                        disabled={pulling}
+                      >
+                        {pulling ? "Đang tải…" : `Cài model khuyến nghị — ${recommendedModel.name} (${recommendedModel.sizeLabel})`}
+                      </button>
+                      {pullProgress && !pullError && <p className="settings-hint faint">{pullProgress}</p>}
+                      {pullError && <p className="settings-error">{pullError}</p>}
+                    </div>
                   )}
 
                   {ollamaStatus?.models && ollamaStatus.models.length > 0 && (
@@ -737,7 +820,11 @@ export function SettingsModal({ onClose }: Props) {
           <button className="btn" onClick={onClose}>
             Đóng
           </button>
-          <button className="btn btn--primary" onClick={() => void handleSave()} disabled={!form || saving}>
+          <button
+            className={`btn btn--primary${isDirty ? " btn--dirty" : ""}`}
+            onClick={() => void handleSave()}
+            disabled={!form || saving}
+          >
             {saving ? "Đang lưu…" : "Lưu"}
           </button>
         </footer>

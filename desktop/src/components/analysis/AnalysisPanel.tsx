@@ -23,7 +23,7 @@ export function AnalysisPanel({ analysis, loading, error }: Props) {
   if (!analysis) {
     return (
       <div className="analysis-panel analysis-panel--empty faint">
-        Chưa có phân tích. Chọn một mã rồi bấm <strong>Cập nhật</strong>.
+        Chưa có phân tích. Chọn một mã rồi bấm <strong>Phân tích</strong>.
       </div>
     );
   }

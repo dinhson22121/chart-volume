@@ -33,12 +33,30 @@
     ],
     "mac": {
       "target": [
-        "dir",
-        "dmg"
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "dir", "arch": ["x64", "arm64"] }
       ],
       "category": "public.app-category.finance",
       "identity": null,
       "icon": "build/icon.icns"
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office",
+      "icon": "build/icon.png"
     }
   },
   "dependencies": {

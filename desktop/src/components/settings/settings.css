@@ -146,6 +146,9 @@
   font-size: var(--text-xs);
   line-height: 1.5;
 }
+.settings-hint--warn {
+  color: var(--bear);
+}
 
 .settings-provider-toggle {
   margin-bottom: var(--space-4);
@@ -161,6 +164,21 @@
   align-items: center;
   gap: var(--space-3);
   margin-bottom: var(--space-2);
+}
+
+.settings-wizard-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.settings-wizard-card__title {
+  font-size: var(--text-sm);
+  font-weight: 600;
 }
 
 .settings-grid {

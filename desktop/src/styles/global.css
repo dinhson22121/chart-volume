@@ -123,6 +123,10 @@ input {
   color: oklch(18% 0.02 250);
   font-weight: 600;
 }
+.tf-toggle button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 .btn {
   padding: 7px 14px;
@@ -147,6 +151,14 @@ input {
 }
 .btn--primary:hover {
   background: var(--accent-strong);
+}
+.btn--dirty {
+  background: var(--bear);
+  border-color: transparent;
+  color: oklch(98% 0 0);
+}
+.btn--dirty:hover {
+  background: oklch(58% 0.21 25);
 }
 .btn--icon {
   padding: 7px 10px;

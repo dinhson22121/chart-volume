@@ -70,6 +70,8 @@ def _candidate_out(c: ScreenerCandidate) -> dict:
         "volume_change_pct": c.volume_change_pct,
         "last_seen_at": c.last_seen_at,
         "source": c.source,
+        "network": c.network,
+        "exchange": c.exchange,
     }
 
 
@@ -79,11 +81,18 @@ def get_candidates(
     page: int = Query(1, ge=1),
     page_size: int = Query(crypto_screener.DEFAULT_PAGE_SIZE, ge=1, le=200),
     q: str | None = Query(None, description="Filter by symbol/name substring"),
+    exchange: str | None = Query(None, description="Filter by resolved exchange"),
     session: Session = Depends(get_session),
 ) -> dict:
     if sort not in crypto_screener.CANDIDATE_SORT_CHOICES:
         raise HTTPException(status_code=400, detail=f"sort must be one of {crypto_screener.CANDIDATE_SORT_CHOICES}")
-    items, total = crypto_screener.list_candidates(session, sort=sort, page=page, page_size=page_size, query=q)
+    if exchange is not None and exchange not in crypto_screener.CANDIDATE_EXCHANGE_CHOICES:
+        raise HTTPException(
+            status_code=400, detail=f"exchange must be one of {crypto_screener.CANDIDATE_EXCHANGE_CHOICES}"
+        )
+    items, total = crypto_screener.list_candidates(
+        session, sort=sort, page=page, page_size=page_size, query=q, exchange=exchange
+    )
     return {
         "items": [_candidate_out(c) for c in items],
         "total": total,
@@ -103,13 +112,29 @@ def promote_candidate(coin_id: str, session: Session = Depends(get_session)) -> 
     GeckoTerminal hit already has its pool pinned down, and a CoinGecko hit
     keeps its coin id for the lazy CoinGecko-platforms-> GeckoTerminal-pool
     lookup if it's ever needed (i.e. not on Binance/KuCoin).
+
+    Keyed by candidate.coin_id, not candidate.symbol: many unrelated coins
+    share the same ticker symbol on CoinGecko (e.g. several different "pepe"
+    projects), and coin_id is the only field guaranteed unique between them.
+    Using the human symbol as the Symbol primary key would silently merge
+    two different coins' data into one row on a second promote.
+
+    Uppercased before use as the key: every other endpoint that takes a
+    ticker path param (refresh, get_analysis, get_candles, ...) uppercases it
+    before looking the Symbol up, so a lowercase coin_id like "balancer"
+    stored as-is would never match on the next request -- it'd look
+    untracked, get silently recreated as a brand new *stock* Symbol (the
+    model's default asset_class), and then fail trying to crawl it from
+    vnstock instead of an exchange.
     """
     candidate = session.get(ScreenerCandidate, coin_id)
     if not candidate:
         raise HTTPException(status_code=404, detail="candidate not found")
 
-    ticker = candidate.symbol.upper()
-    symbol = session.get(Symbol, ticker) or Symbol(ticker=ticker, name=candidate.name)
+    symbol_key = candidate.coin_id.upper()
+    symbol = session.get(Symbol, symbol_key) or Symbol(ticker=symbol_key)
+    symbol.name = candidate.name
+    symbol.display_symbol = candidate.symbol.upper()
     symbol.is_watchlist = True
     symbol.asset_class = AssetClass.CRYPTO
     if candidate.source == "geckoterminal":
@@ -120,4 +145,4 @@ def promote_candidate(coin_id: str, session: Session = Depends(get_session)) -> 
     session.add(symbol)
     session.commit()
 
-    return {"ticker": ticker, "asset_class": AssetClass.CRYPTO}
+    return {"ticker": symbol_key, "asset_class": AssetClass.CRYPTO}

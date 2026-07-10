@@ -3,6 +3,7 @@ export type AssetClass = "stock" | "crypto";
 
 export interface SymbolItem {
   ticker: string;
+  display_symbol: string;
   name: string;
   asset_class: AssetClass;
   is_vn30: boolean;
@@ -151,6 +152,8 @@ export interface ScreenerCandidate {
   volume_change_pct: number | null;
   last_seen_at: string;
   source: "coingecko" | "geckoterminal";
+  network: string | null;
+  exchange: "binance" | "kucoin" | "mexc" | null;
 }
 
 export type CandidateSort = "volume_change" | "market_cap";
@@ -191,6 +194,7 @@ export interface IndicatorSeries {
 
 export interface DashboardRow {
   ticker: string;
+  display_symbol: string;
   name: string;
   asset_class: AssetClass;
   phase: string | null;

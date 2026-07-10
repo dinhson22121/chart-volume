@@ -97,16 +97,32 @@ export default function App() {
     setRefreshing(true);
     setDataError(null);
     try {
-      const result = await api.refresh(selected, timeframe);
-      setAnalysis(result);
+      // Refresh every timeframe for this asset class, not just the one being
+      // viewed, so switching timeframes afterward already has fresh data.
+      // Sequential + per-timeframe try/catch mirrors the backend's own batch
+      // job isolation (one bad timeframe shouldn't block the others).
+      const failedLabels: string[] = [];
+      for (const tf of availableTimeframes) {
+        try {
+          await api.refresh(selected, tf.key);
+        } catch {
+          failedLabels.push(tf.label);
+        }
+      }
+
+      setAnalysis(await api.getAnalysis(selected, timeframe).catch(() => null));
       setCandles(await api.getCandles(selected, timeframe));
       await loadSymbols();
+
+      if (failedLabels.length > 0) {
+        setDataError(`Phân tích lỗi ở khung: ${failedLabels.join(", ")}`);
+      }
     } catch (e) {
-      setDataError(e instanceof Error ? e.message : "Cập nhật thất bại");
+      setDataError(e instanceof Error ? e.message : "Phân tích thất bại");
     } finally {
       setRefreshing(false);
     }
-  }, [selected, timeframe, loadSymbols]);
+  }, [selected, timeframe, availableTimeframes, loadSymbols]);
 
   const withBusy = useCallback(async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -166,7 +182,11 @@ export default function App() {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}>
-          {selected && <span className="mono" style={{ fontWeight: 600 }}>{selected}</span>}
+          {selected && (
+            <span className="mono" style={{ fontWeight: 600 }}>
+              {selectedSymbol?.display_symbol ?? selected}
+            </span>
+          )}
           <div className="tf-toggle">
             {availableTimeframes.map((tf) => (
               <button
@@ -183,7 +203,7 @@ export default function App() {
             onClick={handleRefresh}
             disabled={!selected || refreshing}
           >
-            {refreshing ? "Đang cập nhật…" : "Cập nhật"}
+            {refreshing ? "Đang phân tích…" : "Phân tích"}
           </button>
           <button
             className="btn btn--icon"
@@ -246,7 +266,7 @@ export default function App() {
               {dataError
                 ? dataError
                 : selected
-                  ? "Chưa có dữ liệu cho mã này. Bấm “Cập nhật” để tải và phân tích."
+                  ? "Chưa có dữ liệu cho mã này. Bấm “Phân tích” để tải và phân tích."
                   : "Chọn một mã ở danh sách bên trái."}
             </div>
           )}
@@ -265,6 +285,7 @@ export default function App() {
       {traceBarTs && selected && (
         <TracePanel
           ticker={selected}
+          displaySymbol={selectedSymbol?.display_symbol ?? selected}
           timeframe={timeframe}
           barTs={traceBarTs}
           onClose={() => setTraceBarTs(null)}

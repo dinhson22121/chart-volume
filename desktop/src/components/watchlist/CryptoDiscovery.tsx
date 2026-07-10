@@ -23,6 +23,16 @@ const SORT_OPTIONS: { value: CandidateSort; label: string }[] = [
   { value: "market_cap", label: "Vốn hóa" },
 ];
 
+// "" means no filter (Tất cả). Values match CryptoExchange on the backend --
+// "geckoterminal" filters by source (DEX pool hits have no resolved exchange).
+const EXCHANGE_FILTER_OPTIONS = [
+  { value: "", label: "Tất cả" },
+  { value: "binance", label: "Binance" },
+  { value: "kucoin", label: "KuCoin" },
+  { value: "mexc", label: "MEXC" },
+  { value: "geckoterminal", label: "DEX" },
+];
+
 function formatUsd(v: number): string {
   if (v >= 1_000_000_000) return `$${(v / 1_000_000_000).toFixed(2)}B`;
   if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
@@ -37,6 +47,20 @@ function formatPct(v: number | null): string {
 
 function scanPhaseLabel(phase: ScanStatus["phase"]): string {
   return phase === "dex_pools" ? "DEX (GeckoTerminal)" : "CoinGecko";
+}
+
+const EXCHANGE_LABEL: Record<string, string> = { binance: "Binance", kucoin: "KuCoin", mexc: "MEXC" };
+
+// Nhiều coin khác nhau có thể trùng ký hiệu (vd nhiều "pepe" clone khác nhau) --
+// nhãn nguồn giúp biết coin này thực sự lấy nến từ đâu. Ưu tiên hiện sàn thật
+// (Binance/KuCoin/MEXC) nếu đã dò được lúc quét -- "CoinGecko" chỉ là nguồn
+// phát hiện, không phải nơi sẽ lấy nến, nên không đủ thông tin nếu đứng một
+// mình. Tên đầy đủ (c.name, hiển thị riêng ở card) mới là thứ phân biệt các
+// coin trùng ký hiệu với nhau.
+function sourceLabel(c: ScreenerCandidate): string {
+  if (c.source === "geckoterminal") return `DEX${c.network ? ` · ${c.network}` : ""}`;
+  if (c.exchange) return EXCHANGE_LABEL[c.exchange] ?? c.exchange;
+  return "CoinGecko (chưa rõ sàn)";
 }
 
 // There's no reliable upfront "total pages" to compute a real percentage from
@@ -55,6 +79,7 @@ export function CryptoDiscovery({ onPromoted }: Props) {
   const [sort, setSort] = useState<CandidateSort>("volume_change");
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [exchangeFilter, setExchangeFilter] = useState("");
   const [candidates, setCandidates] = useState<ScreenerCandidate[] | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -63,12 +88,13 @@ export function CryptoDiscovery({ onPromoted }: Props) {
   const [promoting, setPromoting] = useState<string | null>(null);
   const [exchanges, setExchanges] = useState<string[] | null>(null);
   const [savingExchanges, setSavingExchanges] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const loadFirstPage = useCallback(async (sortValue: CandidateSort, query: string) => {
+  const loadFirstPage = useCallback(async (sortValue: CandidateSort, query: string, exchangeValue: string) => {
     try {
-      const res = await api.getScreenerCandidates(sortValue, 1, PAGE_SIZE, query || undefined);
+      const res = await api.getScreenerCandidates(sortValue, 1, PAGE_SIZE, query || undefined, exchangeValue || undefined);
       setCandidates(res.items);
       setTotal(res.total);
       setPage(1);
@@ -89,14 +115,15 @@ export function CryptoDiscovery({ onPromoted }: Props) {
 
   useEffect(() => {
     void refreshStatus();
-    void loadFirstPage("volume_change", "");
+    void loadFirstPage("volume_change", "", "");
     void api.getSettings().then((s) => setExchanges(s.crypto_exchanges));
-    // Only on mount -- sort/search changes are handled by their own handlers.
+    // Only on mount -- sort/search/exchange changes are handled by their own handlers.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (!status?.running) {
+      setCancelling(false); // scan actually stopped -- clear the "Đang hủy…" state
       if (pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;
@@ -106,12 +133,12 @@ export function CryptoDiscovery({ onPromoted }: Props) {
     pollRef.current = setInterval(() => {
       // Reload every tick, not just once at completion, so newly-found
       // candidates appear while the scan is still running.
-      void refreshStatus().then(() => void loadFirstPage(sort, searchQuery));
+      void refreshStatus().then(() => void loadFirstPage(sort, searchQuery, exchangeFilter));
     }, POLL_MS);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [status?.running, refreshStatus, loadFirstPage, sort, searchQuery]);
+  }, [status?.running, refreshStatus, loadFirstPage, sort, searchQuery, exchangeFilter]);
 
   useEffect(() => {
     return () => {
@@ -124,7 +151,9 @@ export function CryptoDiscovery({ onPromoted }: Props) {
     setLoadingMore(true);
     try {
       const nextPage = page + 1;
-      const res = await api.getScreenerCandidates(sort, nextPage, PAGE_SIZE, searchQuery || undefined);
+      const res = await api.getScreenerCandidates(
+        sort, nextPage, PAGE_SIZE, searchQuery || undefined, exchangeFilter || undefined,
+      );
       setCandidates((prev) => [...(prev ?? []), ...res.items]);
       setPage(nextPage);
     } catch (e) {
@@ -143,7 +172,7 @@ export function CryptoDiscovery({ onPromoted }: Props) {
 
   const handleSortChange = (value: CandidateSort) => {
     setSort(value);
-    void loadFirstPage(value, searchQuery);
+    void loadFirstPage(value, searchQuery, exchangeFilter);
   };
 
   const handleSearchChange = (value: string) => {
@@ -151,8 +180,13 @@ export function CryptoDiscovery({ onPromoted }: Props) {
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     searchDebounceRef.current = setTimeout(() => {
       setSearchQuery(value);
-      void loadFirstPage(sort, value);
+      void loadFirstPage(sort, value, exchangeFilter);
     }, SEARCH_DEBOUNCE_MS);
+  };
+
+  const handleExchangeFilterChange = (value: string) => {
+    setExchangeFilter(value);
+    void loadFirstPage(sort, searchQuery, value);
   };
 
   const handleScan = async () => {
@@ -166,10 +200,12 @@ export function CryptoDiscovery({ onPromoted }: Props) {
   };
 
   const handleCancel = async () => {
+    setCancelling(true); // immediate feedback -- the scan itself can take a moment to actually stop
     try {
       await api.cancelScreenerScan();
       await refreshStatus();
     } catch (e) {
+      setCancelling(false);
       setError(e instanceof Error ? e.message : "Hủy quét thất bại");
     }
   };
@@ -180,7 +216,7 @@ export function CryptoDiscovery({ onPromoted }: Props) {
     try {
       const result = await api.promoteCandidate(coinId);
       onPromoted(result.ticker);
-      await loadFirstPage(sort, searchQuery);
+      await loadFirstPage(sort, searchQuery, exchangeFilter);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Thêm vào theo dõi thất bại");
     } finally {
@@ -241,7 +277,9 @@ export function CryptoDiscovery({ onPromoted }: Props) {
       <div className="wl-crypto__scanbar">
         <span className="wl-crypto__status faint">
           {status?.running
-            ? scanningLabel(status)
+            ? cancelling
+              ? "Đang hủy…"
+              : scanningLabel(status)
             : status?.last_cancelled
               ? "Đã hủy quét"
               : status?.last_error
@@ -251,8 +289,12 @@ export function CryptoDiscovery({ onPromoted }: Props) {
                   : "Chưa quét lần nào"}
         </span>
         {status?.running ? (
-          <button className="wl-seed wl-seed--cancel" onClick={() => void handleCancel()}>
-            ✕ Hủy
+          <button
+            className="wl-seed wl-seed--cancel"
+            onClick={() => void handleCancel()}
+            disabled={cancelling}
+          >
+            {cancelling ? "Đang hủy…" : "✕ Hủy"}
           </button>
         ) : (
           <button className="wl-seed" onClick={() => void handleScan()}>
@@ -280,11 +322,27 @@ export function CryptoDiscovery({ onPromoted }: Props) {
         />
       )}
 
+      {candidates && (
+        <div className="wl-tabs wl-tabs--exchange-filter">
+          {EXCHANGE_FILTER_OPTIONS.map((o) => (
+            <button
+              key={o.value || "all"}
+              className={exchangeFilter === o.value ? "is-active" : ""}
+              onClick={() => handleExchangeFilterChange(o.value)}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {candidates && candidates.length === 0 && !error && (
         <p className="wl-empty faint">
           {searchQuery
             ? `Không tìm thấy coin nào khớp "${searchQuery}".`
-            : 'Chưa có candidate. Bấm "Quét" để tìm coin vốn hóa nhỏ.'}
+            : exchangeFilter
+              ? "Không có candidate nào trên sàn này."
+              : 'Chưa có candidate. Bấm "Quét" để tìm coin vốn hóa nhỏ.'}
         </p>
       )}
 
@@ -322,10 +380,17 @@ export function CryptoDiscovery({ onPromoted }: Props) {
                     {promoting === c.coin_id ? "…" : "+"}
                   </button>
                 </div>
+                {c.name && (
+                  <div className="wl-crypto-card__name faint" title={c.coin_id}>
+                    {c.name}
+                  </div>
+                )}
                 <div className="wl-crypto-card__row2 faint mono">
                   <span>{formatUsd(c.market_cap)}</span>
                   <span>·</span>
                   <span>{formatPct(c.volume_change_pct)} vol</span>
+                  <span>·</span>
+                  <span className="wl-crypto-card__source">{sourceLabel(c)}</span>
                 </div>
               </li>
             ))}

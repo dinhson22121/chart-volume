@@ -78,6 +78,20 @@ def test_ingest_crypto_uses_binance_when_available(session, mocker):
     assert all(r.ticker == "BTC" for r in rows)
 
 
+def test_ingest_crypto_looks_up_exchange_symbol_but_stores_under_coin_symbol(session, mocker):
+    # Screener-promoted coins store candles under a CoinGecko coin_id (unique)
+    # but must still look the coin up on the exchange by its real trading
+    # symbol -- these differ, unlike every other ingest_crypto test here.
+    binance_spy = mocker.patch.object(binance_client, "fetch_klines", return_value=_crypto_df())
+
+    count = ingest.ingest_crypto(session, "pepesol", Timeframe.HOUR_4, exchange_symbol="PEPE")
+
+    assert count == 2
+    binance_spy.assert_called_once_with("PEPEUSDT", "4h")
+    rows = session.exec(select(Candle).where(Candle.timeframe == Timeframe.HOUR_4)).all()
+    assert all(r.ticker == "PEPESOL" for r in rows)
+
+
 def test_ingest_crypto_falls_back_to_kucoin_when_not_on_binance(session, mocker):
     mocker.patch.object(
         binance_client, "fetch_klines", side_effect=binance_client.SymbolNotFoundError("nope")

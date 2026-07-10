@@ -56,7 +56,12 @@ def _latest_signal(signals_json: str) -> dict | None:
 
 
 def _dashboard_row(symbol: Symbol, analysis: Analysis | None) -> dict:
-    base = {"ticker": symbol.ticker, "name": symbol.name, "asset_class": symbol.asset_class}
+    base = {
+        "ticker": symbol.ticker,
+        "display_symbol": symbol.display_symbol or symbol.ticker,
+        "name": symbol.name,
+        "asset_class": symbol.asset_class,
+    }
     if analysis is None:
         return {**base, "phase": None, "confidence": None, "as_of": None, "latest_signal": None, "has_data": False}
     return {
@@ -139,7 +144,7 @@ def refresh_analysis(
     # screener/promote flow defaults to a stock (matches the existing VN30 UX).
     symbol = session.get(Symbol, ticker)
     if not symbol:
-        symbol = Symbol(ticker=ticker, is_watchlist=True)
+        symbol = Symbol(ticker=ticker, display_symbol=ticker, is_watchlist=True)
         session.add(symbol)
         session.commit()
 
@@ -153,7 +158,9 @@ def refresh_analysis(
     exchanges: tuple[str, ...] | None = None
     if symbol.asset_class == AssetClass.CRYPTO:
         exchanges = settings_service.get_crypto_exchanges(session)
-        ingest.ingest_crypto(session, ticker, timeframe, exchanges=exchanges, symbol=symbol)
+        ingest.ingest_crypto(
+            session, ticker, timeframe, exchange_symbol=symbol.display_symbol, exchanges=exchanges, symbol=symbol
+        )
     elif timeframe == Timeframe.DAILY:
         ingest.ingest_daily(session, ticker)
     else:

@@ -224,6 +224,14 @@
 .wl-tabs--sort {
   flex: 1;
 }
+.wl-tabs--exchange-filter {
+  flex-wrap: wrap;
+  margin: 0 0 var(--space-2);
+}
+.wl-tabs--exchange-filter button {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+}
 .wl-crypto__count {
   font-size: var(--text-xs);
   white-space: nowrap;

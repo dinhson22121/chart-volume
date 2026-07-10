@@ -44,8 +44,16 @@ def _utcnow() -> datetime:
 
 
 class Symbol(SQLModel, table=True):
+    # For stocks/manually-added crypto, ticker IS the trading symbol. For
+    # crypto promoted from the screener, ticker is the CoinGecko coin_id
+    # instead (e.g. "pepesol") -- guaranteed unique, unlike the human ticker
+    # symbol which many unrelated coins share (see display_symbol below).
     ticker: str = Field(primary_key=True)
     name: str = ""
+    # The actual trading symbol (e.g. "PEPE") -- used for display and for
+    # looking the coin up on an exchange. Equal to `ticker` for stocks/manual
+    # adds; distinct from it when `ticker` is a coin_id.
+    display_symbol: str = ""
     asset_class: str = Field(default=AssetClass.STOCK, index=True)
     is_vn30: bool = False
     is_watchlist: bool = False
@@ -200,3 +208,8 @@ class ScreenerCandidate(SQLModel, table=True):
     source: str = "coingecko"
     network: Optional[str] = None
     pool_address: Optional[str] = None
+    # The actual centralized exchange (see CryptoExchange) this coin's symbol
+    # resolves to, in the same priority order ingest_crypto uses (Binance >
+    # KuCoin > MEXC) -- None for geckoterminal-sourced candidates, or if the
+    # symbol isn't tradeable on any enabled exchange yet at scan time.
+    exchange: Optional[str] = None

@@ -1,0 +1,137 @@
+name: Build desktop app (Mac x64/arm64, Windows x64, Linux)
+
+# PyInstaller doesn't cross-compile -- the Python backend must be built on
+# each target OS/arch natively, so this runs one job per platform on that
+# platform's own GitHub-hosted runner, then packages the Electron app with
+# electron-builder on the same runner (no cross-job binary hand-off needed).
+on:
+  push:
+    tags: ["v*"] # e.g. v1.1.0 -- builds all 4 platforms and attaches them to a Release
+  workflow_dispatch: {} # manual trigger for a test build without cutting a release
+
+permissions:
+  contents: write # needed only by the release job, to attach build artifacts
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-13 is GitHub's last Intel (x64) macOS runner image;
+          # macos-14 is Apple Silicon (arm64). Pinned explicitly rather than
+          # "macos-latest" since GitHub has changed what -latest maps to before.
+          - os: macos-13
+            platform: mac
+            arch: x64
+          - os: macos-14
+            platform: mac
+            arch: arm64
+          - os: windows-latest
+            platform: win
+            arch: x64
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      # vnstock pulls in matplotlib, which builds its font cache lazily on
+      # first import (slow, ~90s) -- pre-seeding mpl_cache/ with it here means
+      # the packaged app's first launch is fast instead (see run_server.py).
+      - name: Build backend binary (Mac/Linux)
+        if: runner.os != 'Windows'
+        working-directory: backend
+        run: |
+          mkdir -p mpl_cache
+          python -c "import matplotlib.pyplot"
+          FONTLIST=$(python -c "import matplotlib, glob, os; print(glob.glob(os.path.join(matplotlib.get_cachedir(), 'fontlist-*.json'))[0])")
+          cp "$FONTLIST" mpl_cache/
+          pyinstaller run_server.py --name chart-volume-backend --onedir --noconfirm --clean \
+            --collect-all vnstock --collect-submodules uvicorn --collect-submodules app \
+            --collect-submodules apscheduler --collect-submodules anthropic \
+            --add-data "mpl_cache:mpl_cache" \
+            --exclude-module tkinter --exclude-module PyQt5 --exclude-module PyQt6
+
+      - name: Build backend binary (Windows)
+        if: runner.os == 'Windows'
+        working-directory: backend
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path mpl_cache | Out-Null
+          python -c "import matplotlib.pyplot"
+          $fontlist = python -c "import matplotlib, glob, os; print(glob.glob(os.path.join(matplotlib.get_cachedir(), 'fontlist-*.json'))[0])"
+          Copy-Item $fontlist mpl_cache/
+          pyinstaller run_server.py --name chart-volume-backend --onedir --noconfirm --clean `
+            --collect-all vnstock --collect-submodules uvicorn --collect-submodules app `
+            --collect-submodules apscheduler --collect-submodules anthropic `
+            --add-data "mpl_cache;mpl_cache" `
+            --exclude-module tkinter --exclude-module PyQt5 --exclude-module PyQt6
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build renderer
+        working-directory: desktop
+        run: npm run build
+
+      - name: Package (Mac)
+        if: matrix.platform == 'mac'
+        working-directory: desktop
+        run: npx electron-builder --mac --${{ matrix.arch }}
+
+      - name: Package (Windows)
+        if: matrix.platform == 'win'
+        working-directory: desktop
+        run: npx electron-builder --win --x64
+
+      - name: Package (Linux)
+        if: matrix.platform == 'linux'
+        working-directory: desktop
+        run: npx electron-builder --linux
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chart-volume-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.exe
+            desktop/release/*.AppImage
+            desktop/release/*.deb
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release and attach installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release create "$TAG" artifacts/*/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --generate-notes

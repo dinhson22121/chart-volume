@@ -89,7 +89,10 @@ def run_crypto_batch(session: Session, use_ai: bool = True) -> int:
     for symbol in _tracked_symbols(session, AssetClass.CRYPTO):
         for timeframe in _CRYPTO_TIMEFRAMES:
             try:
-                ingest.ingest_crypto(session, symbol.ticker, timeframe, exchanges=exchanges, symbol=symbol)
+                ingest.ingest_crypto(
+                    session, symbol.ticker, timeframe,
+                    exchange_symbol=symbol.display_symbol, exchanges=exchanges, symbol=symbol,
+                )
                 run_analysis(session, symbol.ticker, timeframe, use_ai=use_ai)
                 ok += 1
             except Exception as exc:  # noqa: BLE001 - isolate per-ticker/timeframe failures

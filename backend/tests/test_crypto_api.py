@@ -152,6 +152,28 @@ def test_get_candidates_filters_by_query(session, client, auth_header):
     assert body["items"][0]["coin_id"] == "pepe-coin"
 
 
+def test_get_candidates_filters_by_exchange(session, client, auth_header):
+    session.add(
+        ScreenerCandidate(coin_id="a", symbol="A", name="A", market_cap=1, volume_24h=1, exchange="binance")
+    )
+    session.add(
+        ScreenerCandidate(coin_id="b", symbol="B", name="B", market_cap=1, volume_24h=1, exchange="kucoin")
+    )
+    session.commit()
+
+    resp = client.get("/crypto/screener/candidates?exchange=kucoin", headers=auth_header)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["items"][0]["coin_id"] == "b"
+
+
+def test_get_candidates_rejects_unknown_exchange(client, auth_header):
+    resp = client.get("/crypto/screener/candidates?exchange=bybit", headers=auth_header)
+    assert resp.status_code == 400
+
+
 def test_promote_candidate_creates_crypto_symbol(session, client, auth_header):
     session.add(
         ScreenerCandidate(
@@ -164,8 +186,9 @@ def test_promote_candidate_creates_crypto_symbol(session, client, auth_header):
     resp = client.post("/crypto/screener/candidates/altcoin-x/promote", headers=auth_header)
 
     assert resp.status_code == 200
-    assert resp.json() == {"ticker": "ALTX", "asset_class": "crypto"}
-    symbol = session.get(Symbol, "ALTX")
+    assert resp.json() == {"ticker": "ALTCOIN-X", "asset_class": "crypto"}
+    symbol = session.get(Symbol, "ALTCOIN-X")
+    assert symbol.display_symbol == "ALTX"
     assert symbol.asset_class == AssetClass.CRYPTO
     assert symbol.is_watchlist is True
 
@@ -186,7 +209,10 @@ def test_promote_coingecko_candidate_sets_coingecko_id(session, client, auth_hea
 
     client.post("/crypto/screener/candidates/altcoin-x/promote", headers=auth_header)
 
-    symbol = session.get(Symbol, "ALTX")
+    # Symbol.ticker (the PK, used by every /analysis|/candles/{ticker} route)
+    # is uppercased -- coingecko_id itself stays lowercase since that's the
+    # real form the CoinGecko API expects for lookups.
+    symbol = session.get(Symbol, "ALTCOIN-X")
     assert symbol.coingecko_id == "altcoin-x"
     assert symbol.dex_network is None
     assert symbol.dex_pool_address is None
@@ -203,7 +229,63 @@ def test_promote_geckoterminal_candidate_sets_dex_pool_ref(session, client, auth
 
     client.post("/crypto/screener/candidates/gt:eth:0xpool1/promote", headers=auth_header)
 
-    symbol = session.get(Symbol, "DEXCOIN")
+    symbol = session.get(Symbol, "GT:ETH:0XPOOL1")
+    assert symbol.display_symbol == "DEXCOIN"
     assert symbol.dex_network == "eth"
     assert symbol.dex_pool_address == "0xpool1"
     assert symbol.coingecko_id is None
+
+
+def test_promote_uppercases_the_symbol_key_so_later_lookups_by_upper_ticker_match(session, client, auth_header):
+    # Regression test: every /analysis|/candles/{ticker} route uppercases the
+    # path param before looking the Symbol up. A coin_id-derived key stored
+    # as-is (lowercase, e.g. "balancer") would never match those lookups --
+    # it'd look untracked, get silently recreated as a brand new *stock*
+    # Symbol, and then fail crawling it from vnstock instead of an exchange.
+    session.add(
+        ScreenerCandidate(
+            coin_id="balancer", symbol="bal", name="Balancer", market_cap=100_000_000,
+            volume_24h=1_000_000, source="coingecko",
+        )
+    )
+    session.commit()
+
+    resp = client.post("/crypto/screener/candidates/balancer/promote", headers=auth_header)
+
+    assert resp.json()["ticker"] == "BALANCER"
+    assert session.get(Symbol, "balancer") is None  # not stored lowercase
+    symbol = session.get(Symbol, "BALANCER")
+    assert symbol is not None
+    assert symbol.asset_class == AssetClass.CRYPTO
+    assert symbol.display_symbol == "BAL"
+
+
+def test_promoting_two_different_coins_sharing_a_ticker_creates_separate_symbols(session, client, auth_header):
+    # Regression test: many unrelated CoinGecko projects share the same
+    # ticker symbol (e.g. several different "pepe" coins). Promoting both
+    # must not let the second one overwrite the first's Symbol row.
+    session.add(
+        ScreenerCandidate(
+            coin_id="pepe-token", symbol="pepe", name="Pepe Community", market_cap=169_000,
+            volume_24h=11.6, source="coingecko",
+        )
+    )
+    session.add(
+        ScreenerCandidate(
+            coin_id="pepesol", symbol="pepe", name="PepeSol", market_cap=152_000,
+            volume_24h=223.85, source="coingecko",
+        )
+    )
+    session.commit()
+
+    client.post("/crypto/screener/candidates/pepe-token/promote", headers=auth_header)
+    client.post("/crypto/screener/candidates/pepesol/promote", headers=auth_header)
+
+    first = session.get(Symbol, "PEPE-TOKEN")
+    second = session.get(Symbol, "PEPESOL")
+    assert first is not None and second is not None
+    assert first.name == "Pepe Community"
+    assert first.coingecko_id == "pepe-token"
+    assert second.name == "PepeSol"
+    assert second.coingecko_id == "pepesol"
+    assert first.display_symbol == second.display_symbol == "PEPE"

@@ -7,4 +7,7 @@ const config = ipcRenderer.sendSync("get-config-sync");
 contextBridge.exposeInMainWorld("chartVolume", {
   apiBase: config.apiBase,
   token: config.token,
+  totalMemGB: config.totalMemGB,
+  platform: config.platform,
+  openExternal: (url) => ipcRenderer.invoke("open-external", url),
 });

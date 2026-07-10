@@ -177,6 +177,7 @@ def ingest_crypto(
     session: Session,
     coin_symbol: str,
     timeframe: str,
+    exchange_symbol: str | None = None,
     exchanges: tuple[str, ...] = ALL_CRYPTO_EXCHANGES,
     symbol: Symbol | None = None,
 ) -> int:
@@ -187,39 +188,47 @@ def ingest_crypto(
     ``symbol`` is the tracked Symbol row, used to read/cache the resolved
     GeckoTerminal pool -- omit only in contexts where GeckoTerminal fallback
     isn't needed (e.g. a symbol not yet tracked).
+
+    ``coin_symbol`` is the storage key (candles are saved under it) and
+    ``exchange_symbol`` (defaults to ``coin_symbol`` when omitted) is what's
+    actually looked up on an exchange. These differ for crypto promoted from
+    the screener, where the storage key is a CoinGecko coin_id (unique) but
+    the exchange only knows the human trading symbol (e.g. "PEPE") -- see
+    Symbol.display_symbol.
     """
     coin_symbol = coin_symbol.upper()
+    lookup_symbol = (exchange_symbol or coin_symbol).upper()
     df = None
 
     if EXCHANGE_BINANCE in exchanges:
         try:
-            df = binance_client.fetch_klines(binance_client.to_pair(coin_symbol), _BINANCE_INTERVAL[timeframe])
+            df = binance_client.fetch_klines(binance_client.to_pair(lookup_symbol), _BINANCE_INTERVAL[timeframe])
         except binance_client.SymbolNotFoundError:
-            logger.info("%s not on Binance, trying next exchange", coin_symbol)
+            logger.info("%s not on Binance, trying next exchange", lookup_symbol)
         except binance_client.CrawlError as exc:
-            logger.warning("binance fetch failed for %s, trying next exchange: %s", coin_symbol, exc)
+            logger.warning("binance fetch failed for %s, trying next exchange: %s", lookup_symbol, exc)
 
     if (df is None or df.empty) and EXCHANGE_KUCOIN in exchanges:
         try:
-            df = kucoin_client.fetch_klines(kucoin_client.to_pair(coin_symbol), timeframe)
+            df = kucoin_client.fetch_klines(kucoin_client.to_pair(lookup_symbol), timeframe)
         except kucoin_client.SymbolNotFoundError:
-            logger.info("%s not on KuCoin either, trying next exchange", coin_symbol)
+            logger.info("%s not on KuCoin either, trying next exchange", lookup_symbol)
         except kucoin_client.CrawlError as exc:
-            logger.warning("kucoin fetch also failed for %s, trying next exchange: %s", coin_symbol, exc)
+            logger.warning("kucoin fetch also failed for %s, trying next exchange: %s", lookup_symbol, exc)
 
     if (df is None or df.empty) and EXCHANGE_MEXC in exchanges:
         try:
-            df = mexc_client.fetch_klines(mexc_client.to_pair(coin_symbol), timeframe)
+            df = mexc_client.fetch_klines(mexc_client.to_pair(lookup_symbol), timeframe)
         except mexc_client.SymbolNotFoundError:
-            logger.info("%s not on MEXC either", coin_symbol)
+            logger.info("%s not on MEXC either", lookup_symbol)
         except mexc_client.CrawlError as exc:
-            logger.warning("mexc fetch also failed for %s: %s", coin_symbol, exc)
+            logger.warning("mexc fetch also failed for %s: %s", lookup_symbol, exc)
 
     if (df is None or df.empty) and EXCHANGE_GECKOTERMINAL in exchanges:
-        df = _fetch_geckoterminal_candles(session, coin_symbol, timeframe, symbol)
+        df = _fetch_geckoterminal_candles(session, lookup_symbol, timeframe, symbol)
 
     if df is None or df.empty:
-        logger.warning("%s has no candle source among enabled exchanges %s", coin_symbol, exchanges)
+        logger.warning("%s has no candle source among enabled exchanges %s", lookup_symbol, exchanges)
         return 0
 
     for _, row in df.iterrows():

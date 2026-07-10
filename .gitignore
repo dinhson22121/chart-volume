@@ -22,3 +22,10 @@ desktop/release/
 
 # OS
 .DS_Store
+
+# Claude Code runtime state (not source)
+.claude/
+
+# Raw logo source material (already extracted into desktop/src/assets + desktop/build)
+Logo-chart-volume.zip
+logo-export/

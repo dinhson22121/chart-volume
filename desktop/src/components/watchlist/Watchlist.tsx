@@ -60,12 +60,12 @@ export function Watchlist({
         {card ? (
           <>
             <div className="wl-crypto-card__row1">
-              <span className="wl-row__ticker mono">{s.ticker}</span>
+              <span className="wl-row__ticker mono">{s.display_symbol}</span>
               {removable && (
                 <span
                   className="wl-row__remove"
                   role="button"
-                  aria-label={`Bỏ ${s.ticker}`}
+                  aria-label={`Bỏ ${s.display_symbol}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     onRemove(s.ticker);
@@ -79,14 +79,14 @@ export function Watchlist({
           </>
         ) : (
           <>
-            <span className="wl-row__ticker mono">{s.ticker}</span>
+            <span className="wl-row__ticker mono">{s.display_symbol}</span>
             {s.asset_class === "crypto" && <span title="Crypto">🪙</span>}
             {s.name && <span className="wl-row__name faint">{s.name}</span>}
             {removable && (
               <span
                 className="wl-row__remove"
                 role="button"
-                aria-label={`Bỏ ${s.ticker}`}
+                aria-label={`Bỏ ${s.display_symbol}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   onRemove(s.ticker);

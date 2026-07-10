@@ -48,7 +48,10 @@ def add_symbol(payload: SymbolIn, session: Session = Depends(get_session)) -> Sy
         session.commit()
         session.refresh(existing)
         return existing
-    symbol = Symbol(ticker=ticker, name=payload.name, asset_class=payload.asset_class, is_watchlist=True)
+    symbol = Symbol(
+        ticker=ticker, name=payload.name, display_symbol=ticker,
+        asset_class=payload.asset_class, is_watchlist=True,
+    )
     session.add(symbol)
     session.commit()
     session.refresh(symbol)
@@ -80,6 +83,6 @@ def seed_vn30(session: Session = Depends(get_session)) -> dict[str, int]:
             symbol.is_vn30 = True
             session.add(symbol)
         else:
-            session.add(Symbol(ticker=ticker, is_vn30=True))
+            session.add(Symbol(ticker=ticker, display_symbol=ticker, is_vn30=True))
     session.commit()
     return {"count": len(tickers)}

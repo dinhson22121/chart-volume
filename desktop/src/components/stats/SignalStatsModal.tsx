@@ -53,7 +53,7 @@ export function SignalStatsModal({ onClose }: Props) {
           {error && <p className="settings-error">{error}</p>}
           {!stats && !error && <p className="faint">Đang tải…</p>}
           {stats && stats.length === 0 && (
-            <p className="faint">Chưa có dữ liệu. Hãy "Cập nhật" vài mã trước.</p>
+            <p className="faint">Chưa có dữ liệu. Hãy "Phân tích" vài mã trước.</p>
           )}
 
           {stats && stats.length > 0 && (

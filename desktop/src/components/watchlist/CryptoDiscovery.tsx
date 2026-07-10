@@ -274,8 +274,8 @@ export function CryptoDiscovery({ onPromoted }: Props) {
         </p>
       )}
 
-      <div className="wl-crypto__scanbar">
-        <span className="wl-crypto__status faint">
+      <div className="wl-scanbar">
+        <span className="wl-status faint">
           {status?.running
             ? cancelling
               ? "Đang hủy…"
@@ -304,13 +304,13 @@ export function CryptoDiscovery({ onPromoted }: Props) {
       </div>
 
       {status?.running && (
-        <div className="wl-crypto__progress" role="progressbar" aria-label="Đang quét coin">
-          <div className="wl-crypto__progress-fill" />
+        <div className="wl-progress" role="progressbar" aria-label="Đang quét coin">
+          <div className="wl-progress-fill" />
         </div>
       )}
 
-      {status?.last_error && <p className="wl-crypto__error">{status.last_error}</p>}
-      {error && <p className="wl-crypto__error">{error}</p>}
+      {status?.last_error && <p className="wl-error">{status.last_error}</p>}
+      {error && <p className="wl-error">{error}</p>}
 
       {candidates && (
         <input

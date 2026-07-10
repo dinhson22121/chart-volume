@@ -11,6 +11,11 @@ export interface SymbolItem {
   added_at: string;
 }
 
+export interface SeedVn30Result {
+  count: number;
+  source: "live" | "fallback";
+}
+
 export interface Candle {
   ticker: string;
   timeframe: string;

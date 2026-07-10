@@ -207,7 +207,7 @@
   border-color: var(--accent);
 }
 
-.wl-crypto__scanbar {
+.wl-scanbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -241,10 +241,10 @@
   font-size: var(--text-xs);
   padding: 6px 0;
 }
-.wl-crypto__status {
+.wl-status {
   font-size: var(--text-xs);
 }
-.wl-crypto__progress {
+.wl-progress {
   position: relative;
   height: 3px;
   border-radius: 2px;
@@ -252,7 +252,7 @@
   overflow: hidden;
   margin-bottom: var(--space-2);
 }
-.wl-crypto__progress-fill {
+.wl-progress-fill {
   position: absolute;
   top: 0;
   left: -40%;
@@ -273,7 +273,7 @@
 .wl-seed--cancel {
   color: var(--bear);
 }
-.wl-crypto__error {
+.wl-error {
   font-size: var(--text-xs);
   color: var(--bear);
   margin-bottom: var(--space-2);

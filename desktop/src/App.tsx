@@ -147,8 +147,6 @@ export default function App() {
       await loadSymbols();
     });
 
-  const handleSeed = () => void withBusy(() => api.seedVn30().then(loadSymbols));
-
   const handleCryptoPromoted = (ticker: string) =>
     void withBusy(async () => {
       await loadSymbols();
@@ -240,7 +238,7 @@ export default function App() {
             onSelect={setSelected}
             onAdd={handleAdd}
             onRemove={handleRemove}
-            onSeedVn30={handleSeed}
+            onSeeded={loadSymbols}
             onCryptoPromoted={handleCryptoPromoted}
             activeTab={sidebarTab}
             onTabChange={handleTabChange}

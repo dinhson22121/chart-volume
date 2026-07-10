@@ -75,8 +75,12 @@ def remove_symbol(ticker: str, session: Session = Depends(get_session)) -> dict[
 
 
 @router.post("/seed-vn30")
-def seed_vn30(session: Session = Depends(get_session)) -> dict[str, int]:
-    tickers = fetch_vn30()
+def seed_vn30(session: Session = Depends(get_session)) -> dict:
+    """Seeds/refreshes VN30 membership. ``source`` tells the UI whether this
+    was live data or the static fallback list (see fetch_vn30), the same way
+    the crypto screener surfaces its own last-run status instead of silently
+    treating a degraded result as if it were fully fresh."""
+    tickers, source = fetch_vn30()
     for ticker in tickers:
         symbol = session.get(Symbol, ticker)
         if symbol:
@@ -85,4 +89,4 @@ def seed_vn30(session: Session = Depends(get_session)) -> dict[str, int]:
         else:
             session.add(Symbol(ticker=ticker, display_symbol=ticker, is_vn30=True))
     session.commit()
-    return {"count": len(tickers)}
+    return {"count": len(tickers), "source": source}

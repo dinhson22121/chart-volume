@@ -1,4 +1,5 @@
 import { useMemo, useState, type FormEvent } from "react";
+import { api } from "../../api/client";
 import type { SymbolItem } from "../../types";
 import { CryptoDiscovery } from "./CryptoDiscovery";
 import "./watchlist.css";
@@ -11,11 +12,17 @@ interface Props {
   onSelect: (ticker: string) => void;
   onAdd: (ticker: string) => void;
   onRemove: (ticker: string) => void;
-  onSeedVn30: () => void;
+  onSeeded: () => void;
   onCryptoPromoted: (ticker: string) => void;
   activeTab: WatchlistTab;
   onTabChange: (tab: WatchlistTab) => void;
   busy: boolean;
+}
+
+interface SeedResult {
+  completedAt: number;
+  count: number;
+  source: "live" | "fallback";
 }
 
 export function Watchlist({
@@ -24,13 +31,19 @@ export function Watchlist({
   onSelect,
   onAdd,
   onRemove,
-  onSeedVn30,
+  onSeeded,
   onCryptoPromoted,
   activeTab,
   onTabChange,
   busy,
 }: Props) {
   const [input, setInput] = useState("");
+  // Self-contained like CryptoDiscovery's own scan state, rather than routed
+  // through App.tsx's generic busy flag -- so seeding gets its own status
+  // line/progress bar/error display instead of just a disabled button.
+  const [seeding, setSeeding] = useState(false);
+  const [seedError, setSeedError] = useState<string | null>(null);
+  const [lastSeed, setLastSeed] = useState<SeedResult | null>(null);
 
   const { vn30, watchlist } = useMemo(() => {
     const vn30 = symbols.filter((s) => s.is_vn30).sort((a, b) => a.ticker.localeCompare(b.ticker));
@@ -46,6 +59,20 @@ export function Watchlist({
     if (t) {
       onAdd(t);
       setInput("");
+    }
+  };
+
+  const handleSeedVn30 = async () => {
+    setSeeding(true);
+    setSeedError(null);
+    try {
+      const result = await api.seedVn30();
+      setLastSeed({ completedAt: Date.now(), count: result.count, source: result.source });
+      onSeeded();
+    } catch (e) {
+      setSeedError(e instanceof Error ? e.message : "Tải VN30 thất bại");
+    } finally {
+      setSeeding(false);
     }
   };
 
@@ -141,16 +168,38 @@ export function Watchlist({
           </div>
 
           {activeTab === "vn30" ? (
-            vn30.length === 0 ? (
-              <div className="wl-accordion__body">
-                <p className="wl-empty faint">Chưa có dữ liệu VN30.</p>
-                <button className="wl-seed" onClick={onSeedVn30} disabled={busy}>
-                  Tải VN30
+            <div className="wl-accordion__body">
+              <div className="wl-scanbar">
+                <span className="wl-status faint">
+                  {seeding
+                    ? "Đang tải VN30…"
+                    : seedError
+                      ? "Lỗi lần tải trước"
+                      : lastSeed
+                        ? `${lastSeed.source === "fallback" ? "⚠ Dự phòng — " : ""}Đã tải lúc ${new Date(
+                            lastSeed.completedAt,
+                          ).toLocaleTimeString("vi-VN")} (${lastSeed.count} mã)`
+                        : "Chưa tải lần nào"}
+                </span>
+                <button className="wl-seed" onClick={() => void handleSeedVn30()} disabled={seeding || busy}>
+                  {seeding ? "Đang tải…" : "Tải VN30"}
                 </button>
               </div>
-            ) : (
-              <ul className="wl-list--scroll wl-list--cards">{vn30.map((s) => renderRow(s, false, true))}</ul>
-            )
+
+              {seeding && (
+                <div className="wl-progress" role="progressbar" aria-label="Đang tải VN30">
+                  <div className="wl-progress-fill" />
+                </div>
+              )}
+
+              {seedError && <p className="wl-error">{seedError}</p>}
+
+              {vn30.length === 0 && !seeding ? (
+                <p className="wl-empty faint">Chưa có dữ liệu VN30.</p>
+              ) : (
+                <ul className="wl-list--scroll wl-list--cards">{vn30.map((s) => renderRow(s, false, true))}</ul>
+              )}
+            </div>
           ) : (
             <CryptoDiscovery onPromoted={onCryptoPromoted} />
           )}

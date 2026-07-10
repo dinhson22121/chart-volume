@@ -10,6 +10,7 @@ import type {
   OllamaPullEvent,
   OllamaStatus,
   ScanStatus,
+  SeedVn30Result,
   Settings,
   SettingsUpdate,
   SignalStat,
@@ -49,7 +50,7 @@ export const api = {
       body: JSON.stringify({ ticker, asset_class: assetClass }),
     }),
   removeSymbol: (ticker: string) => req<unknown>(`/symbols/${ticker}`, { method: "DELETE" }),
-  seedVn30: () => req<{ count: number }>("/symbols/seed-vn30", { method: "POST" }),
+  seedVn30: () => req<SeedVn30Result>("/symbols/seed-vn30", { method: "POST" }),
   getCandles: (ticker: string, timeframe: Timeframe) =>
     req<Candle[]>(`/candles/${ticker}?timeframe=${timeframe}`),
   getAnalysis: (ticker: string, timeframe: Timeframe) =>

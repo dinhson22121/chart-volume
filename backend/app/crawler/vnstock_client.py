@@ -70,14 +70,19 @@ def fetch_hourly(ticker: str, start: str, end: str) -> pd.DataFrame:
     )
 
 
-def fetch_vn30() -> list[str]:
-    """Live VN30 membership, falling back to the static seed on failure."""
+def fetch_vn30() -> tuple[list[str], str]:
+    """Live VN30 membership, falling back to the static seed on failure.
+
+    Returns (tickers, source) where source is "live" or "fallback" -- surfaced
+    up to the UI so a stale/offline fallback list isn't silently mistaken for
+    fresh data (mirrors how the crypto screener surfaces last_error/status).
+    """
     try:
         group = _with_retry(lambda: Listing().symbols_by_group("VN30"), "vn30 list")
         tickers = [str(t).upper() for t in list(group) if str(t).strip()]
         if tickers:
-            return tickers
+            return tickers, "live"
         logger.warning("VN30 live fetch returned empty, using fallback")
     except CrawlError as exc:
         logger.warning("VN30 live fetch failed, using fallback: %s", exc)
-    return list(VN30_FALLBACK)
+    return list(VN30_FALLBACK), "fallback"

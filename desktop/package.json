@@ -2,7 +2,8 @@
   "name": "chart-volume-desktop",
   "version": "0.1.0",
   "description": "Electron + React UI for Chart-Volume Wyckoff analysis",
-  "author": "Son Ngo",
+  "author": "Son Ngo <dinhson22121997@gmail.com>",
+  "homepage": "https://github.com/dinhson22121/chart-volume",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {

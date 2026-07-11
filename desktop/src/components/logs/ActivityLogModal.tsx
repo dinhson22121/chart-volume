@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
 import type { ConfigChangeLogEntry, SystemAction, SystemActionLogEntry } from "../../types";
+import { formatDateTimeMedium } from "../../lib/datetime";
+import { useI18n } from "../../i18n/I18nContext";
 import "../stats/stats.css";
 
 interface Props {
@@ -11,25 +13,25 @@ type Tab = "config" | "system";
 
 const PAGE_SIZE = 20;
 
-const ACTION_LABEL: Record<SystemAction, string> = {
-  screener_scan: "Quét crypto",
-  vn30_seed: "Seed VN30",
-  half_session_morning: "Nửa phiên sáng",
-  half_session_afternoon: "Nửa phiên chiều",
-  daily_close: "Đóng phiên ngày",
-  crypto_analysis_refresh: "Làm mới phân tích crypto",
+const ACTION_KEY: Record<SystemAction, string> = {
+  screener_scan: "logs.action.screener_scan",
+  vn30_seed: "logs.action.vn30_seed",
+  half_session_morning: "logs.action.half_session_morning",
+  half_session_afternoon: "logs.action.half_session_afternoon",
+  daily_close: "logs.action.daily_close",
+  crypto_analysis_refresh: "logs.action.crypto_analysis_refresh",
 };
 
-const TRIGGER_LABEL: Record<SystemActionLogEntry["trigger"], string> = {
-  manual: "Thủ công",
-  scheduled: "Tự động",
+const TRIGGER_KEY: Record<SystemActionLogEntry["trigger"], string> = {
+  manual: "logs.trigger.manual",
+  scheduled: "logs.trigger.scheduled",
 };
 
-const STATUS_LABEL: Record<SystemActionLogEntry["status"], string> = {
-  running: "Đang chạy",
-  success: "Thành công",
-  error: "Lỗi",
-  cancelled: "Đã hủy",
+const STATUS_KEY: Record<SystemActionLogEntry["status"], string> = {
+  running: "logs.status.running",
+  success: "logs.status.success",
+  error: "logs.status.error",
+  cancelled: "logs.status.cancelled",
 };
 
 const STATUS_COLOR: Record<SystemActionLogEntry["status"], string> = {
@@ -39,11 +41,8 @@ const STATUS_COLOR: Record<SystemActionLogEntry["status"], string> = {
   cancelled: "var(--text-faint)",
 };
 
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "medium" });
-}
-
 export function ActivityLogModal({ onClose }: Props) {
+  const { t, language } = useI18n();
   const [tab, setTab] = useState<Tab>("config");
   const [configItems, setConfigItems] = useState<ConfigChangeLogEntry[] | null>(null);
   const [systemItems, setSystemItems] = useState<SystemActionLogEntry[] | null>(null);
@@ -64,7 +63,7 @@ export function ActivityLogModal({ onClose }: Props) {
           setConfigItems(res.items);
           setTotal(res.total);
         })
-        .catch((e: unknown) => setError(e instanceof Error ? e.message : "Không tải được nhật ký"));
+        .catch((e: unknown) => setError(e instanceof Error ? e.message : t("logs.error")));
     } else {
       api
         .getSystemLogs(page, PAGE_SIZE)
@@ -72,8 +71,9 @@ export function ActivityLogModal({ onClose }: Props) {
           setSystemItems(res.items);
           setTotal(res.total);
         })
-        .catch((e: unknown) => setError(e instanceof Error ? e.message : "Không tải được nhật ký"));
+        .catch((e: unknown) => setError(e instanceof Error ? e.message : t("logs.error")));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, page]);
 
   useEffect(() => {
@@ -90,8 +90,8 @@ export function ActivityLogModal({ onClose }: Props) {
     <div className="settings-overlay" onClick={onClose}>
       <div className="stats-modal" onClick={(e) => e.stopPropagation()}>
         <header className="settings-modal__header">
-          <h2>Nhật ký</h2>
-          <button className="settings-modal__close" onClick={onClose} aria-label="Đóng">
+          <h2>{t("logs.title")}</h2>
+          <button className="settings-modal__close" onClick={onClose} aria-label={t("common.close")}>
             ×
           </button>
         </header>
@@ -99,10 +99,10 @@ export function ActivityLogModal({ onClose }: Props) {
         <div className="settings-modal__body">
           <div className="wl-tabs" style={{ marginBottom: "var(--space-3)", maxWidth: 280 }}>
             <button className={tab === "config" ? "is-active" : ""} onClick={() => setTab("config")}>
-              Cấu hình
+              {t("logs.tab.config")}
             </button>
             <button className={tab === "system" ? "is-active" : ""} onClick={() => setTab("system")}>
-              Hệ thống
+              {t("logs.tab.system")}
             </button>
           </div>
 
@@ -110,28 +110,28 @@ export function ActivityLogModal({ onClose }: Props) {
 
           {tab === "config" && (
             <>
-              {!configItems && !error && <p className="faint">Đang tải…</p>}
+              {!configItems && !error && <p className="faint">{t("common.loading")}</p>}
               {configItems && configItems.length === 0 && (
-                <p className="faint">Chưa có thay đổi cấu hình nào.</p>
+                <p className="faint">{t("logs.config.empty")}</p>
               )}
               {configItems && configItems.length > 0 && (
                 <div className="stats-table-wrap">
                   <table className="stats-table">
                     <thead>
                       <tr>
-                        <th>Lúc</th>
-                        <th>Trường</th>
-                        <th>Giá trị cũ</th>
-                        <th>Giá trị mới</th>
+                        <th>{t("logs.config.col.time")}</th>
+                        <th>{t("logs.config.col.field")}</th>
+                        <th>{t("logs.config.col.oldValue")}</th>
+                        <th>{t("logs.config.col.newValue")}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {configItems.map((e) => (
                         <tr key={e.id}>
-                          <td className="faint">{formatDateTime(e.changed_at)}</td>
+                          <td className="faint">{formatDateTimeMedium(e.changed_at, language)}</td>
                           <td className="mono">{e.key}</td>
-                          <td className="mono faint">{e.old_value || "—"}</td>
-                          <td className="mono">{e.new_value || "—"}</td>
+                          <td className="mono faint">{e.old_value || t("common.dash")}</td>
+                          <td className="mono">{e.new_value || t("common.dash")}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -143,29 +143,29 @@ export function ActivityLogModal({ onClose }: Props) {
 
           {tab === "system" && (
             <>
-              {!systemItems && !error && <p className="faint">Đang tải…</p>}
+              {!systemItems && !error && <p className="faint">{t("common.loading")}</p>}
               {systemItems && systemItems.length === 0 && (
-                <p className="faint">Chưa có hành động nào được ghi lại.</p>
+                <p className="faint">{t("logs.system.empty")}</p>
               )}
               {systemItems && systemItems.length > 0 && (
                 <div className="stats-table-wrap">
                   <table className="stats-table">
                     <thead>
                       <tr>
-                        <th>Bắt đầu</th>
-                        <th>Hành động</th>
-                        <th>Kích hoạt</th>
-                        <th>Trạng thái</th>
-                        <th>Kết thúc</th>
-                        <th>Chi tiết</th>
+                        <th>{t("logs.system.col.start")}</th>
+                        <th>{t("logs.system.col.action")}</th>
+                        <th>{t("logs.system.col.trigger")}</th>
+                        <th>{t("logs.system.col.status")}</th>
+                        <th>{t("logs.system.col.end")}</th>
+                        <th>{t("logs.system.col.detail")}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {systemItems.map((e) => (
                         <tr key={e.id}>
-                          <td className="faint">{formatDateTime(e.started_at)}</td>
-                          <td>{ACTION_LABEL[e.action] ?? e.action}</td>
-                          <td className="faint">{TRIGGER_LABEL[e.trigger]}</td>
+                          <td className="faint">{formatDateTimeMedium(e.started_at, language)}</td>
+                          <td>{t(ACTION_KEY[e.action] ?? e.action)}</td>
+                          <td className="faint">{t(TRIGGER_KEY[e.trigger])}</td>
                           <td>
                             <span
                               style={{
@@ -178,11 +178,13 @@ export function ActivityLogModal({ onClose }: Props) {
                                 backgroundColor: STATUS_COLOR[e.status],
                               }}
                             >
-                              {STATUS_LABEL[e.status]}
+                              {t(STATUS_KEY[e.status])}
                             </span>
                           </td>
-                          <td className="faint">{e.finished_at ? formatDateTime(e.finished_at) : "—"}</td>
-                          <td className="faint">{e.detail ?? "—"}</td>
+                          <td className="faint">
+                            {e.finished_at ? formatDateTimeMedium(e.finished_at, language) : t("common.dash")}
+                          </td>
+                          <td className="faint">{e.detail ?? t("common.dash")}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -195,13 +197,13 @@ export function ActivityLogModal({ onClose }: Props) {
           {total > PAGE_SIZE && (
             <div style={{ display: "flex", justifyContent: "center", gap: "var(--space-3)", marginTop: "var(--space-3)" }}>
               <button className="btn" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-                Trước
+                {t("logs.pagination.prev")}
               </button>
               <span className="faint mono" style={{ alignSelf: "center" }}>
                 {page}/{totalPages}
               </span>
               <button className="btn" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
-                Sau
+                {t("logs.pagination.next")}
               </button>
             </div>
           )}
@@ -209,7 +211,7 @@ export function ActivityLogModal({ onClose }: Props) {
 
         <footer className="settings-modal__footer">
           <button className="btn" onClick={onClose}>
-            Đóng
+            {t("common.close")}
           </button>
         </footer>
       </div>

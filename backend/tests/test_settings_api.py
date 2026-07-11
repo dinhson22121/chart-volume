@@ -23,6 +23,18 @@ def test_get_settings_defaults(client, auth_header):
     assert body["daily_lookback_days"] == 730
     assert body["has_anthropic_key"] is False
     assert "anthropic_api_key" not in body
+    assert body["language"] == "vi"
+
+
+def test_put_settings_accepts_english_language(client, auth_header):
+    resp = client.put("/settings", json={"language": "en"}, headers=auth_header)
+    assert resp.status_code == 200
+    assert resp.json()["language"] == "en"
+
+
+def test_put_settings_rejects_unknown_language(client, auth_header):
+    resp = client.put("/settings", json={"language": "fr"}, headers=auth_header)
+    assert resp.status_code == 422
 
 
 def test_put_settings_updates_and_never_echoes_key(client, auth_header):

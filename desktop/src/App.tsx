@@ -9,20 +9,22 @@ import { TracePanel } from "./components/trace/TracePanel";
 import { SignalStatsModal } from "./components/stats/SignalStatsModal";
 import { DashboardModal } from "./components/dashboard/DashboardModal";
 import { ActivityLogModal } from "./components/logs/ActivityLogModal";
+import { useI18n } from "./i18n/I18nContext";
 import logoIcon from "./assets/logo-icon.png";
 
-const STOCK_TIMEFRAMES: { key: Timeframe; label: string }[] = [
-  { key: "daily", label: "Ngày" },
-  { key: "half_session", label: "Nửa phiên" },
+const STOCK_TIMEFRAME_KEYS: { key: Timeframe; labelKey: string }[] = [
+  { key: "daily", labelKey: "app.timeframe.daily" },
+  { key: "half_session", labelKey: "app.timeframe.halfSession" },
 ];
 
-const CRYPTO_TIMEFRAMES: { key: Timeframe; label: string }[] = [
-  { key: "1h", label: "1 giờ" },
-  { key: "4h", label: "4 giờ" },
-  { key: "daily", label: "1 ngày" },
+const CRYPTO_TIMEFRAME_KEYS: { key: Timeframe; labelKey: string }[] = [
+  { key: "1h", labelKey: "app.timeframe.1h" },
+  { key: "4h", labelKey: "app.timeframe.4h" },
+  { key: "daily", labelKey: "app.timeframe.dailyCrypto" },
 ];
 
 export default function App() {
+  const { t } = useI18n();
   const [symbols, setSymbols] = useState<SymbolItem[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [timeframe, setTimeframe] = useState<Timeframe>("daily");
@@ -48,7 +50,14 @@ export default function App() {
   // yet, so the timeframe toggle previews the right options as soon as you
   // switch tabs, not just after clicking a specific ticker.
   const timeframeAssetClass = selectedSymbol?.asset_class ?? (sidebarTab === "crypto" ? "crypto" : "stock");
-  const availableTimeframes = timeframeAssetClass === "crypto" ? CRYPTO_TIMEFRAMES : STOCK_TIMEFRAMES;
+  const availableTimeframes = useMemo(
+    () =>
+      (timeframeAssetClass === "crypto" ? CRYPTO_TIMEFRAME_KEYS : STOCK_TIMEFRAME_KEYS).map((tf) => ({
+        key: tf.key,
+        label: t(tf.labelKey),
+      })),
+    [timeframeAssetClass, t],
+  );
 
   const loadSymbols = useCallback(async () => {
     try {
@@ -56,9 +65,9 @@ export default function App() {
       setSymbols(list);
       setSelected((prev) => prev ?? list.find((s) => s.is_watchlist)?.ticker ?? list[0]?.ticker ?? null);
     } catch (e) {
-      setDataError(e instanceof Error ? e.message : "Không tải được danh sách mã");
+      setDataError(e instanceof Error ? e.message : t("app.error.loadSymbols"));
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void loadSymbols();
@@ -76,9 +85,9 @@ export default function App() {
     } catch (e) {
       setCandles([]);
       setAnalysis(null);
-      setDataError(e instanceof Error ? e.message : "Không tải được dữ liệu");
+      setDataError(e instanceof Error ? e.message : t("app.error.loadData"));
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     // Switching to a symbol whose asset class doesn't support the current
@@ -117,14 +126,14 @@ export default function App() {
       await loadSymbols();
 
       if (failedLabels.length > 0) {
-        setDataError(`Phân tích lỗi ở khung: ${failedLabels.join(", ")}`);
+        setDataError(t("app.error.analysisFailedTimeframes", { timeframes: failedLabels.join(", ") }));
       }
     } catch (e) {
-      setDataError(e instanceof Error ? e.message : "Phân tích thất bại");
+      setDataError(e instanceof Error ? e.message : t("app.error.analysisFailed"));
     } finally {
       setRefreshing(false);
     }
-  }, [selected, timeframe, availableTimeframes, loadSymbols]);
+  }, [selected, timeframe, availableTimeframes, loadSymbols, t]);
 
   const withBusy = useCallback(async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -203,37 +212,37 @@ export default function App() {
             onClick={handleRefresh}
             disabled={!selected || refreshing}
           >
-            {refreshing ? "Đang phân tích…" : "Phân tích"}
+            {refreshing ? t("app.refresh.analyzing") : t("app.refresh.analyze")}
           </button>
           <button
             className="btn btn--icon"
             onClick={() => setDashboardOpen(true)}
-            aria-label="Dashboard theo dõi"
-            title="Dashboard theo dõi"
+            aria-label={t("app.header.dashboard")}
+            title={t("app.header.dashboard")}
           >
             🗂️
           </button>
           <button
             className="btn btn--icon"
             onClick={() => setStatsOpen(true)}
-            aria-label="Thống kê tín hiệu"
-            title="Thống kê tín hiệu"
+            aria-label={t("app.header.stats")}
+            title={t("app.header.stats")}
           >
             📊
           </button>
           <button
             className="btn btn--icon"
             onClick={() => setLogsOpen(true)}
-            aria-label="Nhật ký"
-            title="Nhật ký"
+            aria-label={t("app.header.logs")}
+            title={t("app.header.logs")}
           >
             📜
           </button>
           <button
             className="btn btn--icon"
             onClick={() => setSettingsOpen(true)}
-            aria-label="Cài đặt"
-            title="Cài đặt"
+            aria-label={t("app.header.settings")}
+            title={t("app.header.settings")}
           >
             ⚙
           </button>
@@ -274,8 +283,8 @@ export default function App() {
               {dataError
                 ? dataError
                 : selected
-                  ? "Chưa có dữ liệu cho mã này. Bấm “Phân tích” để tải và phân tích."
-                  : "Chọn một mã ở danh sách bên trái."}
+                  ? t("app.empty.noData")
+                  : t("app.empty.selectTicker")}
             </div>
           )}
         </main>

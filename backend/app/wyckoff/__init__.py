@@ -80,7 +80,7 @@ def candles_to_dataframe(candles) -> pd.DataFrame:
 
 
 def analyze(
-    candles, config: WyckoffConfig = DEFAULT_CONFIG, daily_trend: str | None = None
+    candles, config: WyckoffConfig = DEFAULT_CONFIG, daily_trend: str | None = None, language: str = "vi"
 ) -> AnalysisResult:
     df = candles_to_dataframe(candles)
     if len(df) < MIN_BARS:
@@ -93,7 +93,7 @@ def analyze(
         )
 
     feat = compute_features(df)
-    events = detect_events(feat, config)
+    events = detect_events(feat, config, language)
     support, resistance = latest_levels(feat)
     phase, confidence, drivers, mtf_alignment = classify_phase(feat, events, daily_trend)
 

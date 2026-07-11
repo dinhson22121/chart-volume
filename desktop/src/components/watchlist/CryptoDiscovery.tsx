@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
 import type { CandidateSort, ScanStatus, ScreenerCandidate } from "../../types";
+import { formatDateOnly } from "../../lib/datetime";
+import { useI18n } from "../../i18n/I18nContext";
 
 interface Props {
   onPromoted: (ticker: string) => void;
@@ -11,27 +13,7 @@ const PAGE_SIZE = 50;
 const SCROLL_THRESHOLD_PX = 40;
 const SEARCH_DEBOUNCE_MS = 300;
 
-const EXCHANGE_OPTIONS = [
-  { value: "binance", label: "Binance" },
-  { value: "kucoin", label: "KuCoin" },
-  { value: "mexc", label: "MEXC" },
-  { value: "geckoterminal", label: "GeckoTerminal (DEX, chậm hơn)" },
-];
-
-const SORT_OPTIONS: { value: CandidateSort; label: string }[] = [
-  { value: "volume_change", label: "Volume" },
-  { value: "market_cap", label: "Vốn hóa" },
-];
-
-// "" means no filter (Tất cả). Values match CryptoExchange on the backend --
-// "geckoterminal" filters by source (DEX pool hits have no resolved exchange).
-const EXCHANGE_FILTER_OPTIONS = [
-  { value: "", label: "Tất cả" },
-  { value: "binance", label: "Binance" },
-  { value: "kucoin", label: "KuCoin" },
-  { value: "mexc", label: "MEXC" },
-  { value: "geckoterminal", label: "DEX" },
-];
+const EXCHANGE_LABEL: Record<string, string> = { binance: "Binance", kucoin: "KuCoin", mexc: "MEXC" };
 
 function formatUsd(v: number): string {
   if (v >= 1_000_000_000) return `$${(v / 1_000_000_000).toFixed(2)}B`;
@@ -45,36 +27,8 @@ function formatPct(v: number | null): string {
   return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
 }
 
-function scanPhaseLabel(phase: ScanStatus["phase"]): string {
-  return phase === "dex_pools" ? "DEX (GeckoTerminal)" : "CoinGecko";
-}
-
-const EXCHANGE_LABEL: Record<string, string> = { binance: "Binance", kucoin: "KuCoin", mexc: "MEXC" };
-
-// Nhiều coin khác nhau có thể trùng ký hiệu (vd nhiều "pepe" clone khác nhau) --
-// nhãn nguồn giúp biết coin này thực sự lấy nến từ đâu. Ưu tiên hiện sàn thật
-// (Binance/KuCoin/MEXC) nếu đã dò được lúc quét -- "CoinGecko" chỉ là nguồn
-// phát hiện, không phải nơi sẽ lấy nến, nên không đủ thông tin nếu đứng một
-// mình. Tên đầy đủ (c.name, hiển thị riêng ở card) mới là thứ phân biệt các
-// coin trùng ký hiệu với nhau.
-function sourceLabel(c: ScreenerCandidate): string {
-  if (c.source === "geckoterminal") return `DEX${c.network ? ` · ${c.network}` : ""}`;
-  if (c.exchange) return EXCHANGE_LABEL[c.exchange] ?? c.exchange;
-  return "CoinGecko (chưa rõ sàn)";
-}
-
-// There's no reliable upfront "total pages" to compute a real percentage from
-// (CoinGecko doesn't report one, and GeckoTerminal's page count varies), so
-// the running line shows live page/hit counts instead -- paired with an
-// indeterminate progress bar to signal "still working".
-function scanningLabel(status: ScanStatus): string {
-  const parts = [`Đang quét ${scanPhaseLabel(status.phase)}`];
-  if (status.current_page != null) parts.push(`trang ${status.current_page}`);
-  if (status.hits_so_far != null) parts.push(`${status.hits_so_far} coin`);
-  return parts.join(" — ");
-}
-
 export function CryptoDiscovery({ onPromoted }: Props) {
+  const { t, language } = useI18n();
   const [status, setStatus] = useState<ScanStatus | null>(null);
   const [sort, setSort] = useState<CandidateSort>("volume_change");
   const [searchInput, setSearchInput] = useState("");
@@ -92,6 +46,56 @@ export function CryptoDiscovery({ onPromoted }: Props) {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const EXCHANGE_OPTIONS = [
+    { value: "binance", label: "Binance" },
+    { value: "kucoin", label: "KuCoin" },
+    { value: "mexc", label: "MEXC" },
+    { value: "geckoterminal", label: t("crypto.exchange.geckoterminal") },
+  ];
+
+  const SORT_OPTIONS: { value: CandidateSort; label: string }[] = [
+    { value: "volume_change", label: t("crypto.sort.volume") },
+    { value: "market_cap", label: t("crypto.sort.marketCap") },
+  ];
+
+  // "" means no filter (Tất cả/All). Values match CryptoExchange on the
+  // backend -- "geckoterminal" filters by source (DEX pool hits have no
+  // resolved exchange).
+  const EXCHANGE_FILTER_OPTIONS = [
+    { value: "", label: t("crypto.filter.all") },
+    { value: "binance", label: "Binance" },
+    { value: "kucoin", label: "KuCoin" },
+    { value: "mexc", label: "MEXC" },
+    { value: "geckoterminal", label: t("crypto.filter.dex") },
+  ];
+
+  const scanPhaseLabel = (phase: ScanStatus["phase"]): string =>
+    phase === "dex_pools" ? t("crypto.scanPhase.dex") : t("crypto.scanPhase.coingecko");
+
+  // Multiple different coins can share a ticker symbol (e.g. many different
+  // "pepe" clones) -- the source label shows where this coin's candles would
+  // actually come from. A resolved real exchange (Binance/KuCoin/MEXC) is
+  // preferred when known at scan time -- "CoinGecko" is only the discovery
+  // source, not where candles get fetched from, so it's not informative
+  // enough on its own. The full name (c.name, shown separately on the card)
+  // is what actually distinguishes same-symbol coins from each other.
+  const sourceLabel = (c: ScreenerCandidate): string => {
+    if (c.source === "geckoterminal") return `DEX${c.network ? ` · ${c.network}` : ""}`;
+    if (c.exchange) return EXCHANGE_LABEL[c.exchange] ?? c.exchange;
+    return t("crypto.sourceUnknown");
+  };
+
+  // There's no reliable upfront "total pages" to compute a real percentage from
+  // (CoinGecko doesn't report one, and GeckoTerminal's page count varies), so
+  // the running line shows live page/hit counts instead -- paired with an
+  // indeterminate progress bar to signal "still working".
+  const scanningLabel = (s: ScanStatus): string => {
+    const parts = [t("crypto.scanning", { phase: scanPhaseLabel(s.phase) })];
+    if (s.current_page != null) parts.push(t("crypto.scanningPage", { page: s.current_page }));
+    if (s.hits_so_far != null) parts.push(t("crypto.scanningHits", { count: s.hits_so_far }));
+    return parts.join(" — ");
+  };
+
   const loadFirstPage = useCallback(async (sortValue: CandidateSort, query: string, exchangeValue: string) => {
     try {
       const res = await api.getScreenerCandidates(sortValue, 1, PAGE_SIZE, query || undefined, exchangeValue || undefined);
@@ -99,8 +103,9 @@ export function CryptoDiscovery({ onPromoted }: Props) {
       setTotal(res.total);
       setPage(1);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Không tải được danh sách candidate");
+      setError(e instanceof Error ? e.message : t("crypto.error.loadCandidates"));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const refreshStatus = useCallback(async () => {
@@ -123,7 +128,7 @@ export function CryptoDiscovery({ onPromoted }: Props) {
 
   useEffect(() => {
     if (!status?.running) {
-      setCancelling(false); // scan actually stopped -- clear the "Đang hủy…" state
+      setCancelling(false); // scan actually stopped -- clear the "cancelling" state
       if (pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;
@@ -157,7 +162,7 @@ export function CryptoDiscovery({ onPromoted }: Props) {
       setCandidates((prev) => [...(prev ?? []), ...res.items]);
       setPage(nextPage);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Không tải thêm được");
+      setError(e instanceof Error ? e.message : t("crypto.error.loadMore"));
     } finally {
       setLoadingMore(false);
     }
@@ -195,7 +200,7 @@ export function CryptoDiscovery({ onPromoted }: Props) {
       await api.triggerScreenerScan();
       await refreshStatus();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Kích hoạt quét thất bại");
+      setError(e instanceof Error ? e.message : t("crypto.error.scanTrigger"));
     }
   };
 
@@ -206,7 +211,7 @@ export function CryptoDiscovery({ onPromoted }: Props) {
       await refreshStatus();
     } catch (e) {
       setCancelling(false);
-      setError(e instanceof Error ? e.message : "Hủy quét thất bại");
+      setError(e instanceof Error ? e.message : t("crypto.error.cancel"));
     }
   };
 
@@ -218,7 +223,7 @@ export function CryptoDiscovery({ onPromoted }: Props) {
       onPromoted(result.ticker);
       await loadFirstPage(sort, searchQuery, exchangeFilter);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Thêm vào theo dõi thất bại");
+      setError(e instanceof Error ? e.message : t("crypto.error.promote"));
     } finally {
       setPromoting(null);
     }
@@ -235,7 +240,7 @@ export function CryptoDiscovery({ onPromoted }: Props) {
       await api.updateSettings({ crypto_exchanges: next });
     } catch (e) {
       setExchanges(prev);
-      setError(e instanceof Error ? e.message : "Lưu sàn thất bại");
+      setError(e instanceof Error ? e.message : t("crypto.error.saveExchanges"));
     } finally {
       setSavingExchanges(false);
     }
@@ -245,7 +250,7 @@ export function CryptoDiscovery({ onPromoted }: Props) {
     <div className="wl-accordion__body">
       <div className="wl-crypto__exchange-box">
         <div className="wl-crypto__exchanges">
-          <span className="faint">Tìm coin:</span>
+          <span className="faint">{t("crypto.findCoin")}</span>
           <label className="wl-crypto__exchange">
             <input type="checkbox" checked disabled />
             CoinGecko
@@ -253,7 +258,7 @@ export function CryptoDiscovery({ onPromoted }: Props) {
         </div>
 
         <div className="wl-crypto__exchanges">
-          <span className="faint">Sàn / DEX:</span>
+          <span className="faint">{t("crypto.exchangeDex")}</span>
           {EXCHANGE_OPTIONS.map((ex) => (
             <label key={ex.value} className="wl-crypto__exchange">
               <input
@@ -268,25 +273,22 @@ export function CryptoDiscovery({ onPromoted }: Props) {
         </div>
       </div>
       {exchanges?.includes("geckoterminal") && (
-        <p className="wl-crypto__hint faint">
-          GeckoTerminal bật: quét thêm cả coin mới/hot trên DEX (ngoài danh sách CoinGecko), và dùng làm
-          nguồn lấy nến dự phòng cho coin không có trên Binance/KuCoin.
-        </p>
+        <p className="wl-crypto__hint faint">{t("crypto.geckoterminalHint")}</p>
       )}
 
       <div className="wl-scanbar">
         <span className="wl-status faint">
           {status?.running
             ? cancelling
-              ? "Đang hủy…"
+              ? t("crypto.status.cancelling")
               : scanningLabel(status)
             : status?.last_cancelled
-              ? "Đã hủy quét"
+              ? t("crypto.status.cancelled")
               : status?.last_error
-                ? "Lỗi lần quét trước"
+                ? t("crypto.status.errorPrevious")
                 : status?.last_completed_at
-                  ? new Date(status.last_completed_at).toLocaleDateString("vi-VN")
-                  : "Chưa quét lần nào"}
+                  ? formatDateOnly(status.last_completed_at, language)
+                  : t("crypto.status.never")}
         </span>
         {status?.running ? (
           <button
@@ -294,17 +296,17 @@ export function CryptoDiscovery({ onPromoted }: Props) {
             onClick={() => void handleCancel()}
             disabled={cancelling}
           >
-            {cancelling ? "Đang hủy…" : "✕ Hủy"}
+            {cancelling ? t("crypto.status.cancelling") : t("crypto.button.cancel")}
           </button>
         ) : (
           <button className="wl-seed" onClick={() => void handleScan()}>
-            🔍 Quét
+            {t("crypto.button.scan")}
           </button>
         )}
       </div>
 
       {status?.running && (
-        <div className="wl-progress" role="progressbar" aria-label="Đang quét coin">
+        <div className="wl-progress" role="progressbar" aria-label={t("crypto.progressAriaLabel")}>
           <div className="wl-progress-fill" />
         </div>
       )}
@@ -316,7 +318,7 @@ export function CryptoDiscovery({ onPromoted }: Props) {
         <input
           type="text"
           className="wl-crypto__search"
-          placeholder="Tìm trong danh sách (mã hoặc tên)…"
+          placeholder={t("crypto.searchPlaceholder")}
           value={searchInput}
           onChange={(e) => handleSearchChange(e.target.value)}
         />
@@ -339,10 +341,10 @@ export function CryptoDiscovery({ onPromoted }: Props) {
       {candidates && candidates.length === 0 && !error && (
         <p className="wl-empty faint">
           {searchQuery
-            ? `Không tìm thấy coin nào khớp "${searchQuery}".`
+            ? t("crypto.emptyNoMatch", { query: searchQuery })
             : exchangeFilter
-              ? "Không có candidate nào trên sàn này."
-              : 'Chưa có candidate. Bấm "Quét" để tìm coin vốn hóa nhỏ.'}
+              ? t("crypto.emptyNoExchange")
+              : t("crypto.emptyNoScan")}
         </p>
       )}
 
@@ -374,8 +376,8 @@ export function CryptoDiscovery({ onPromoted }: Props) {
                     className="wl-crypto-card__add"
                     onClick={() => void handlePromote(c.coin_id)}
                     disabled={promoting === c.coin_id}
-                    aria-label={`Theo dõi ${c.symbol}`}
-                    title="Thêm vào theo dõi"
+                    aria-label={t("crypto.watch.ariaLabel", { symbol: c.symbol })}
+                    title={t("crypto.watch.title")}
                   >
                     {promoting === c.coin_id ? "…" : "+"}
                   </button>
@@ -394,7 +396,7 @@ export function CryptoDiscovery({ onPromoted }: Props) {
                 </div>
               </li>
             ))}
-            {loadingMore && <li className="wl-crypto__loading-more faint">Đang tải thêm…</li>}
+            {loadingMore && <li className="wl-crypto__loading-more faint">{t("crypto.loadingMore")}</li>}
           </ul>
         </>
       )}

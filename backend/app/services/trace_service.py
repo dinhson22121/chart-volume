@@ -38,5 +38,6 @@ def get_bar_trace(
 
     feat = compute_features(df)
     cfg = settings_service.get_wyckoff_config(session)
+    language = settings_service.get_language(session)
     row = feat.iloc[matches[0]]
-    return trace_bar(row, cfg)
+    return trace_bar(row, cfg, language)

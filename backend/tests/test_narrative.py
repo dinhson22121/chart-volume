@@ -53,6 +53,42 @@ def test_generate_dispatches_to_ollama_for_ollama_provider(mocker):
     assert narrative.DISCLAIMER in advice
 
 
+def test_generate_uses_english_markers_and_disclaimer_when_language_is_en(mocker):
+    mocker.patch.object(
+        narrative, "_call_claude", return_value="ASSESSMENT:\nx\n\nADVICE:\n- y"
+    )
+    cfg = ProviderConfig(provider=PROVIDER_ANTHROPIC, model="claude-sonnet-4-5", api_key="sk-ant-x", language="en")
+
+    text, advice = narrative.generate("FPT", "daily", RESULT, [], cfg)
+
+    assert text == "x"
+    assert narrative.DISCLAIMER_EN in advice
+    assert narrative.DISCLAIMER not in advice
+
+
+def test_build_prompt_defaults_to_vietnamese():
+    prompt = narrative.build_prompt("FPT", "daily", RESULT, [])
+    assert narrative._NARRATIVE_MARKER in prompt
+    assert narrative._ADVICE_MARKER in prompt
+    assert "Bạn là chuyên gia" in prompt
+
+
+def test_build_prompt_builds_english_variant_when_requested():
+    prompt = narrative.build_prompt("FPT", "daily", RESULT, [], language="en")
+    assert narrative._NARRATIVE_MARKER_EN in prompt
+    assert narrative._ADVICE_MARKER_EN in prompt
+    assert "You are a technical analysis expert" in prompt
+    # Vietnamese markers must not leak into the English prompt.
+    assert narrative._NARRATIVE_MARKER not in prompt
+    assert narrative._ADVICE_MARKER not in prompt
+
+
+def test_parse_falls_back_to_raw_text_when_marker_missing_regardless_of_language():
+    narrative_text, advice = narrative._parse("just some text", language="en")
+    assert narrative_text == "just some text"
+    assert narrative.DISCLAIMER_EN in advice
+
+
 def test_call_ollama_posts_to_generate_endpoint(mocker):
     mock_response = mocker.Mock()
     mock_response.json.return_value = {"response": "hello from ollama"}

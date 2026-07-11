@@ -155,7 +155,7 @@ def test_signal_outcomes_backfill_as_more_candles_arrive(session, mocker):
 
 # --- Strategy switching must not mix results across strategies ---
 
-def _fake_analyze(candles, cfg, daily_trend=None):
+def _fake_analyze(candles, cfg, daily_trend=None, language="vi"):
     return AnalysisResult(
         phase="FakePhase",
         confidence=0.99,

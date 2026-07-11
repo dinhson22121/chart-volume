@@ -37,7 +37,7 @@ def _latest_swing_levels(df, lookback: int = _SWING_LOOKBACK) -> tuple[float, fl
 
 
 def analyze(
-    candles, config: SonicRConfig = DEFAULT_CONFIG, daily_trend: str | None = None
+    candles, config: SonicRConfig = DEFAULT_CONFIG, daily_trend: str | None = None, language: str = "vi"
 ) -> AnalysisResult:
     df = candles_to_dataframe(candles)
     if len(df) < MIN_BARS:
@@ -50,7 +50,7 @@ def analyze(
         )
 
     feat = compute_features(df, config)
-    events = detect_events(feat, config, daily_trend)
+    events = detect_events(feat, config, daily_trend, language)
     support, resistance = _latest_swing_levels(feat)
     phase, confidence, drivers, mtf_alignment = classify_regime(feat, events, daily_trend)
 

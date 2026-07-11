@@ -1,4 +1,8 @@
-// Presentation helpers for Wyckoff phases and signals.
+// Presentation helpers for Wyckoff phases and signals. Labels themselves live
+// in i18n/translations.ts ("phase.*"/"signal.*" keys) -- this module only
+// keeps the non-translatable color mapping and the boolean classifiers.
+import type { Language } from "../i18n/translations";
+import { TRANSLATIONS } from "../i18n/translations";
 
 const PHASE_COLOR: Record<string, string> = {
   Accumulation: "var(--phase-accumulation)",
@@ -6,34 +10,6 @@ const PHASE_COLOR: Record<string, string> = {
   Distribution: "var(--phase-distribution)",
   Markdown: "var(--phase-markdown)",
   Ranging: "var(--phase-ranging)",
-};
-
-const PHASE_LABEL_VI: Record<string, string> = {
-  Accumulation: "Tích lũy",
-  Markup: "Tăng giá (Markup)",
-  Distribution: "Phân phối",
-  Markdown: "Giảm giá (Markdown)",
-  Ranging: "Đi ngang",
-  "Insufficient data": "Chưa đủ dữ liệu",
-};
-
-const SIGNAL_LABEL_VI: Record<string, string> = {
-  SC: "Selling Climax — cao trào bán",
-  BC: "Buying Climax — cao trào mua",
-  Spring: "Spring — cú rũ bỏ",
-  Upthrust: "Upthrust — cú vượt giả",
-  SOS: "Sign of Strength — dấu hiệu mạnh",
-  SOW: "Sign of Weakness — dấu hiệu yếu",
-  NoDemand: "No Demand — thiếu cầu",
-  NoSupply: "No Supply — thiếu cung",
-  LPS: "LPS — điểm vào (pullback sau SOS)",
-  LPSY: "LPSY — điểm vào (pullback sau SOW)",
-  DragonCrossUp: "Dragon Cross Up — giá cắt lên Dragon EMA",
-  DragonCrossDown: "Dragon Cross Down — giá cắt xuống Dragon EMA",
-  SonicCrossUp: "Sonic Cross Up — T3 fast cắt lên T3 slow",
-  SonicCrossDown: "Sonic Cross Down — T3 fast cắt xuống T3 slow",
-  SonicEntryLong: "Sonic Entry Long — điểm vào mua (pullback + MTF khớp)",
-  SonicEntryShort: "Sonic Entry Short — điểm vào bán (pullback + MTF khớp)",
 };
 
 const BULLISH_SIGNALS = new Set([
@@ -49,12 +25,12 @@ export function phaseColor(phase: string): string {
   return PHASE_COLOR[phase] ?? "var(--phase-ranging)";
 }
 
-export function phaseLabel(phase: string): string {
-  return PHASE_LABEL_VI[phase] ?? phase;
+export function phaseLabel(phase: string, language: Language = "vi"): string {
+  return TRANSLATIONS[language][`phase.${phase}`] ?? phase;
 }
 
-export function signalLabel(type: string): string {
-  return SIGNAL_LABEL_VI[type] ?? type;
+export function signalLabel(type: string, language: Language = "vi"): string {
+  return TRANSLATIONS[language][`signal.${type}`] ?? type;
 }
 
 export function signalIsBullish(type: string): boolean {

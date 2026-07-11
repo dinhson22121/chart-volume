@@ -1,17 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api/client";
 import type { NarrativeProvider, OllamaStatus, Settings, SettingsUpdate, StrategyOption } from "../../types";
+import { useI18n } from "../../i18n/I18nContext";
+import type { Language } from "../../i18n/translations";
 import "./settings.css";
 
 interface Props {
   onClose: () => void;
 }
-
-const MODEL_OPTIONS = [
-  { value: "claude-sonnet-4-5", label: "Claude Sonnet 4.5 (khuyến nghị)" },
-  { value: "claude-opus-4-5", label: "Claude Opus 4.5 (mạnh hơn, đắt hơn)" },
-  { value: "claude-haiku-4-5", label: "Claude Haiku 4.5 (nhanh, rẻ)" },
-];
 
 const OLLAMA_SUGGESTIONS = ["qwen2.5:7b", "qwen2.5:3b", "llama3.1:8b", "deepseek-r1:7b", "mistral:7b"];
 const OLLAMA_DOWNLOAD_URL = "https://ollama.com/download";
@@ -40,22 +36,6 @@ function openExternal(url: string): void {
     window.open(url, "_blank", "noopener,noreferrer");
   }
 }
-
-const MCAP_OPTIONS = [
-  { value: "10000000", label: "Dưới 10 triệu $" },
-  { value: "20000000", label: "Dưới 20 triệu $" },
-  { value: "30000000", label: "Dưới 30 triệu $" },
-  { value: "50000000", label: "Dưới 50 triệu $" },
-];
-
-const SCAN_INTERVAL_OPTIONS = [
-  { value: "10m", label: "10 phút" },
-  { value: "30m", label: "30 phút" },
-  { value: "1h", label: "1 giờ" },
-  { value: "4h", label: "4 giờ" },
-  { value: "12h", label: "12 giờ" },
-  { value: "1d", label: "1 ngày" },
-];
 
 // Local editable form shape: numbers become strings so inputs can hold
 // intermediate/invalid text while typing, without fighting controlled-input state.
@@ -169,6 +149,7 @@ function toUpdate(f: FormState): SettingsUpdate {
 }
 
 export function SettingsModal({ onClose }: Props) {
+  const { t, language, setLanguage } = useI18n();
   const [loaded, setLoaded] = useState<Settings | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
@@ -182,6 +163,28 @@ export function SettingsModal({ onClose }: Props) {
   const [pulling, setPulling] = useState(false);
   const [pullProgress, setPullProgress] = useState<string | null>(null);
   const [pullError, setPullError] = useState<string | null>(null);
+
+  const MODEL_OPTIONS = [
+    { value: "claude-sonnet-4-5", label: t("settings.ai.model.sonnet") },
+    { value: "claude-opus-4-5", label: t("settings.ai.model.opus") },
+    { value: "claude-haiku-4-5", label: t("settings.ai.model.haiku") },
+  ];
+
+  const MCAP_OPTIONS = [
+    { value: "10000000", label: t("settings.screener.mcap.10m") },
+    { value: "20000000", label: t("settings.screener.mcap.20m") },
+    { value: "30000000", label: t("settings.screener.mcap.30m") },
+    { value: "50000000", label: t("settings.screener.mcap.50m") },
+  ];
+
+  const SCAN_INTERVAL_OPTIONS = [
+    { value: "10m", label: t("settings.interval.10m") },
+    { value: "30m", label: t("settings.interval.30m") },
+    { value: "1h", label: t("settings.interval.1h") },
+    { value: "4h", label: t("settings.interval.4h") },
+    { value: "12h", label: t("settings.interval.12h") },
+    { value: "1d", label: t("settings.interval.1d") },
+  ];
 
   useEffect(() => {
     void api.getSettings().then((s) => {
@@ -238,7 +241,7 @@ export function SettingsModal({ onClose }: Props) {
       setForm(toForm(updated));
       setSavedAt(Date.now());
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Lưu thất bại");
+      setError(e instanceof Error ? e.message : t("settings.error.saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -249,7 +252,7 @@ export function SettingsModal({ onClose }: Props) {
     if (!model) return;
     setPulling(true);
     setPullError(null);
-    setPullProgress("Đang bắt đầu…");
+    setPullProgress(t("settings.ai.pullStarting"));
     try {
       await api.pullOllamaModel(model, (event) => {
         if (event.error) {
@@ -258,17 +261,17 @@ export function SettingsModal({ onClose }: Props) {
         }
         if (event.total && event.completed) {
           const pct = Math.round((event.completed / event.total) * 100);
-          setPullProgress(`${event.status ?? "Đang tải"} — ${pct}%`);
+          setPullProgress(`${event.status ?? t("settings.ai.pullStatusFallback")} — ${pct}%`);
         } else {
-          setPullProgress(event.status ?? "Đang tải…");
+          setPullProgress(event.status ?? t("settings.ai.pullDownloading"));
         }
       });
-      setPullProgress("Hoàn tất!");
+      setPullProgress(t("settings.ai.pullDone"));
       set("ollamaModel", model);
       setPullModelName("");
       await refreshOllamaStatus();
     } catch (e) {
-      setPullError(e instanceof Error ? e.message : "Tải model thất bại");
+      setPullError(e instanceof Error ? e.message : t("settings.ai.pullError"));
     } finally {
       setPulling(false);
     }
@@ -282,7 +285,7 @@ export function SettingsModal({ onClose }: Props) {
       setLoaded(updated);
       setForm((prev) => (prev ? { ...toForm(updated), ...prev, anthropicApiKey: "" } : prev));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Xoá key thất bại");
+      setError(e instanceof Error ? e.message : t("settings.error.clearKeyFailed"));
     } finally {
       setSaving(false);
     }
@@ -292,20 +295,38 @@ export function SettingsModal({ onClose }: Props) {
     <div className="settings-overlay" onClick={onClose}>
       <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
         <header className="settings-modal__header">
-          <h2>Cài đặt</h2>
-          <button className="settings-modal__close" onClick={onClose} aria-label="Đóng">
+          <h2>{t("settings.title")}</h2>
+          <button className="settings-modal__close" onClick={onClose} aria-label={t("common.close")}>
             ×
           </button>
         </header>
 
         {!form ? (
-          <div className="settings-modal__body faint">Đang tải…</div>
+          <div className="settings-modal__body faint">{t("common.loading")}</div>
         ) : (
           <div className="settings-modal__body">
             <section className="settings-section">
-              <h3>Chiến lược phân tích</h3>
+              <h3>{t("settings.language.title")}</h3>
+              <div className="tf-toggle settings-provider-toggle">
+                <button
+                  className={language === "vi" ? "is-active" : ""}
+                  onClick={() => setLanguage("vi" as Language)}
+                >
+                  {t("settings.language.vi")}
+                </button>
+                <button
+                  className={language === "en" ? "is-active" : ""}
+                  onClick={() => setLanguage("en" as Language)}
+                >
+                  {t("settings.language.en")}
+                </button>
+              </div>
+            </section>
+
+            <section className="settings-section">
+              <h3>{t("settings.section.strategy")}</h3>
               <label className="settings-field">
-                <span>Phương pháp</span>
+                <span>{t("settings.strategy.label")}</span>
                 <select value={form.strategy} onChange={(e) => set("strategy", e.target.value)}>
                   {strategies.map((s) => (
                     <option key={s.key} value={s.key}>
@@ -313,21 +334,18 @@ export function SettingsModal({ onClose }: Props) {
                     </option>
                   ))}
                 </select>
-                <span className="settings-hint faint">
-                  Áp dụng cho toàn bộ mã. Mục ngưỡng nâng cao bên dưới chỉ hiện đúng phần của chiến lược
-                  đang chọn.
-                </span>
+                <span className="settings-hint faint">{t("settings.strategy.hint")}</span>
               </label>
             </section>
 
             <section className="settings-section">
-              <h3>Nhận định AI</h3>
+              <h3>{t("settings.section.ai")}</h3>
               <div className="tf-toggle settings-provider-toggle">
                 <button
                   className={form.narrativeProvider === "anthropic" ? "is-active" : ""}
                   onClick={() => set("narrativeProvider", "anthropic")}
                 >
-                  Claude API
+                  {t("settings.ai.claude")}
                 </button>
                 <button
                   className={form.narrativeProvider === "ollama" ? "is-active" : ""}
@@ -336,42 +354,44 @@ export function SettingsModal({ onClose }: Props) {
                   title={
                     hasEnoughRamForLocalAI
                       ? undefined
-                      : `Máy cần tối thiểu ${MIN_RAM_GB_FOR_LOCAL_AI}GB RAM để chạy AI local (hiện có ~${totalMemGB}GB)`
+                      : t("settings.ai.ollamaDisabledTitle", { min: MIN_RAM_GB_FOR_LOCAL_AI, total: totalMemGB })
                   }
                 >
-                  Ollama (local, miễn phí)
+                  {t("settings.ai.ollama")}
                 </button>
               </div>
               {!hasEnoughRamForLocalAI && form.narrativeProvider === "anthropic" && (
                 <p className="settings-hint faint">
-                  Máy này có ~{totalMemGB}GB RAM, dưới mức tối thiểu ({MIN_RAM_GB_FOR_LOCAL_AI}GB) để chạy AI
-                  local mượt — mục Ollama đang tắt.
+                  {t("settings.ai.notEnoughRamHint", { total: totalMemGB, min: MIN_RAM_GB_FOR_LOCAL_AI })}
                 </p>
               )}
 
               {form.narrativeProvider === "anthropic" ? (
                 <>
                   <label className="settings-field">
-                    <span>API key {loaded?.has_anthropic_key && <em className="settings-badge">đã lưu</em>}</span>
+                    <span>
+                      {t("settings.ai.apiKeyLabel")}{" "}
+                      {loaded?.has_anthropic_key && (
+                        <em className="settings-badge">{t("settings.ai.apiKeySaved")}</em>
+                      )}
+                    </span>
                     <div className="settings-field__row">
                       <input
                         type="password"
-                        placeholder={loaded?.has_anthropic_key ? "•••••••••••••••• (nhập để thay)" : "sk-ant-..."}
+                        placeholder={loaded?.has_anthropic_key ? t("settings.ai.apiKeyPlaceholderChange") : "sk-ant-..."}
                         value={form.anthropicApiKey}
                         onChange={(e) => set("anthropicApiKey", e.target.value)}
                       />
                       {loaded?.has_anthropic_key && (
                         <button className="btn" onClick={() => void handleClearKey()} disabled={saving}>
-                          Xoá
+                          {t("settings.ai.apiKeyClear")}
                         </button>
                       )}
                     </div>
-                    <span className="settings-hint faint">
-                      Mã hoá khi lưu vào máy. Không có key thì vẫn phân tích Wyckoff định lượng, chỉ thiếu nhận định AI.
-                    </span>
+                    <span className="settings-hint faint">{t("settings.ai.apiKeyHint")}</span>
                   </label>
                   <label className="settings-field">
-                    <span>Model</span>
+                    <span>{t("settings.ai.modelLabel")}</span>
                     <select value={form.anthropicModel} onChange={(e) => set("anthropicModel", e.target.value)}>
                       {MODEL_OPTIONS.map((m) => (
                         <option key={m.value} value={m.value}>
@@ -385,54 +405,53 @@ export function SettingsModal({ onClose }: Props) {
                 <div className="settings-ollama">
                   {!hasEnoughRamForLocalAI && (
                     <p className="settings-hint settings-hint--warn">
-                      Máy này có ~{totalMemGB}GB RAM, dưới mức tối thiểu ({MIN_RAM_GB_FOR_LOCAL_AI}GB) khuyến
-                      nghị để chạy AI local — có thể rất chậm hoặc treo máy khi phân tích.
+                      {t("settings.ai.notEnoughRamWarn", { total: totalMemGB, min: MIN_RAM_GB_FOR_LOCAL_AI })}
                     </p>
                   )}
                   <div className="settings-ollama__status">
                     {ollamaStatusLoading ? (
-                      <span className="faint">Đang kiểm tra Ollama…</span>
+                      <span className="faint">{t("settings.ai.checkingOllama")}</span>
                     ) : ollamaStatus?.available ? (
-                      <span className="settings-badge settings-badge--ok">● Ollama đang chạy</span>
+                      <span className="settings-badge settings-badge--ok">{t("settings.ai.ollamaRunning")}</span>
                     ) : (
                       <span className="settings-badge settings-badge--off">
-                        ● Không kết nối được Ollama
+                        {t("settings.ai.ollamaNotConnected")}
                       </span>
                     )}
                     <button className="btn" onClick={() => void refreshOllamaStatus()} disabled={ollamaStatusLoading}>
-                      Kiểm tra lại
+                      {t("settings.ai.checkAgain")}
                     </button>
                   </div>
 
                   {!ollamaStatusLoading && !ollamaStatus?.available && (
                     <div className="settings-wizard-card">
-                      <p className="settings-wizard-card__title">Bước 1 — Cài Ollama</p>
-                      <p className="settings-hint faint">
-                        Chưa phát hiện Ollama trên máy. Đây là app chạy AI local, miễn phí, riêng tư — dữ
-                        liệu không rời khỏi máy bạn.
-                      </p>
+                      <p className="settings-wizard-card__title">{t("settings.ai.wizard1Title")}</p>
+                      <p className="settings-hint faint">{t("settings.ai.wizard1Hint")}</p>
                       <button className="btn btn--primary" onClick={() => openExternal(OLLAMA_DOWNLOAD_URL)}>
-                        Tải Ollama (mở trang)
+                        {t("settings.ai.downloadOllama")}
                       </button>
-                      <p className="settings-hint faint">
-                        Cài xong, mở app Ollama lên rồi bấm nút bên dưới.
-                      </p>
+                      <p className="settings-hint faint">{t("settings.ai.wizard1AfterInstall")}</p>
                       <button className="btn" onClick={() => void refreshOllamaStatus()} disabled={ollamaStatusLoading}>
-                        Kiểm tra lại
+                        {t("settings.ai.checkAgain")}
                       </button>
                     </div>
                   )}
 
                   {ollamaStatus?.available && ollamaStatus.models.length === 0 && (
                     <div className="settings-wizard-card">
-                      <p className="settings-wizard-card__title">✅ Ollama đang chạy — Bước 2, cài model</p>
-                      <p className="settings-hint faint">Chưa có model nào được cài.</p>
+                      <p className="settings-wizard-card__title">{t("settings.ai.wizard2Title")}</p>
+                      <p className="settings-hint faint">{t("settings.ai.wizard2Hint")}</p>
                       <button
                         className="btn btn--primary"
                         onClick={() => void handlePullModel(recommendedModel.name)}
                         disabled={pulling}
                       >
-                        {pulling ? "Đang tải…" : `Cài model khuyến nghị — ${recommendedModel.name} (${recommendedModel.sizeLabel})`}
+                        {pulling
+                          ? t("settings.ai.pullDownloading")
+                          : t("settings.ai.installRecommended", {
+                              model: recommendedModel.name,
+                              size: recommendedModel.sizeLabel,
+                            })}
                       </button>
                       {pullProgress && !pullError && <p className="settings-hint faint">{pullProgress}</p>}
                       {pullError && <p className="settings-error">{pullError}</p>}
@@ -441,9 +460,9 @@ export function SettingsModal({ onClose }: Props) {
 
                   {ollamaStatus?.models && ollamaStatus.models.length > 0 && (
                     <label className="settings-field">
-                      <span>Model đã cài</span>
+                      <span>{t("settings.ai.installedModelLabel")}</span>
                       <select value={form.ollamaModel} onChange={(e) => set("ollamaModel", e.target.value)}>
-                        <option value="">— chọn model —</option>
+                        <option value="">{t("settings.ai.chooseModelOption")}</option>
                         {ollamaStatus.models.map((m) => (
                           <option key={m} value={m}>
                             {m}
@@ -454,7 +473,7 @@ export function SettingsModal({ onClose }: Props) {
                   )}
 
                   <label className="settings-field">
-                    <span>Tải model mới (gõ tên, vd qwen2.5:7b)</span>
+                    <span>{t("settings.ai.pullNewModelLabel")}</span>
                     <div className="settings-field__row">
                       <input
                         list="ollama-suggestions"
@@ -469,7 +488,7 @@ export function SettingsModal({ onClose }: Props) {
                         onClick={() => void handlePullModel()}
                         disabled={pulling || !pullModelName.trim()}
                       >
-                        {pulling ? "Đang tải…" : "Tải model"}
+                        {pulling ? t("settings.ai.pullDownloading") : t("settings.ai.pullButton")}
                       </button>
                     </div>
                     <datalist id="ollama-suggestions">
@@ -485,10 +504,10 @@ export function SettingsModal({ onClose }: Props) {
             </section>
 
             <section className="settings-section">
-              <h3>Độ sâu crawl</h3>
+              <h3>{t("settings.section.crawlDepth")}</h3>
               <div className="settings-grid">
                 <label className="settings-field">
-                  <span>Nến ngày (số ngày lịch sử)</span>
+                  <span>{t("settings.crawl.dailyLabel")}</span>
                   <input
                     type="number"
                     min={30}
@@ -498,7 +517,7 @@ export function SettingsModal({ onClose }: Props) {
                   />
                 </label>
                 <label className="settings-field">
-                  <span>Nửa phiên (số ngày lịch sử)</span>
+                  <span>{t("settings.crawl.halfSessionLabel")}</span>
                   <input
                     type="number"
                     min={1}
@@ -511,18 +530,18 @@ export function SettingsModal({ onClose }: Props) {
             </section>
 
             <section className="settings-section">
-              <h3>Tự động cập nhật</h3>
+              <h3>{t("settings.section.autoUpdate")}</h3>
               <label className="settings-field settings-field--row">
                 <input
                   type="checkbox"
                   checked={form.schedulerEnabled}
                   onChange={(e) => set("schedulerEnabled", e.target.checked)}
                 />
-                <span>Bật tự động crawl + phân tích theo phiên</span>
+                <span>{t("settings.autoUpdate.enableStock")}</span>
               </label>
               <div className="settings-grid">
                 <label className="settings-field">
-                  <span>Sau phiên sáng</span>
+                  <span>{t("settings.autoUpdate.afterMorning")}</span>
                   <input
                     type="time"
                     value={form.halfMorningTime}
@@ -531,7 +550,7 @@ export function SettingsModal({ onClose }: Props) {
                   />
                 </label>
                 <label className="settings-field">
-                  <span>Sau phiên chiều</span>
+                  <span>{t("settings.autoUpdate.afterAfternoon")}</span>
                   <input
                     type="time"
                     value={form.halfAfternoonTime}
@@ -540,7 +559,7 @@ export function SettingsModal({ onClose }: Props) {
                   />
                 </label>
                 <label className="settings-field">
-                  <span>Sau khi đóng cửa (nến ngày)</span>
+                  <span>{t("settings.autoUpdate.afterClose")}</span>
                   <input
                     type="time"
                     value={form.dailyTime}
@@ -556,10 +575,10 @@ export function SettingsModal({ onClose }: Props) {
                   checked={form.cryptoAnalysisEnabled}
                   onChange={(e) => set("cryptoAnalysisEnabled", e.target.checked)}
                 />
-                <span>Bật tự động phân tích lại crypto đang theo dõi</span>
+                <span>{t("settings.autoUpdate.enableCrypto")}</span>
               </label>
               <label className="settings-field">
-                <span>Chu kỳ phân tích lại crypto</span>
+                <span>{t("settings.autoUpdate.cryptoInterval")}</span>
                 <select
                   value={form.cryptoAnalysisInterval}
                   disabled={!form.cryptoAnalysisEnabled}
@@ -571,23 +590,18 @@ export function SettingsModal({ onClose }: Props) {
                     </option>
                   ))}
                 </select>
-                <span className="settings-hint faint">
-                  Áp dụng cho mọi coin đang theo dõi, cả 3 khung 1h/4h/ngày — riêng biệt với lịch quét coin
-                  mới ở mục Screener bên dưới.
-                </span>
+                <span className="settings-hint faint">{t("settings.autoUpdate.cryptoIntervalHint")}</span>
               </label>
             </section>
 
             {form.strategy === "wyckoff" && (
               <>
                 <section className="settings-section">
-                  <h3>Ngưỡng Wyckoff</h3>
-                  <p className="settings-hint faint">
-                    Nâng cao — hệ số so với trung bình động (volume/spread) để nhận diện tín hiệu. Để mặc định nếu không chắc.
-                  </p>
+                  <h3>{t("settings.section.wyckoffThresholds")}</h3>
+                  <p className="settings-hint faint">{t("settings.wyckoff.hint")}</p>
                   <div className="settings-grid">
                     <label className="settings-field">
-                      <span>Volume cao trào (x lần TB)</span>
+                      <span>{t("settings.wyckoff.climaxVol")}</span>
                       <input
                         type="number"
                         step="0.1"
@@ -597,7 +611,7 @@ export function SettingsModal({ onClose }: Props) {
                       />
                     </label>
                     <label className="settings-field">
-                      <span>Spread rộng (x lần TB)</span>
+                      <span>{t("settings.wyckoff.wideSpread")}</span>
                       <input
                         type="number"
                         step="0.1"
@@ -607,7 +621,7 @@ export function SettingsModal({ onClose }: Props) {
                       />
                     </label>
                     <label className="settings-field">
-                      <span>Spread hẹp (x lần TB)</span>
+                      <span>{t("settings.wyckoff.narrowSpread")}</span>
                       <input
                         type="number"
                         step="0.1"
@@ -617,7 +631,7 @@ export function SettingsModal({ onClose }: Props) {
                       />
                     </label>
                     <label className="settings-field">
-                      <span>Volume thấp (x lần TB)</span>
+                      <span>{t("settings.wyckoff.lowVol")}</span>
                       <input
                         type="number"
                         step="0.1"
@@ -627,7 +641,7 @@ export function SettingsModal({ onClose }: Props) {
                       />
                     </label>
                     <label className="settings-field">
-                      <span>Volume bứt phá SOS/SOW (x lần TB)</span>
+                      <span>{t("settings.wyckoff.sosVol")}</span>
                       <input
                         type="number"
                         step="0.1"
@@ -640,13 +654,10 @@ export function SettingsModal({ onClose }: Props) {
                 </section>
 
                 <section className="settings-section">
-                  <h3>Điểm vào lệnh (LPS/LPSY)</h3>
-                  <p className="settings-hint faint">
-                    Sau khi có SOS/SOW, hệ thống chờ giá pullback về test lại vùng vừa gãy với volume thấp —
-                    đó là điểm vào an toàn hơn (LPS cho long, LPSY cho short) thay vì vào ngay lúc breakout.
-                  </p>
+                  <h3>{t("settings.section.lpsEntry")}</h3>
+                  <p className="settings-hint faint">{t("settings.lps.hint")}</p>
                   <label className="settings-field">
-                    <span>Số nến tối đa chờ pullback sau SOS/SOW</span>
+                    <span>{t("settings.lps.lookback")}</span>
                     <input
                       type="number"
                       min={2}
@@ -661,14 +672,11 @@ export function SettingsModal({ onClose }: Props) {
 
             {form.strategy === "sonicr" && (
               <section className="settings-section">
-                <h3>Ngưỡng Sonic R</h3>
-                <p className="settings-hint faint">
-                  Nâng cao — chu kỳ Dragon EMA/T3/CCI và số nến chờ pullback về test lại Dragon trước khi
-                  vào lệnh (yêu cầu khớp xu hướng khung ngày). Để mặc định nếu không chắc.
-                </p>
+                <h3>{t("settings.section.sonicrThresholds")}</h3>
+                <p className="settings-hint faint">{t("settings.sonicr.hint")}</p>
                 <div className="settings-grid">
                   <label className="settings-field">
-                    <span>Chu kỳ Dragon EMA</span>
+                    <span>{t("settings.sonicr.dragonPeriod")}</span>
                     <input
                       type="number"
                       min={2}
@@ -678,7 +686,7 @@ export function SettingsModal({ onClose }: Props) {
                     />
                   </label>
                   <label className="settings-field">
-                    <span>Chu kỳ T3 fast</span>
+                    <span>{t("settings.sonicr.t3Fast")}</span>
                     <input
                       type="number"
                       min={2}
@@ -688,7 +696,7 @@ export function SettingsModal({ onClose }: Props) {
                     />
                   </label>
                   <label className="settings-field">
-                    <span>Chu kỳ T3 slow</span>
+                    <span>{t("settings.sonicr.t3Slow")}</span>
                     <input
                       type="number"
                       min={2}
@@ -698,7 +706,7 @@ export function SettingsModal({ onClose }: Props) {
                     />
                   </label>
                   <label className="settings-field">
-                    <span>Hệ số T3 (vfactor)</span>
+                    <span>{t("settings.sonicr.t3Vfactor")}</span>
                     <input
                       type="number"
                       step="0.1"
@@ -709,7 +717,7 @@ export function SettingsModal({ onClose }: Props) {
                     />
                   </label>
                   <label className="settings-field">
-                    <span>Chu kỳ CCI fast</span>
+                    <span>{t("settings.sonicr.cciFast")}</span>
                     <input
                       type="number"
                       min={2}
@@ -719,7 +727,7 @@ export function SettingsModal({ onClose }: Props) {
                     />
                   </label>
                   <label className="settings-field">
-                    <span>Chu kỳ CCI slow</span>
+                    <span>{t("settings.sonicr.cciSlow")}</span>
                     <input
                       type="number"
                       min={2}
@@ -729,7 +737,7 @@ export function SettingsModal({ onClose }: Props) {
                     />
                   </label>
                   <label className="settings-field">
-                    <span>Số nến tối đa chờ pullback về Dragon</span>
+                    <span>{t("settings.sonicr.pullbackLookback")}</span>
                     <input
                       type="number"
                       min={2}
@@ -743,23 +751,19 @@ export function SettingsModal({ onClose }: Props) {
             )}
 
             <section className="settings-section">
-              <h3>Screener Crypto</h3>
-              <p className="settings-hint faint">
-                Tự động (và thủ công qua mục "Crypto mới" trong danh sách theo dõi) tìm coin vốn hóa nhỏ —
-                nguồn lọc CoinGecko. Chọn sàn lấy nến (Binance/KuCoin) ngay trong mục "Crypto mới". Một
-                lần quét mất vài phút do giới hạn API.
-              </p>
+              <h3>{t("settings.section.screener")}</h3>
+              <p className="settings-hint faint">{t("settings.screener.hint")}</p>
               <label className="settings-field settings-field--row">
                 <input
                   type="checkbox"
                   checked={form.screenerEnabled}
                   onChange={(e) => set("screenerEnabled", e.target.checked)}
                 />
-                <span>Bật tự động quét theo lịch</span>
+                <span>{t("settings.screener.enableScheduled")}</span>
               </label>
               <div className="settings-grid">
                 <label className="settings-field">
-                  <span>Vốn hóa tối đa</span>
+                  <span>{t("settings.screener.mcapMax")}</span>
                   <select
                     value={form.screenerMcapMax}
                     onChange={(e) => set("screenerMcapMax", e.target.value)}
@@ -772,7 +776,7 @@ export function SettingsModal({ onClose }: Props) {
                   </select>
                 </label>
                 <label className="settings-field">
-                  <span>Chu kỳ quét tự động</span>
+                  <span>{t("settings.screener.scanInterval")}</span>
                   <select
                     value={form.screenerScanInterval}
                     disabled={!form.screenerEnabled}
@@ -793,10 +797,10 @@ export function SettingsModal({ onClose }: Props) {
                   checked={form.screenerRequireVolumeRising}
                   onChange={(e) => set("screenerRequireVolumeRising", e.target.checked)}
                 />
-                <span>Chỉ lấy coin đang tăng volume</span>
+                <span>{t("settings.screener.requireVolumeRising")}</span>
               </label>
               <label className="settings-field">
-                <span>% volume tăng tối thiểu</span>
+                <span>{t("settings.screener.minVolumeChangePct")}</span>
                 <input
                   type="number"
                   step="1"
@@ -805,9 +809,7 @@ export function SettingsModal({ onClose }: Props) {
                   value={form.screenerMinVolumeChangePct}
                   onChange={(e) => set("screenerMinVolumeChangePct", e.target.value)}
                 />
-                <span className="settings-hint faint">
-                  Tắt tuỳ chọn trên để liệt kê mọi coin trong khoảng vốn hóa, bất kể volume.
-                </span>
+                <span className="settings-hint faint">{t("settings.screener.minVolumeChangeHint")}</span>
               </label>
             </section>
 
@@ -816,16 +818,16 @@ export function SettingsModal({ onClose }: Props) {
         )}
 
         <footer className="settings-modal__footer">
-          {savedAt && !error && <span className="settings-saved faint">Đã lưu</span>}
+          {savedAt && !error && <span className="settings-saved faint">{t("settings.saved")}</span>}
           <button className="btn" onClick={onClose}>
-            Đóng
+            {t("common.close")}
           </button>
           <button
             className={`btn btn--primary${isDirty ? " btn--dirty" : ""}`}
             onClick={() => void handleSave()}
             disabled={!form || saving}
           >
-            {saving ? "Đang lưu…" : "Lưu"}
+            {saving ? t("common.saving") : t("common.save")}
           </button>
         </footer>
       </div>

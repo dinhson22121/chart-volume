@@ -61,6 +61,19 @@ def test_dragon_cross_up_and_down_detected_on_close_crossing_dragon():
     assert [e.index for e in down] == [2]
 
 
+def test_dragon_cross_notes_translate_to_english():
+    rows = [
+        _row(close=95, dragon=100, t3_fast=90, t3_slow=90),
+        _row(close=102, dragon=100, t3_fast=90, t3_slow=90),
+    ]
+    events = detect_events(_to_df(rows), CFG, language="en")
+
+    up = _by_type(events, DRAGON_CROSS_UP)[0]
+    assert "Dragon EMA" in up.note
+    assert "bullish" in up.note.lower()
+    assert "Giá cắt lên" not in up.note
+
+
 def test_sonic_cross_up_and_down_detected_on_t3_fast_crossing_t3_slow():
     rows = [
         _row(close=100, dragon=100, t3_fast=90, t3_slow=95),  # fast below slow

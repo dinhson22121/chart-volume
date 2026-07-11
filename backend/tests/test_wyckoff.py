@@ -202,6 +202,35 @@ def test_trace_bar_reports_insufficient_data_for_early_bars():
     assert all(not t.checks[0].passed for t in traces)
 
 
+def test_trace_bar_defaults_to_vietnamese_labels():
+    feat = compute_features(_to_df(base_bars() + [SPRING_BAR]))
+    traces = trace_bar(feat.iloc[-1], DEFAULT_CONFIG)
+    spring = next(t for t in traces if t.type == SPRING)
+    assert any("hỗ trợ" in c.label or "hỗ trợ" in c.detail for c in spring.checks)
+
+
+def test_trace_bar_translates_labels_to_english():
+    feat = compute_features(_to_df(base_bars() + [SPRING_BAR]))
+    traces = trace_bar(feat.iloc[-1], DEFAULT_CONFIG, language="en")
+    spring = next(t for t in traces if t.type == SPRING)
+    assert any("support" in c.label.lower() or "support" in c.detail.lower() for c in spring.checks)
+    assert not any("hỗ trợ" in c.label or "hỗ trợ" in c.detail for c in spring.checks)
+
+
+def test_trace_bar_translates_insufficient_data_message_to_english():
+    feat = compute_features(_to_df(base_bars(5)))
+    traces = trace_bar(feat.iloc[0], DEFAULT_CONFIG, language="en")
+    assert traces[0].checks[0].label == "Enough baseline data"
+    assert "Not enough prior bars" in traces[0].checks[0].detail
+
+
+def test_analyze_translates_event_notes_to_english():
+    result = analyze(_to_candles(base_bars() + [SPRING_BAR]), language="en")
+    spring_event = next(e for e in result.events if e.type == SPRING)
+    assert "hỗ trợ" not in spring_event.note
+    assert "support" in spring_event.note.lower()
+
+
 # --- Multi-timeframe alignment: daily trend informs half-session phase ---
 
 def test_bearish_daily_trend_suppresses_bullish_driven_phase():

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../api/client";
 import type { SignalStat } from "../../types";
 import { signalLabel } from "../../lib/wyckoff";
+import { useI18n } from "../../i18n/I18nContext";
 import "./stats.css";
 
 interface Props {
@@ -17,13 +18,15 @@ function ret(v: number | null): string {
 }
 
 export function SignalStatsModal({ onClose }: Props) {
+  const { t, language } = useI18n();
   const [stats, setStats] = useState<SignalStat[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api.getSignalStats().then(setStats).catch((e: unknown) => {
-      setError(e instanceof Error ? e.message : "Không tải được thống kê");
+      setError(e instanceof Error ? e.message : t("stats.error"));
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -38,22 +41,19 @@ export function SignalStatsModal({ onClose }: Props) {
     <div className="settings-overlay" onClick={onClose}>
       <div className="stats-modal" onClick={(e) => e.stopPropagation()}>
         <header className="settings-modal__header">
-          <h2>Thống kê hiệu quả tín hiệu</h2>
-          <button className="settings-modal__close" onClick={onClose} aria-label="Đóng">
+          <h2>{t("stats.title")}</h2>
+          <button className="settings-modal__close" onClick={onClose} aria-label={t("common.close")}>
             ×
           </button>
         </header>
 
         <div className="settings-modal__body">
-          <p className="faint stats-hint">
-            Tỷ lệ thắng (win-rate) = % số lần tín hiệu này xảy ra và giá đi đúng chiều kỳ vọng, sau N nến.
-            Dữ liệu tổng hợp từ toàn bộ mã đã crawl.
-          </p>
+          <p className="faint stats-hint">{t("stats.hint")}</p>
 
           {error && <p className="settings-error">{error}</p>}
-          {!stats && !error && <p className="faint">Đang tải…</p>}
+          {!stats && !error && <p className="faint">{t("common.loading")}</p>}
           {stats && stats.length === 0 && (
-            <p className="faint">Chưa có dữ liệu. Hãy "Phân tích" vài mã trước.</p>
+            <p className="faint">{t("stats.empty")}</p>
           )}
 
           {stats && stats.length > 0 && (
@@ -61,12 +61,12 @@ export function SignalStatsModal({ onClose }: Props) {
               <table className="stats-table">
                 <thead>
                   <tr>
-                    <th>Tín hiệu</th>
-                    <th>Số lần</th>
-                    <th>Win 5 nến</th>
-                    <th>Win 10 nến</th>
-                    <th>Win 20 nến</th>
-                    <th>Return TB (10 nến)</th>
+                    <th>{t("stats.table.signal")}</th>
+                    <th>{t("stats.table.count")}</th>
+                    <th>{t("stats.table.win5")}</th>
+                    <th>{t("stats.table.win10")}</th>
+                    <th>{t("stats.table.win20")}</th>
+                    <th>{t("stats.table.avgReturn10")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -74,7 +74,7 @@ export function SignalStatsModal({ onClose }: Props) {
                     <tr key={s.type}>
                       <td>
                         <span className={`stats-dot ${s.is_bullish ? "stats-dot--bull" : "stats-dot--bear"}`} />
-                        {signalLabel(s.type)}
+                        {signalLabel(s.type, language)}
                       </td>
                       <td className="mono">{s.count}</td>
                       <td className="mono">{pct(s.win_rate_5)}</td>
@@ -91,7 +91,7 @@ export function SignalStatsModal({ onClose }: Props) {
 
         <footer className="settings-modal__footer">
           <button className="btn" onClick={onClose}>
-            Đóng
+            {t("common.close")}
           </button>
         </footer>
       </div>

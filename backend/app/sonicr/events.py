@@ -57,29 +57,35 @@ def _make_event(event_type: str, index: int, row: pd.Series, note: str) -> Sonic
     )
 
 
-def _detect_dragon_crosses(df: pd.DataFrame) -> list[SonicEvent]:
+def _detect_dragon_crosses(df: pd.DataFrame, language: str = "vi") -> list[SonicEvent]:
+    en = language == "en"
     events: list[SonicEvent] = []
     for i in range(1, len(df)):
         prev, row = df.iloc[i - 1], df.iloc[i]
         if pd.isna(prev["dragon"]) or pd.isna(row["dragon"]):
             continue
         if prev["close"] <= prev["dragon"] and row["close"] > row["dragon"]:
-            events.append(_make_event(DRAGON_CROSS_UP, i, row, "Giá cắt lên Dragon EMA — đổi context sang tăng"))
+            note = "Price crosses above Dragon EMA — context turns bullish" if en else "Giá cắt lên Dragon EMA — đổi context sang tăng"
+            events.append(_make_event(DRAGON_CROSS_UP, i, row, note))
         elif prev["close"] >= prev["dragon"] and row["close"] < row["dragon"]:
-            events.append(_make_event(DRAGON_CROSS_DOWN, i, row, "Giá cắt xuống Dragon EMA — đổi context sang giảm"))
+            note = "Price crosses below Dragon EMA — context turns bearish" if en else "Giá cắt xuống Dragon EMA — đổi context sang giảm"
+            events.append(_make_event(DRAGON_CROSS_DOWN, i, row, note))
     return events
 
 
-def _detect_sonic_crosses(df: pd.DataFrame) -> list[SonicEvent]:
+def _detect_sonic_crosses(df: pd.DataFrame, language: str = "vi") -> list[SonicEvent]:
+    en = language == "en"
     events: list[SonicEvent] = []
     for i in range(1, len(df)):
         prev, row = df.iloc[i - 1], df.iloc[i]
         if pd.isna(prev["t3_fast"]) or pd.isna(prev["t3_slow"]) or pd.isna(row["t3_fast"]) or pd.isna(row["t3_slow"]):
             continue
         if prev["t3_fast"] <= prev["t3_slow"] and row["t3_fast"] > row["t3_slow"]:
-            events.append(_make_event(SONIC_CROSS_UP, i, row, "T3 fast cắt lên T3 slow — đổi động lượng tăng"))
+            note = "T3 fast crosses above T3 slow — momentum turns bullish" if en else "T3 fast cắt lên T3 slow — đổi động lượng tăng"
+            events.append(_make_event(SONIC_CROSS_UP, i, row, note))
         elif prev["t3_fast"] >= prev["t3_slow"] and row["t3_fast"] < row["t3_slow"]:
-            events.append(_make_event(SONIC_CROSS_DOWN, i, row, "T3 fast cắt xuống T3 slow — đổi động lượng giảm"))
+            note = "T3 fast crosses below T3 slow — momentum turns bearish" if en else "T3 fast cắt xuống T3 slow — đổi động lượng giảm"
+            events.append(_make_event(SONIC_CROSS_DOWN, i, row, note))
     return events
 
 
@@ -131,6 +137,7 @@ def _detect_entry_signals(
     sonic_crosses: list[SonicEvent],
     cfg: SonicRConfig,
     daily_trend: str | None,
+    language: str = "vi",
 ) -> list[SonicEvent]:
     events: list[SonicEvent] = []
     for cross in sonic_crosses:
@@ -144,25 +151,30 @@ def _detect_entry_signals(
         if pullback_idx is None:
             continue
         prow = df.iloc[pullback_idx]
-        label = "mua" if bullish else "bán"
+        if language == "en":
+            label = "long" if bullish else "short"
+            note = f"Pullback retesting Dragon after Sonic cross, CCI + MTF confirmed — optimal {label} entry"
+        else:
+            label = "mua" if bullish else "bán"
+            note = f"Pullback về test Dragon sau Sonic cross, xác nhận CCI + MTF — điểm vào {label} tối ưu"
         events.append(
             _make_event(
                 SONIC_ENTRY_LONG if bullish else SONIC_ENTRY_SHORT,
                 pullback_idx,
                 prow,
-                f"Pullback về test Dragon sau Sonic cross, xác nhận CCI + MTF — điểm vào {label} tối ưu",
+                note,
             )
         )
     return events
 
 
 def detect_events(
-    df: pd.DataFrame, cfg: SonicRConfig = DEFAULT_CONFIG, daily_trend: str | None = None
+    df: pd.DataFrame, cfg: SonicRConfig = DEFAULT_CONFIG, daily_trend: str | None = None, language: str = "vi"
 ) -> list[SonicEvent]:
     events: list[SonicEvent] = []
-    events.extend(_detect_dragon_crosses(df))
-    sonic_crosses = _detect_sonic_crosses(df)
+    events.extend(_detect_dragon_crosses(df, language))
+    sonic_crosses = _detect_sonic_crosses(df, language)
     events.extend(sonic_crosses)
-    events.extend(_detect_entry_signals(df, sonic_crosses, cfg, daily_trend))
+    events.extend(_detect_entry_signals(df, sonic_crosses, cfg, daily_trend, language))
     events.sort(key=lambda e: e.index)
     return events

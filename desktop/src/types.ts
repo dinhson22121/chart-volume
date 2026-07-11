@@ -98,6 +98,7 @@ export interface StrategyOption {
 }
 
 export interface Settings {
+  language: "vi" | "en";
   strategy: string;
   narrative_provider: NarrativeProvider;
   anthropic_model: string;

@@ -15,6 +15,7 @@ import { api } from "../../api/client";
 import type { Analysis, Candle, IndicatorSeries } from "../../types";
 import { signalIsBullish, signalIsEntry } from "../../lib/wyckoff";
 import { formatPrice, priceMinMove } from "../../lib/price";
+import { useI18n } from "../../i18n/I18nContext";
 import "./chart.css";
 
 const COLORS = {
@@ -44,6 +45,7 @@ interface Props {
 }
 
 export function CandleChart({ candles, analysis, onBarClick }: Props) {
+  const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -235,7 +237,7 @@ export function CandleChart({ candles, analysis, onBarClick }: Props) {
           lineStyle: LineStyle.Dashed,
           lineWidth: 1,
           axisLabelVisible: true,
-          title: "Hỗ trợ",
+          title: t("chart.support"),
         }),
         candleSeries.createPriceLine({
           price: analysis.levels.resistance,
@@ -243,13 +245,13 @@ export function CandleChart({ candles, analysis, onBarClick }: Props) {
           lineStyle: LineStyle.Dashed,
           lineWidth: 1,
           axisLabelVisible: true,
-          title: "Kháng cự",
+          title: t("chart.resistance"),
         }),
       );
     }
 
     chartRef.current?.timeScale().fitContent();
-  }, [candles, analysis]);
+  }, [candles, analysis, t]);
 
   // Sonic R Dragon/T3 overlay lines -- separate effect since `indicators`
   // arrives asynchronously after `analysis`/`candles` are already rendered.
@@ -267,7 +269,7 @@ export function CandleChart({ candles, analysis, onBarClick }: Props) {
   return (
     <div className="chart-wrap">
       <div className="chart" ref={containerRef} />
-      {onBarClick && <span className="chart-hint faint">Click vào nến để xem lý do</span>}
+      {onBarClick && <span className="chart-hint faint">{t("chart.hint")}</span>}
     </div>
   );
 }

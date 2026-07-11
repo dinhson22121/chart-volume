@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api/client";
 import type { DashboardRow } from "../../types";
 import { phaseColor, phaseLabel, signalLabel } from "../../lib/wyckoff";
+import { formatDateTime } from "../../lib/datetime";
+import { useI18n } from "../../i18n/I18nContext";
 import "../stats/stats.css";
 
 interface Props {
@@ -11,25 +13,25 @@ interface Props {
 
 type Filter = "all" | "stock" | "crypto";
 
-const FILTER_OPTIONS: { value: Filter; label: string }[] = [
-  { value: "all", label: "Tất cả" },
-  { value: "stock", label: "Cổ phiếu" },
-  { value: "crypto", label: "Crypto" },
-];
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" });
-}
-
 export function DashboardModal({ onClose, onSelect }: Props) {
+  const { t, language } = useI18n();
   const [rows, setRows] = useState<DashboardRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
 
+  const FILTER_OPTIONS: { value: Filter; label: string }[] = [
+    { value: "all", label: t("dashboard.filter.all") },
+    { value: "stock", label: t("dashboard.filter.stock") },
+    { value: "crypto", label: t("dashboard.filter.crypto") },
+  ];
+
   useEffect(() => {
     api.getDashboard().then(setRows).catch((e: unknown) => {
-      setError(e instanceof Error ? e.message : "Không tải được dashboard");
+      setError(e instanceof Error ? e.message : t("dashboard.error"));
     });
+    // Only on mount -- the error fallback string is stable enough across
+    // language switches for the rare case where the initial load failed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -55,17 +57,14 @@ export function DashboardModal({ onClose, onSelect }: Props) {
     <div className="settings-overlay" onClick={onClose}>
       <div className="stats-modal" onClick={(e) => e.stopPropagation()}>
         <header className="settings-modal__header">
-          <h2>Dashboard theo dõi</h2>
-          <button className="settings-modal__close" onClick={onClose} aria-label="Đóng">
+          <h2>{t("dashboard.title")}</h2>
+          <button className="settings-modal__close" onClick={onClose} aria-label={t("common.close")}>
             ×
           </button>
         </header>
 
         <div className="settings-modal__body">
-          <p className="faint stats-hint">
-            Dữ liệu từ lần phân tích ngày (daily) gần nhất đã lưu — không crawl lại. Bấm "Phân tích" ở mã
-            tương ứng nếu muốn làm mới.
-          </p>
+          <p className="faint stats-hint">{t("dashboard.hint")}</p>
 
           <div className="wl-tabs" style={{ marginBottom: "var(--space-3)", maxWidth: 280 }}>
             {FILTER_OPTIONS.map((o) => (
@@ -80,9 +79,9 @@ export function DashboardModal({ onClose, onSelect }: Props) {
           </div>
 
           {error && <p className="settings-error">{error}</p>}
-          {!rows && !error && <p className="faint">Đang tải…</p>}
+          {!rows && !error && <p className="faint">{t("common.loading")}</p>}
           {filtered && filtered.length === 0 && (
-            <p className="faint">Chưa có mã nào trong danh mục này.</p>
+            <p className="faint">{t("dashboard.empty")}</p>
           )}
 
           {filtered && filtered.length > 0 && (
@@ -90,11 +89,11 @@ export function DashboardModal({ onClose, onSelect }: Props) {
               <table className="stats-table">
                 <thead>
                   <tr>
-                    <th>Mã</th>
-                    <th>Phase</th>
-                    <th>Độ tin cậy</th>
-                    <th>Tín hiệu gần nhất</th>
-                    <th>Cập nhật lúc</th>
+                    <th>{t("dashboard.table.ticker")}</th>
+                    <th>{t("dashboard.table.phase")}</th>
+                    <th>{t("dashboard.table.confidence")}</th>
+                    <th>{t("dashboard.table.latestSignal")}</th>
+                    <th>{t("dashboard.table.updatedAt")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -125,18 +124,18 @@ export function DashboardModal({ onClose, onSelect }: Props) {
                                 backgroundColor: phaseColor(r.phase ?? ""),
                               }}
                             >
-                              {phaseLabel(r.phase ?? "")}
+                              {phaseLabel(r.phase ?? "", language)}
                             </span>
                           </td>
                           <td className="mono">
-                            {r.confidence !== null ? `${Math.round(r.confidence * 100)}%` : "—"}
+                            {r.confidence !== null ? `${Math.round(r.confidence * 100)}%` : t("common.dash")}
                           </td>
-                          <td>{r.latest_signal ? signalLabel(r.latest_signal.type) : "—"}</td>
-                          <td className="faint">{r.as_of ? formatDate(r.as_of) : "—"}</td>
+                          <td>{r.latest_signal ? signalLabel(r.latest_signal.type, language) : t("common.dash")}</td>
+                          <td className="faint">{r.as_of ? formatDateTime(r.as_of, language) : t("common.dash")}</td>
                         </>
                       ) : (
                         <td colSpan={4} className="faint">
-                          Chưa phân tích
+                          {t("dashboard.noAnalysis")}
                         </td>
                       )}
                     </tr>
@@ -149,7 +148,7 @@ export function DashboardModal({ onClose, onSelect }: Props) {
 
         <footer className="settings-modal__footer">
           <button className="btn" onClick={onClose}>
-            Đóng
+            {t("common.close")}
           </button>
         </footer>
       </div>

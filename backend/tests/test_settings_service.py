@@ -95,6 +95,17 @@ def test_narrative_config_switches_to_ollama(session):
     assert cfg.api_key == ""  # not relevant for ollama, must stay empty
 
 
+def test_narrative_config_defaults_to_vietnamese(session):
+    cfg = settings_service.get_narrative_config(session)
+    assert cfg.language == "vi"
+
+
+def test_narrative_config_reflects_language_setting(session):
+    settings_service.update(session, {"language": "en"})
+    cfg = settings_service.get_narrative_config(session)
+    assert cfg.language == "en"
+
+
 def test_get_wyckoff_config_reflects_overrides(session):
     settings_service.update(session, {"sos_vol_mult": "1.8", "low_vol_mult": "0.5"})
     cfg = settings_service.get_wyckoff_config(session)

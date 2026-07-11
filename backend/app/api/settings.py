@@ -28,6 +28,7 @@ _SCHEDULER_KEYS = {
 
 
 class SettingsIn(BaseModel):
+    language: str | None = Field(default=None, pattern="^(vi|en)$")
     strategy: str | None = None
     narrative_provider: str | None = Field(default=None, pattern="^(anthropic|ollama)$")
     anthropic_api_key: str | None = Field(default=None, description="Empty string clears the key")

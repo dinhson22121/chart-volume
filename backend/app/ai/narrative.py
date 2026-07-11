@@ -1,12 +1,14 @@
 """Wyckoff narrative generation from a structured analysis result.
 
 The LLM receives the *already-computed* phase, events and levels plus a compact
-recent-candle table, and writes a Vietnamese assessment + advice. It never
-decides the phase itself. A disclaimer is always appended so it can't be lost.
+recent-candle table, and writes an assessment + advice in the user's chosen
+language (Vietnamese or English). It never decides the phase itself. A
+disclaimer is always appended so it can't be lost.
 
 Two interchangeable providers: Anthropic's hosted API (paid, needs an API key)
 or a local Ollama model (free, runs on the user's machine). Both take the same
-prompt and return the same NHẬN ĐỊNH/LỜI KHUYÊN format.
+prompt and return the same two-section format (marker text differs by
+language -- NHẬN ĐỊNH/LỜI KHUYÊN for Vietnamese, ASSESSMENT/ADVICE for English).
 """
 
 from __future__ import annotations
@@ -22,9 +24,12 @@ from app.wyckoff import AnalysisResult
 logger = logging.getLogger("chart_volume.ai")
 
 DISCLAIMER = "⚠️ Đây là phân tích kỹ thuật tự động dựa trên phương pháp Wyckoff, KHÔNG phải khuyến nghị đầu tư. Bạn tự chịu trách nhiệm với quyết định của mình."
+DISCLAIMER_EN = "⚠️ This is an automated technical analysis based on the Wyckoff method, NOT investment advice. You are solely responsible for your own decisions."
 
 _ADVICE_MARKER = "LỜI KHUYÊN:"
 _NARRATIVE_MARKER = "NHẬN ĐỊNH:"
+_ADVICE_MARKER_EN = "ADVICE:"
+_NARRATIVE_MARKER_EN = "ASSESSMENT:"
 
 PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_OLLAMA = "ollama"
@@ -38,6 +43,7 @@ class ProviderConfig:
     model: str
     api_key: str = ""  # anthropic only
     base_url: str = "http://localhost:11434"  # ollama only
+    language: str = "vi"  # "vi" | "en" -- controls the prompt/output language
 
 
 def is_available(cfg: ProviderConfig) -> bool:
@@ -46,8 +52,9 @@ def is_available(cfg: ProviderConfig) -> bool:
     return bool(cfg.api_key)
 
 
-def _candle_table(recent) -> str:
-    lines = ["Ngày | Open | High | Low | Close | Volume"]
+def _candle_table(recent, language: str) -> str:
+    header = "Ngày | Open | High | Low | Close | Volume" if language != "en" else "Date | Open | High | Low | Close | Volume"
+    lines = [header]
     for c in recent:
         ts = c.bucket_start
         day = ts.strftime("%Y-%m-%d %H:%M") if hasattr(ts, "strftime") else str(ts)
@@ -57,7 +64,7 @@ def _candle_table(recent) -> str:
     return "\n".join(lines)
 
 
-def build_prompt(ticker: str, timeframe: str, result: AnalysisResult, recent) -> str:
+def _build_prompt_vi(ticker: str, timeframe: str, result: AnalysisResult, recent) -> str:
     events_desc = (
         "\n".join(
             f"- {e.type} @ {e.ts:%Y-%m-%d} (giá {e.price:.2f}): {e.note}" for e in result.events[-8:]
@@ -75,7 +82,7 @@ Hệ thống định lượng đã tính sẵn kết quả dưới đây cho mã
 {events_desc}
 
 Dữ liệu {len(list(recent))} phiên gần nhất:
-{_candle_table(recent)}
+{_candle_table(recent, "vi")}
 
 Hãy viết bằng tiếng Việt, ngắn gọn, dễ hiểu cho nhà đầu tư cá nhân, đúng 2 phần theo định dạng:
 
@@ -85,6 +92,42 @@ Hãy viết bằng tiếng Việt, ngắn gọn, dễ hiểu cho nhà đầu tư
 {_ADVICE_MARKER}
 (2-3 gạch đầu dòng hành động cụ thể theo kịch bản: điều kiện vào/thoát, vùng giá theo dõi, quản trị rủi ro)
 """
+
+
+def _build_prompt_en(ticker: str, timeframe: str, result: AnalysisResult, recent) -> str:
+    events_desc = (
+        "\n".join(
+            f"- {e.type} @ {e.ts:%Y-%m-%d} (price {e.price:.2f}): {e.note}" for e in result.events[-8:]
+        )
+        or "- (no notable Wyckoff events recently)"
+    )
+    return f"""You are a technical analysis expert specializing in the Wyckoff method for the Vietnamese stock market.
+
+A quantitative system has already computed the result below for **{ticker}** (timeframe {timeframe}). USE this result, do NOT invent a different phase:
+
+- Wyckoff phase: {result.phase} (confidence {result.confidence})
+- Driving factors: {', '.join(result.drivers) or 'unclear'}
+- Support: {result.levels.support:.2f} | Resistance: {result.levels.resistance:.2f}
+- Detected Wyckoff events:
+{events_desc}
+
+Data for the last {len(list(recent))} sessions:
+{_candle_table(recent, "en")}
+
+Write in English, concise and easy to understand for a retail investor, in exactly 2 sections in this format:
+
+{_NARRATIVE_MARKER_EN}
+(3-5 sentences explaining the current Wyckoff context: phase, price-volume relationship, meaning of the events, key price zones)
+
+{_ADVICE_MARKER_EN}
+(2-3 bullet points of concrete action per scenario: entry/exit conditions, price zones to watch, risk management)
+"""
+
+
+def build_prompt(ticker: str, timeframe: str, result: AnalysisResult, recent, language: str = "vi") -> str:
+    if language == "en":
+        return _build_prompt_en(ticker, timeframe, result, recent)
+    return _build_prompt_vi(ticker, timeframe, result, recent)
 
 
 def _call_claude(prompt: str, api_key: str, model: str) -> str:
@@ -109,24 +152,27 @@ def _call_ollama(prompt: str, model: str, base_url: str) -> str:
     return resp.json().get("response", "")
 
 
-def _parse(raw: str) -> tuple[str, str]:
-    if _ADVICE_MARKER in raw:
-        head, tail = raw.split(_ADVICE_MARKER, 1)
-        narrative = head.replace(_NARRATIVE_MARKER, "").strip()
+def _parse(raw: str, language: str = "vi") -> tuple[str, str]:
+    advice_marker = _ADVICE_MARKER_EN if language == "en" else _ADVICE_MARKER
+    narrative_marker = _NARRATIVE_MARKER_EN if language == "en" else _NARRATIVE_MARKER
+    disclaimer = DISCLAIMER_EN if language == "en" else DISCLAIMER
+    if advice_marker in raw:
+        head, tail = raw.split(advice_marker, 1)
+        narrative = head.replace(narrative_marker, "").strip()
         advice = tail.strip()
     else:
         narrative = raw.strip()
         advice = ""
-    advice = (advice + "\n\n" + DISCLAIMER).strip()
+    advice = (advice + "\n\n" + disclaimer).strip()
     return narrative, advice
 
 
 def generate(
     ticker: str, timeframe: str, result: AnalysisResult, recent, cfg: ProviderConfig
 ) -> tuple[str, str]:
-    prompt = build_prompt(ticker, timeframe, result, recent)
+    prompt = build_prompt(ticker, timeframe, result, recent, cfg.language)
     if cfg.provider == PROVIDER_OLLAMA:
         raw = _call_ollama(prompt, cfg.model, cfg.base_url)
     else:
         raw = _call_claude(prompt, cfg.api_key, cfg.model)
-    return _parse(raw)
+    return _parse(raw, cfg.language)

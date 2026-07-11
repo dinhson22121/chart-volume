@@ -2,6 +2,8 @@ import { useMemo, useState, type FormEvent } from "react";
 import { api } from "../../api/client";
 import type { SymbolItem } from "../../types";
 import { CryptoDiscovery } from "./CryptoDiscovery";
+import { formatTime } from "../../lib/datetime";
+import { useI18n } from "../../i18n/I18nContext";
 import "./watchlist.css";
 
 export type WatchlistTab = "vn30" | "crypto";
@@ -37,6 +39,7 @@ export function Watchlist({
   onTabChange,
   busy,
 }: Props) {
+  const { t, language } = useI18n();
   const [input, setInput] = useState("");
   // Self-contained like CryptoDiscovery's own scan state, rather than routed
   // through App.tsx's generic busy flag -- so seeding gets its own status
@@ -55,9 +58,9 @@ export function Watchlist({
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    const t = input.trim().toUpperCase();
-    if (t) {
-      onAdd(t);
+    const ticker = input.trim().toUpperCase();
+    if (ticker) {
+      onAdd(ticker);
       setInput("");
     }
   };
@@ -70,7 +73,7 @@ export function Watchlist({
       setLastSeed({ completedAt: Date.now(), count: result.count, source: result.source });
       onSeeded();
     } catch (e) {
-      setSeedError(e instanceof Error ? e.message : "Tải VN30 thất bại");
+      setSeedError(e instanceof Error ? e.message : t("watchlist.seed.error"));
     } finally {
       setSeeding(false);
     }
@@ -92,7 +95,7 @@ export function Watchlist({
                 <span
                   className="wl-row__remove"
                   role="button"
-                  aria-label={`Bỏ ${s.display_symbol}`}
+                  aria-label={t("watchlist.remove.ariaLabel", { ticker: s.display_symbol })}
                   onClick={(e) => {
                     e.stopPropagation();
                     onRemove(s.ticker);
@@ -113,7 +116,7 @@ export function Watchlist({
               <span
                 className="wl-row__remove"
                 role="button"
-                aria-label={`Bỏ ${s.display_symbol}`}
+                aria-label={t("watchlist.remove.ariaLabel", { ticker: s.display_symbol })}
                 onClick={(e) => {
                   e.stopPropagation();
                   onRemove(s.ticker);
@@ -133,7 +136,7 @@ export function Watchlist({
       <form className="wl-add" onSubmit={submit}>
         <input
           className="wl-add__input mono"
-          placeholder="Thêm mã (vd HPG)"
+          placeholder={t("watchlist.addPlaceholder")}
           value={input}
           maxLength={8}
           onChange={(e) => setInput(e.target.value)}
@@ -146,7 +149,7 @@ export function Watchlist({
       <div className="wl-scroll">
         {watchlist.length > 0 && (
           <section className="wl-group">
-            <h3 className="wl-group__title">Theo dõi</h3>
+            <h3 className="wl-group__title">{t("watchlist.section.tracked")}</h3>
             <ul>{watchlist.map((s) => renderRow(s, true))}</ul>
           </section>
         )}
@@ -157,13 +160,13 @@ export function Watchlist({
               className={activeTab === "vn30" ? "is-active" : ""}
               onClick={() => onTabChange("vn30")}
             >
-              VN30
+              {t("watchlist.tab.vn30")}
             </button>
             <button
               className={activeTab === "crypto" ? "is-active" : ""}
               onClick={() => onTabChange("crypto")}
             >
-              Crypto mới
+              {t("watchlist.tab.crypto")}
             </button>
           </div>
 
@@ -172,22 +175,23 @@ export function Watchlist({
               <div className="wl-scanbar">
                 <span className="wl-status faint">
                   {seeding
-                    ? "Đang tải VN30…"
+                    ? t("watchlist.seed.loading")
                     : seedError
-                      ? "Lỗi lần tải trước"
+                      ? t("watchlist.seed.errorStatus")
                       : lastSeed
-                        ? `${lastSeed.source === "fallback" ? "⚠ Dự phòng — " : ""}Đã tải lúc ${new Date(
-                            lastSeed.completedAt,
-                          ).toLocaleTimeString("vi-VN")} (${lastSeed.count} mã)`
-                        : "Chưa tải lần nào"}
+                        ? `${lastSeed.source === "fallback" ? t("watchlist.seed.fallbackPrefix") : ""}${t(
+                            "watchlist.seed.doneAt",
+                            { time: formatTime(lastSeed.completedAt, language), count: lastSeed.count },
+                          )}`
+                        : t("watchlist.seed.never")}
                 </span>
                 <button className="wl-seed" onClick={() => void handleSeedVn30()} disabled={seeding || busy}>
-                  {seeding ? "Đang tải…" : "Tải VN30"}
+                  {seeding ? t("watchlist.seed.buttonLoading") : t("watchlist.seed.button")}
                 </button>
               </div>
 
               {seeding && (
-                <div className="wl-progress" role="progressbar" aria-label="Đang tải VN30">
+                <div className="wl-progress" role="progressbar" aria-label={t("watchlist.seed.loading")}>
                   <div className="wl-progress-fill" />
                 </div>
               )}
@@ -195,7 +199,7 @@ export function Watchlist({
               {seedError && <p className="wl-error">{seedError}</p>}
 
               {vn30.length === 0 && !seeding ? (
-                <p className="wl-empty faint">Chưa có dữ liệu VN30.</p>
+                <p className="wl-empty faint">{t("watchlist.empty")}</p>
               ) : (
                 <ul className="wl-list--scroll wl-list--cards">{vn30.map((s) => renderRow(s, false, true))}</ul>
               )}

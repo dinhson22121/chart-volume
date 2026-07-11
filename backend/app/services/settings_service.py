@@ -21,6 +21,7 @@ from app.wyckoff.config import WyckoffConfig
 KEY_API = "anthropic_api_key"
 
 DEFAULTS: dict[str, str] = {
+    "language": "vi",  # "vi" | "en" -- controls both UI text and AI narrative language
     "strategy": strategy_registry.DEFAULT_STRATEGY,
     "narrative_provider": PROVIDER_ANTHROPIC,
     "anthropic_model": "claude-sonnet-4-5",
@@ -152,14 +153,20 @@ def get_strategy_config(session: Session, strategy: str):
     return get_wyckoff_config(session)
 
 
+def get_language(session: Session) -> str:
+    stored = _stored(session)
+    return stored.get("language", DEFAULTS["language"])
+
+
 def get_narrative_config(session: Session) -> ProviderConfig:
     stored = _stored(session)
     provider = stored.get("narrative_provider", DEFAULTS["narrative_provider"])
+    language = get_language(session)
     if provider == PROVIDER_OLLAMA:
-        return ProviderConfig(provider=PROVIDER_OLLAMA, model=stored.get("ollama_model", ""))
+        return ProviderConfig(provider=PROVIDER_OLLAMA, model=stored.get("ollama_model", ""), language=language)
     api_key = decrypt(stored.get(KEY_API, "")) or get_settings().anthropic_api_key
     model = stored.get("anthropic_model") or get_settings().anthropic_model
-    return ProviderConfig(provider=PROVIDER_ANTHROPIC, model=model, api_key=api_key)
+    return ProviderConfig(provider=PROVIDER_ANTHROPIC, model=model, api_key=api_key, language=language)
 
 
 def get_lookbacks(session: Session) -> tuple[int, int]:

@@ -92,7 +92,8 @@ def run_analysis(
         if timeframe in _INTRADAY_TIMEFRAMES
         else None
     )
-    result = strategy_module.analyze(candles, strategy_cfg, daily_trend)
+    language = settings_service.get_language(session)
+    result = strategy_module.analyze(candles, strategy_cfg, daily_trend, language)
     as_of = result.as_of
 
     # Cheap deterministic bookkeeping: run on every call, independent of the

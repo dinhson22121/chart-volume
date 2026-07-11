@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 
-from app import sonicr, wyckoff
+from app import smc, sonicr, wyckoff
 from app.strategies.base import Strategy
 
 logger = logging.getLogger("chart_volume.strategies")
@@ -21,11 +21,13 @@ DEFAULT_STRATEGY = "wyckoff"
 REGISTRY: dict[str, Strategy] = {
     "wyckoff": wyckoff,
     "sonicr": sonicr,
+    "smc": smc,
 }
 
 LABELS: dict[str, str] = {
     "wyckoff": "Wyckoff (Accumulation/Distribution)",
     "sonicr": "Sonic R",
+    "smc": "Smart Money Concept",
 }
 
 

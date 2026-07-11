@@ -103,6 +103,24 @@ def test_put_settings_rejects_invalid_sonicr_vfactor(client, auth_header):
     assert resp.status_code == 422
 
 
+def test_put_settings_accepts_smc_strategy_and_thresholds(client, auth_header):
+    resp = client.put(
+        "/settings",
+        json={"strategy": "smc", "smc_swing_lookback": 3, "smc_fvg_min_gap_mult": 0.5},
+        headers=auth_header,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["strategy"] == "smc"
+    assert body["smc_swing_lookback"] == 3
+    assert body["smc_fvg_min_gap_mult"] == 0.5
+
+
+def test_put_settings_rejects_invalid_smc_swing_lookback(client, auth_header):
+    resp = client.put("/settings", json={"smc_swing_lookback": 0}, headers=auth_header)
+    assert resp.status_code == 422
+
+
 def test_put_settings_accepts_screener_require_volume_rising(client, auth_header):
     resp = client.put(
         "/settings", json={"screener_require_volume_rising": True}, headers=auth_header

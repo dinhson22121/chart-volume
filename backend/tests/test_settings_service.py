@@ -181,6 +181,27 @@ def test_get_strategy_config_returns_sonicr_config_when_strategy_is_sonicr(sessi
     assert cfg.dragon_period == 21
 
 
+def test_get_smc_config_defaults(session):
+    cfg = settings_service.get_smc_config(session)
+    assert cfg.swing_lookback == 2
+    assert cfg.ob_lookback_bars == 10
+    assert cfg.fvg_min_gap_mult == 0.3
+
+
+def test_get_smc_config_reflects_overrides(session):
+    settings_service.update(session, {"smc_swing_lookback": "3", "smc_fvg_min_gap_mult": "0.5"})
+    cfg = settings_service.get_smc_config(session)
+    assert cfg.swing_lookback == 3
+    assert cfg.fvg_min_gap_mult == 0.5
+    assert cfg.ob_lookback_bars == 10  # untouched default
+
+
+def test_get_strategy_config_returns_smc_config_when_strategy_is_smc(session):
+    settings_service.update(session, {"smc_ob_lookback_bars": "15"})
+    cfg = settings_service.get_strategy_config(session, "smc")
+    assert cfg.ob_lookback_bars == 15
+
+
 def test_screener_require_volume_rising_defaults_to_false(session):
     assert settings_service.get_public(session)["screener_require_volume_rising"] is False
     assert settings_service.get_screener_config(session)["require_volume_rising"] is False

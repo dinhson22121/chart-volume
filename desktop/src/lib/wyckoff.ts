@@ -10,11 +10,14 @@ const PHASE_COLOR: Record<string, string> = {
   Distribution: "var(--phase-distribution)",
   Markdown: "var(--phase-markdown)",
   Ranging: "var(--phase-ranging)",
+  "Bullish Structure": "var(--phase-markup)",
+  "Bearish Structure": "var(--phase-markdown)",
 };
 
 const BULLISH_SIGNALS = new Set([
   "Spring", "SC", "SOS", "NoSupply", "LPS",
   "DragonCrossUp", "SonicCrossUp", "SonicEntryLong",
+  "BOS_Bull", "CHoCH_Bull", "BullishOB", "BullishFVG",
 ]);
 // LPS/LPSY and SonicEntryLong/Short are confirmed entry points, not just raw
 // detector signals -- given a distinct marker shape on the chart so they

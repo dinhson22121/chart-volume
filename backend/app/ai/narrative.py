@@ -64,21 +64,21 @@ def _candle_table(recent, language: str) -> str:
     return "\n".join(lines)
 
 
-def _build_prompt_vi(ticker: str, timeframe: str, result: AnalysisResult, recent) -> str:
+def _build_prompt_vi(ticker: str, timeframe: str, result: AnalysisResult, recent, strategy_label: str) -> str:
     events_desc = (
         "\n".join(
             f"- {e.type} @ {e.ts:%Y-%m-%d} (giá {e.price:.2f}): {e.note}" for e in result.events[-8:]
         )
-        or "- (không có sự kiện Wyckoff nổi bật gần đây)"
+        or f"- (không có sự kiện {strategy_label} nổi bật gần đây)"
     )
-    return f"""Bạn là chuyên gia phân tích kỹ thuật theo phương pháp Wyckoff cho thị trường chứng khoán Việt Nam.
+    return f"""Bạn là chuyên gia phân tích kỹ thuật theo phương pháp {strategy_label} cho thị trường chứng khoán Việt Nam.
 
 Hệ thống định lượng đã tính sẵn kết quả dưới đây cho mã **{ticker}** (khung {timeframe}). Hãy DÙNG kết quả này, KHÔNG tự bịa ra phase khác:
 
-- Giai đoạn Wyckoff (phase): {result.phase} (độ tin cậy {result.confidence})
+- Giai đoạn {strategy_label} (phase): {result.phase} (độ tin cậy {result.confidence})
 - Yếu tố dẫn dắt: {', '.join(result.drivers) or 'không rõ ràng'}
 - Hỗ trợ: {result.levels.support:.2f} | Kháng cự: {result.levels.resistance:.2f}
-- Các sự kiện Wyckoff phát hiện:
+- Các sự kiện {strategy_label} phát hiện:
 {events_desc}
 
 Dữ liệu {len(list(recent))} phiên gần nhất:
@@ -87,28 +87,28 @@ Dữ liệu {len(list(recent))} phiên gần nhất:
 Hãy viết bằng tiếng Việt, ngắn gọn, dễ hiểu cho nhà đầu tư cá nhân, đúng 2 phần theo định dạng:
 
 {_NARRATIVE_MARKER}
-(3-5 câu diễn giải bối cảnh Wyckoff hiện tại: phase, quan hệ giá-khối lượng, ý nghĩa các sự kiện, vùng giá quan trọng)
+(3-5 câu diễn giải bối cảnh {strategy_label} hiện tại: phase, quan hệ giá-khối lượng, ý nghĩa các sự kiện, vùng giá quan trọng)
 
 {_ADVICE_MARKER}
 (2-3 gạch đầu dòng hành động cụ thể theo kịch bản: điều kiện vào/thoát, vùng giá theo dõi, quản trị rủi ro)
 """
 
 
-def _build_prompt_en(ticker: str, timeframe: str, result: AnalysisResult, recent) -> str:
+def _build_prompt_en(ticker: str, timeframe: str, result: AnalysisResult, recent, strategy_label: str) -> str:
     events_desc = (
         "\n".join(
             f"- {e.type} @ {e.ts:%Y-%m-%d} (price {e.price:.2f}): {e.note}" for e in result.events[-8:]
         )
-        or "- (no notable Wyckoff events recently)"
+        or f"- (no notable {strategy_label} events recently)"
     )
-    return f"""You are a technical analysis expert specializing in the Wyckoff method for the Vietnamese stock market.
+    return f"""You are a technical analysis expert specializing in the {strategy_label} method for the Vietnamese stock market.
 
 A quantitative system has already computed the result below for **{ticker}** (timeframe {timeframe}). USE this result, do NOT invent a different phase:
 
-- Wyckoff phase: {result.phase} (confidence {result.confidence})
+- {strategy_label} phase: {result.phase} (confidence {result.confidence})
 - Driving factors: {', '.join(result.drivers) or 'unclear'}
 - Support: {result.levels.support:.2f} | Resistance: {result.levels.resistance:.2f}
-- Detected Wyckoff events:
+- Detected {strategy_label} events:
 {events_desc}
 
 Data for the last {len(list(recent))} sessions:
@@ -117,17 +117,19 @@ Data for the last {len(list(recent))} sessions:
 Write in English, concise and easy to understand for a retail investor, in exactly 2 sections in this format:
 
 {_NARRATIVE_MARKER_EN}
-(3-5 sentences explaining the current Wyckoff context: phase, price-volume relationship, meaning of the events, key price zones)
+(3-5 sentences explaining the current {strategy_label} context: phase, price-volume relationship, meaning of the events, key price zones)
 
 {_ADVICE_MARKER_EN}
 (2-3 bullet points of concrete action per scenario: entry/exit conditions, price zones to watch, risk management)
 """
 
 
-def build_prompt(ticker: str, timeframe: str, result: AnalysisResult, recent, language: str = "vi") -> str:
+def build_prompt(
+    ticker: str, timeframe: str, result: AnalysisResult, recent, language: str = "vi", strategy_label: str = "Wyckoff"
+) -> str:
     if language == "en":
-        return _build_prompt_en(ticker, timeframe, result, recent)
-    return _build_prompt_vi(ticker, timeframe, result, recent)
+        return _build_prompt_en(ticker, timeframe, result, recent, strategy_label)
+    return _build_prompt_vi(ticker, timeframe, result, recent, strategy_label)
 
 
 def _call_claude(prompt: str, api_key: str, model: str) -> str:
@@ -168,9 +170,9 @@ def _parse(raw: str, language: str = "vi") -> tuple[str, str]:
 
 
 def generate(
-    ticker: str, timeframe: str, result: AnalysisResult, recent, cfg: ProviderConfig
+    ticker: str, timeframe: str, result: AnalysisResult, recent, cfg: ProviderConfig, strategy_label: str = "Wyckoff"
 ) -> tuple[str, str]:
-    prompt = build_prompt(ticker, timeframe, result, recent, cfg.language)
+    prompt = build_prompt(ticker, timeframe, result, recent, cfg.language, strategy_label)
     if cfg.provider == PROVIDER_OLLAMA:
         raw = _call_ollama(prompt, cfg.model, cfg.base_url)
     else:

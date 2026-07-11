@@ -122,6 +122,9 @@ export interface Settings {
   sonicr_cci_fast_period: number;
   sonicr_cci_slow_period: number;
   sonicr_pullback_lookback_bars: number;
+  smc_swing_lookback: number;
+  smc_ob_lookback_bars: number;
+  smc_fvg_min_gap_mult: number;
   screener_enabled: boolean;
   screener_mcap_max: number;
   screener_require_volume_rising: boolean;

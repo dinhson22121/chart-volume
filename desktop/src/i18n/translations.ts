@@ -250,6 +250,11 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "settings.sonicr.cciFast": "Chu kỳ CCI fast",
     "settings.sonicr.cciSlow": "Chu kỳ CCI slow",
     "settings.sonicr.pullbackLookback": "Số nến tối đa chờ pullback về Dragon",
+    "settings.section.smcThresholds": "Ngưỡng Smart Money Concept",
+    "settings.smc.hint": "Nâng cao — số nến xác nhận swing high/low, số nến tối đa tìm Order Block, và ngưỡng khoảng trống tối thiểu để tính là Fair Value Gap. Để mặc định nếu không chắc.",
+    "settings.smc.swingLookback": "Số nến xác nhận swing (mỗi bên)",
+    "settings.smc.obLookback": "Số nến tối đa tìm Order Block",
+    "settings.smc.fvgMinGap": "Ngưỡng Fair Value Gap tối thiểu (x lần spread TB)",
     "settings.section.screener": "Screener Crypto",
     "settings.screener.hint": 'Tự động (và thủ công qua mục "Crypto mới" trong danh sách theo dõi) tìm coin vốn hóa nhỏ — nguồn lọc CoinGecko. Chọn sàn lấy nến (Binance/KuCoin) ngay trong mục "Crypto mới". Một lần quét mất vài phút do giới hạn API.',
     "settings.screener.enableScheduled": "Bật tự động quét theo lịch",
@@ -273,6 +278,8 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "phase.Markdown": "Giảm giá (Markdown)",
     "phase.Ranging": "Đi ngang",
     "phase.Insufficient data": "Chưa đủ dữ liệu",
+    "phase.Bullish Structure": "Cấu trúc tăng",
+    "phase.Bearish Structure": "Cấu trúc giảm",
 
     // --- Wyckoff / Sonic R signal labels ---
     "signal.SC": "Selling Climax — cao trào bán",
@@ -291,6 +298,16 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "signal.SonicCrossDown": "Sonic Cross Down — T3 fast cắt xuống T3 slow",
     "signal.SonicEntryLong": "Sonic Entry Long — điểm vào mua (pullback + MTF khớp)",
     "signal.SonicEntryShort": "Sonic Entry Short — điểm vào bán (pullback + MTF khớp)",
+
+    // --- SMC (Smart Money Concept) signal labels ---
+    "signal.BOS_Bull": "BOS Tăng — phá cấu trúc thuận xu hướng tăng",
+    "signal.BOS_Bear": "BOS Giảm — phá cấu trúc thuận xu hướng giảm",
+    "signal.CHoCH_Bull": "CHoCH Tăng — đổi chiều sang xu hướng tăng",
+    "signal.CHoCH_Bear": "CHoCH Giảm — đổi chiều sang xu hướng giảm",
+    "signal.BullishOB": "Order Block tăng — vùng cầu hay được test lại",
+    "signal.BearishOB": "Order Block giảm — vùng cung hay được test lại",
+    "signal.BullishFVG": "Fair Value Gap tăng — khoảng trống giá hay được lấp",
+    "signal.BearishFVG": "Fair Value Gap giảm — khoảng trống giá hay được lấp",
   },
 
   en: {
@@ -536,6 +553,11 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "settings.sonicr.cciFast": "CCI fast period",
     "settings.sonicr.cciSlow": "CCI slow period",
     "settings.sonicr.pullbackLookback": "Max bars to wait for a Dragon pullback",
+    "settings.section.smcThresholds": "Smart Money Concept thresholds",
+    "settings.smc.hint": "Advanced — bars required to confirm a swing high/low, max bars to search for an Order Block, and the minimum gap size to count as a Fair Value Gap. Leave at default if unsure.",
+    "settings.smc.swingLookback": "Bars to confirm a swing (each side)",
+    "settings.smc.obLookback": "Max bars to search for an Order Block",
+    "settings.smc.fvgMinGap": "Min Fair Value Gap threshold (x avg spread)",
     "settings.section.screener": "Crypto screener",
     "settings.screener.hint": 'Automatic (and manual via "New crypto" in the watchlist) discovery of small-cap coins — CoinGecko-sourced. Choose the candle exchange (Binance/KuCoin) right in "New crypto". One scan takes a few minutes due to API limits.',
     "settings.screener.enableScheduled": "Enable automatic scheduled scanning",
@@ -559,6 +581,8 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "phase.Markdown": "Markdown",
     "phase.Ranging": "Ranging",
     "phase.Insufficient data": "Insufficient data",
+    "phase.Bullish Structure": "Bullish Structure",
+    "phase.Bearish Structure": "Bearish Structure",
 
     // --- Wyckoff / Sonic R signal labels ---
     "signal.SC": "Selling Climax",
@@ -577,5 +601,15 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "signal.SonicCrossDown": "Sonic Cross Down — T3 fast crosses below T3 slow",
     "signal.SonicEntryLong": "Sonic Entry Long — buy entry (pullback + MTF aligned)",
     "signal.SonicEntryShort": "Sonic Entry Short — sell entry (pullback + MTF aligned)",
+
+    // --- SMC (Smart Money Concept) signal labels ---
+    "signal.BOS_Bull": "BOS Bull — break of structure, bullish continuation",
+    "signal.BOS_Bear": "BOS Bear — break of structure, bearish continuation",
+    "signal.CHoCH_Bull": "CHoCH Bull — change of character to bullish",
+    "signal.CHoCH_Bear": "CHoCH Bear — change of character to bearish",
+    "signal.BullishOB": "Bullish Order Block — demand zone often retested",
+    "signal.BearishOB": "Bearish Order Block — supply zone often retested",
+    "signal.BullishFVG": "Bullish Fair Value Gap — price gap often filled",
+    "signal.BearishFVG": "Bearish Fair Value Gap — price gap often filled",
   },
 };

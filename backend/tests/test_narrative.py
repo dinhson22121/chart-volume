@@ -73,6 +73,23 @@ def test_build_prompt_defaults_to_vietnamese():
     assert "Bạn là chuyên gia" in prompt
 
 
+def test_build_prompt_defaults_strategy_label_to_wyckoff():
+    prompt = narrative.build_prompt("FPT", "daily", RESULT, [])
+    assert "theo phương pháp Wyckoff" in prompt
+    assert "Giai đoạn Wyckoff" in prompt
+
+
+def test_build_prompt_uses_the_given_strategy_label():
+    prompt_vi = narrative.build_prompt("FPT", "daily", RESULT, [], strategy_label="Smart Money Concept")
+    assert "theo phương pháp Smart Money Concept" in prompt_vi
+    assert "Giai đoạn Smart Money Concept" in prompt_vi
+    assert "Wyckoff" not in prompt_vi
+
+    prompt_en = narrative.build_prompt("FPT", "daily", RESULT, [], language="en", strategy_label="Sonic R")
+    assert "specializing in the Sonic R method" in prompt_en
+    assert "Sonic R phase" in prompt_en
+
+
 def test_build_prompt_builds_english_variant_when_requested():
     prompt = narrative.build_prompt("FPT", "daily", RESULT, [], language="en")
     assert narrative._NARRATIVE_MARKER_EN in prompt

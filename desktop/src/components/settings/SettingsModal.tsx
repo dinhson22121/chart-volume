@@ -64,6 +64,9 @@ interface FormState {
   sonicrCciFastPeriod: string;
   sonicrCciSlowPeriod: string;
   sonicrPullbackLookbackBars: string;
+  smcSwingLookback: string;
+  smcObLookbackBars: string;
+  smcFvgMinGapMult: string;
   screenerEnabled: boolean;
   screenerMcapMax: string;
   screenerRequireVolumeRising: boolean;
@@ -99,6 +102,9 @@ function toForm(s: Settings): FormState {
     sonicrCciFastPeriod: String(s.sonicr_cci_fast_period),
     sonicrCciSlowPeriod: String(s.sonicr_cci_slow_period),
     sonicrPullbackLookbackBars: String(s.sonicr_pullback_lookback_bars),
+    smcSwingLookback: String(s.smc_swing_lookback),
+    smcObLookbackBars: String(s.smc_ob_lookback_bars),
+    smcFvgMinGapMult: String(s.smc_fvg_min_gap_mult),
     screenerEnabled: s.screener_enabled,
     screenerMcapMax: String(s.screener_mcap_max),
     screenerRequireVolumeRising: s.screener_require_volume_rising,
@@ -134,6 +140,9 @@ function toUpdate(f: FormState): SettingsUpdate {
     sonicr_cci_fast_period: Number(f.sonicrCciFastPeriod),
     sonicr_cci_slow_period: Number(f.sonicrCciSlowPeriod),
     sonicr_pullback_lookback_bars: Number(f.sonicrPullbackLookbackBars),
+    smc_swing_lookback: Number(f.smcSwingLookback),
+    smc_ob_lookback_bars: Number(f.smcObLookbackBars),
+    smc_fvg_min_gap_mult: Number(f.smcFvgMinGapMult),
     screener_enabled: f.screenerEnabled,
     screener_mcap_max: Number(f.screenerMcapMax),
     screener_require_volume_rising: f.screenerRequireVolumeRising,
@@ -744,6 +753,45 @@ export function SettingsModal({ onClose }: Props) {
                       max={60}
                       value={form.sonicrPullbackLookbackBars}
                       onChange={(e) => set("sonicrPullbackLookbackBars", e.target.value)}
+                    />
+                  </label>
+                </div>
+              </section>
+            )}
+
+            {form.strategy === "smc" && (
+              <section className="settings-section">
+                <h3>{t("settings.section.smcThresholds")}</h3>
+                <p className="settings-hint faint">{t("settings.smc.hint")}</p>
+                <div className="settings-grid">
+                  <label className="settings-field">
+                    <span>{t("settings.smc.swingLookback")}</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={form.smcSwingLookback}
+                      onChange={(e) => set("smcSwingLookback", e.target.value)}
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>{t("settings.smc.obLookback")}</span>
+                    <input
+                      type="number"
+                      min={2}
+                      max={30}
+                      value={form.smcObLookbackBars}
+                      onChange={(e) => set("smcObLookbackBars", e.target.value)}
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>{t("settings.smc.fvgMinGap")}</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min={0.1}
+                      value={form.smcFvgMinGapMult}
+                      onChange={(e) => set("smcFvgMinGapMult", e.target.value)}
                     />
                   </label>
                 </div>

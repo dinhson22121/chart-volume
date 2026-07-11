@@ -14,6 +14,7 @@ from app.config import get_settings
 from app.crypto import decrypt, encrypt
 from app.models import CryptoExchange, Setting
 from app.services import activity_log
+from app.smc.config import SMCConfig
 from app.sonicr.config import SonicRConfig
 from app.strategies import registry as strategy_registry
 from app.wyckoff.config import WyckoffConfig
@@ -45,6 +46,9 @@ DEFAULTS: dict[str, str] = {
     "sonicr_cci_fast_period": "6",
     "sonicr_cci_slow_period": "14",
     "sonicr_pullback_lookback_bars": "10",
+    "smc_swing_lookback": "2",
+    "smc_ob_lookback_bars": "10",
+    "smc_fvg_min_gap_mult": "0.3",
     "screener_enabled": "false",
     "screener_mcap_max": "10000000",
     "screener_require_volume_rising": "false",
@@ -67,12 +71,13 @@ CRYPTO_ANALYSIS_INTERVAL_CHOICES = SCREENER_INTERVAL_CHOICES
 
 _FLOAT_KEYS = {
     "climax_vol_mult", "wide_spread_mult", "narrow_spread_mult", "low_vol_mult", "sos_vol_mult",
-    "screener_mcap_max", "screener_min_volume_change_pct", "sonicr_t3_vfactor",
+    "screener_mcap_max", "screener_min_volume_change_pct", "sonicr_t3_vfactor", "smc_fvg_min_gap_mult",
 }
 _INT_KEYS = {
     "daily_lookback_days", "half_session_lookback_days", "lps_lookback_bars",
     "sonicr_dragon_period", "sonicr_t3_fast_period", "sonicr_t3_slow_period",
     "sonicr_cci_fast_period", "sonicr_cci_slow_period", "sonicr_pullback_lookback_bars",
+    "smc_swing_lookback", "smc_ob_lookback_bars",
 }
 _BOOL_KEYS = {
     "scheduler_enabled", "screener_enabled", "screener_require_volume_rising", "crypto_analysis_enabled",
@@ -150,6 +155,8 @@ def get_strategy_config(session: Session, strategy: str):
     here alongside its own get_*_config() when adding a new strategy."""
     if strategy == "sonicr":
         return get_sonicr_config(session)
+    if strategy == "smc":
+        return get_smc_config(session)
     return get_wyckoff_config(session)
 
 
@@ -207,6 +214,19 @@ def get_sonicr_config(session: Session) -> SonicRConfig:
         cci_fast_period=int(val("sonicr_cci_fast_period")),
         cci_slow_period=int(val("sonicr_cci_slow_period")),
         pullback_lookback_bars=int(val("sonicr_pullback_lookback_bars")),
+    )
+
+
+def get_smc_config(session: Session) -> SMCConfig:
+    stored = _stored(session)
+
+    def val(key: str) -> float:
+        return float(stored.get(key, DEFAULTS[key]))
+
+    return SMCConfig(
+        swing_lookback=int(val("smc_swing_lookback")),
+        ob_lookback_bars=int(val("smc_ob_lookback_bars")),
+        fvg_min_gap_mult=val("smc_fvg_min_gap_mult"),
     )
 
 

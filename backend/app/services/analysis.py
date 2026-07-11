@@ -119,8 +119,9 @@ def run_analysis(
     provider_cfg = settings_service.get_narrative_config(session)
     if use_ai and result.phase not in _NO_AI_PHASES and narrative_mod.is_available(provider_cfg):
         try:
+            strategy_label = strategy_registry.LABELS.get(strategy, strategy)
             narrative_text, advice_text = narrative_mod.generate(
-                ticker, timeframe, result, candles[-_RECENT_FOR_PROMPT:], provider_cfg
+                ticker, timeframe, result, candles[-_RECENT_FOR_PROMPT:], provider_cfg, strategy_label
             )
         except Exception as exc:  # noqa: BLE001 - never let LLM failure break analysis
             logger.warning("narrative generation failed for %s/%s: %s", ticker, timeframe, exc)

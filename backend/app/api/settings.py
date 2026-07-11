@@ -53,6 +53,9 @@ class SettingsIn(BaseModel):
     sonicr_cci_fast_period: int | None = Field(default=None, ge=2, le=100)
     sonicr_cci_slow_period: int | None = Field(default=None, ge=2, le=100)
     sonicr_pullback_lookback_bars: int | None = Field(default=None, ge=2, le=60)
+    smc_swing_lookback: int | None = Field(default=None, ge=1, le=10)
+    smc_ob_lookback_bars: int | None = Field(default=None, ge=2, le=30)
+    smc_fvg_min_gap_mult: float | None = Field(default=None, gt=0)
     screener_enabled: bool | None = None
     screener_mcap_max: float | None = None
     screener_require_volume_rising: bool | None = None

@@ -15,6 +15,7 @@ from app.auth import require_token
 from app.db import get_engine, get_session
 from app.models import AssetClass, ScreenerCandidate, Symbol
 from app.services import crypto_screener, settings_service
+from app.validation import is_valid_ticker
 
 router = APIRouter(prefix="/crypto", tags=["crypto"], dependencies=[Depends(require_token)])
 
@@ -131,10 +132,21 @@ def promote_candidate(coin_id: str, session: Session = Depends(get_session)) -> 
     if not candidate:
         raise HTTPException(status_code=404, detail="candidate not found")
 
-    symbol_key = candidate.coin_id.upper()
+    symbol_key = candidate.coin_id.strip().upper()
+    display_symbol = candidate.symbol.strip().upper()
+    # coin_id/symbol are third-party-sourced (CoinGecko listing, or a DEX
+    # token's self-reported symbol via GeckoTerminal) -- symbol_key becomes
+    # the ticker passed straight into the LLM prompt (see
+    # app.ai.narrative.build_prompt), so a candidate whose id/symbol doesn't
+    # look like a real ticker is refused rather than silently promoted.
+    if not is_valid_ticker(symbol_key) or not is_valid_ticker(display_symbol):
+        raise HTTPException(
+            status_code=400, detail="candidate has an invalid symbol/coin id and cannot be promoted"
+        )
+
     symbol = session.get(Symbol, symbol_key) or Symbol(ticker=symbol_key)
     symbol.name = candidate.name
-    symbol.display_symbol = candidate.symbol.upper()
+    symbol.display_symbol = display_symbol
     symbol.is_watchlist = True
     symbol.asset_class = AssetClass.CRYPTO
     if candidate.source == "geckoterminal":

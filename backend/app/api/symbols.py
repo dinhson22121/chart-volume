@@ -11,6 +11,7 @@ from app.crawler.vnstock_client import fetch_vn30
 from app.db import get_session
 from app.models import AssetClass, Symbol
 from app.services import activity_log
+from app.validation import is_valid_ticker
 
 router = APIRouter(prefix="/symbols", tags=["symbols"], dependencies=[Depends(require_token)])
 
@@ -21,6 +22,16 @@ class SymbolIn(BaseModel):
     ticker: str
     name: str = ""
     asset_class: str = AssetClass.STOCK
+
+    @field_validator("ticker")
+    @classmethod
+    def _validate_ticker(cls, value: str) -> str:
+        cleaned = value.strip().upper()
+        if not is_valid_ticker(cleaned):
+            raise ValueError(
+                "ticker must be 1-64 characters: letters, digits, '_', '-', ':', '.' only"
+            )
+        return cleaned
 
     @field_validator("asset_class")
     @classmethod
@@ -37,9 +48,7 @@ def list_symbols(session: Session = Depends(get_session)) -> list[Symbol]:
 
 @router.post("")
 def add_symbol(payload: SymbolIn, session: Session = Depends(get_session)) -> Symbol:
-    ticker = payload.ticker.strip().upper()
-    if not ticker:
-        raise HTTPException(status_code=400, detail="ticker is required")
+    ticker = payload.ticker  # already validated + normalized by SymbolIn._validate_ticker
     existing = session.get(Symbol, ticker)
     if existing:
         existing.is_watchlist = True

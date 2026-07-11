@@ -45,3 +45,30 @@ def test_ollama_pull_streams_progress(client, auth_header, mocker):
     assert resp.status_code == 200
     assert b'"status":"pulling manifest"' in resp.content
     assert b'"status":"success"' in resp.content
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "evil-registry.example/library/llama3",  # embeds an alternate registry host
+        "../../etc/passwd",
+        "qwen2.5:7b; rm -rf /",
+        "model with spaces",
+        "",
+    ],
+)
+def test_ollama_pull_rejects_unsafe_model_names(client, auth_header, model):
+    resp = client.post("/ollama/pull", json={"model": model}, headers=auth_header)
+    assert resp.status_code == 422
+
+
+@pytest.mark.parametrize("model", ["qwen2.5:7b", "llama3.1:8b", "deepseek-r1:7b", "mistral"])
+def test_ollama_pull_accepts_plain_name_or_name_tag(client, auth_header, mocker, model):
+    async def fake_stream(m):
+        yield b'{"status":"success"}\n'
+
+    mocker.patch.object(ollama_service, "stream_pull", side_effect=fake_stream)
+
+    resp = client.post("/ollama/pull", json={"model": model}, headers=auth_header)
+
+    assert resp.status_code == 200

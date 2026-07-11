@@ -8,10 +8,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from sqlmodel import Session
+
 from app.api import analysis, candles, crypto, logs, ollama, settings as settings_api, signals, strategies, symbols
 from app.config import get_settings
-from app.db import init_db
+from app.db import get_engine, init_db
 from app.scheduler import build_scheduler
+from app.services import activity_log
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("chart_volume")
@@ -20,6 +23,10 @@ logger = logging.getLogger("chart_volume")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    with Session(get_engine()) as session:
+        fixed = activity_log.mark_stale_running_as_interrupted(session)
+        if fixed:
+            logger.info("marked %d stale 'running' activity log row(s) as interrupted", fixed)
     settings = get_settings()
     settings.resolved_token()  # ensure a token exists; never logged (it's the only auth secret)
     logger.info("Chart-Volume backend up on %s:%s", settings.host, settings.port)

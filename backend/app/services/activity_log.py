@@ -42,6 +42,24 @@ def log_action_finish(session: Session, log_id: int, status: str, detail: str | 
     session.commit()
 
 
+def mark_stale_running_as_interrupted(session: Session) -> int:
+    """Called once at backend startup. A "running" row can only be genuinely
+    live for the process that wrote it -- run_scan_guarded's lock and
+    _scan_state are in-memory and always reset to "not running" on a fresh
+    process, but a SystemActionLog row from a killed/restarted process has no
+    such reset, so it would otherwise show as "running" forever. Returns how
+    many rows were fixed, for a one-line startup log."""
+    stale = session.exec(select(SystemActionLog).where(SystemActionLog.status == "running")).all()
+    for entry in stale:
+        entry.status = "error"
+        entry.detail = "Bị gián đoạn do app khởi động lại"
+        entry.finished_at = _utcnow()
+        session.add(entry)
+    if stale:
+        session.commit()
+    return len(stale)
+
+
 def list_config_changes(session: Session, page: int, page_size: int) -> tuple[list[ConfigChangeLog], int]:
     total = session.exec(select(func.count()).select_from(ConfigChangeLog)).one()
     items = session.exec(

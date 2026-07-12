@@ -7,10 +7,11 @@ from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
 from app.auth import require_token
+from app.crawler import coingecko_client
 from app.crawler.vnstock_client import fetch_vn30
 from app.db import get_session
 from app.models import AssetClass, Symbol
-from app.services import activity_log
+from app.services import activity_log, top100
 from app.validation import is_valid_ticker
 
 router = APIRouter(prefix="/symbols", tags=["symbols"], dependencies=[Depends(require_token)])
@@ -74,8 +75,8 @@ def remove_symbol(ticker: str, session: Session = Depends(get_session)) -> dict[
     symbol = session.get(Symbol, ticker)
     if not symbol:
         raise HTTPException(status_code=404, detail="symbol not found")
-    # VN30 members stay (index membership), only drop the watchlist flag.
-    if symbol.is_vn30:
+    # VN30/top-100 members stay (list membership), only drop the watchlist flag.
+    if symbol.is_vn30 or symbol.is_top100:
         symbol.is_watchlist = False
         session.add(symbol)
     else:
@@ -102,3 +103,12 @@ def seed_vn30(session: Session = Depends(get_session)) -> dict:
     session.commit()
     activity_log.log_action_finish(session, log_id, "success", f"{len(tickers)} mã ({source})")
     return {"count": len(tickers), "source": source}
+
+
+@router.post("/seed-top100")
+def seed_top100(session: Session = Depends(get_session)) -> dict:
+    """Seeds/refreshes the top-100-by-market-cap crypto list from CoinGecko."""
+    try:
+        return top100.seed_top100(session, "manual")
+    except coingecko_client.CrawlError as exc:
+        raise HTTPException(status_code=502, detail=f"CoinGecko fetch failed: {exc}") from exc

@@ -24,6 +24,7 @@ _SCHEDULER_KEYS = {
     "scheduler_enabled", "half_morning_time", "half_afternoon_time", "daily_time",
     "screener_enabled", "screener_scan_interval",
     "crypto_analysis_enabled", "crypto_analysis_interval",
+    "top100_auto_refresh_enabled", "top100_refresh_time",
 }
 
 
@@ -64,6 +65,8 @@ class SettingsIn(BaseModel):
     crypto_exchanges: list[str] | None = None
     crypto_analysis_enabled: bool | None = None
     crypto_analysis_interval: str | None = None
+    top100_auto_refresh_enabled: bool | None = None
+    top100_refresh_time: str | None = None
 
     @field_validator("strategy")
     @classmethod

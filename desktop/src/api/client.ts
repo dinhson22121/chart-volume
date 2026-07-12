@@ -53,6 +53,7 @@ export const api = {
     }),
   removeSymbol: (ticker: string) => req<unknown>(`/symbols/${ticker}`, { method: "DELETE" }),
   seedVn30: () => req<SeedVn30Result>("/symbols/seed-vn30", { method: "POST" }),
+  seedTop100: () => req<{ count: number }>("/symbols/seed-top100", { method: "POST" }),
   getCandles: (ticker: string, timeframe: Timeframe) =>
     req<Candle[]>(`/candles/${ticker}?timeframe=${timeframe}`),
   getAnalysis: (ticker: string, timeframe: Timeframe) =>

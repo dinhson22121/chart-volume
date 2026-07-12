@@ -49,7 +49,8 @@ export default function App() {
   // Falls back to the active sidebar tab when nothing (matching) is selected
   // yet, so the timeframe toggle previews the right options as soon as you
   // switch tabs, not just after clicking a specific ticker.
-  const timeframeAssetClass = selectedSymbol?.asset_class ?? (sidebarTab === "crypto" ? "crypto" : "stock");
+  const timeframeAssetClass =
+    selectedSymbol?.asset_class ?? (sidebarTab === "vn30" ? "stock" : "crypto");
   const availableTimeframes = useMemo(
     () =>
       (timeframeAssetClass === "crypto" ? CRYPTO_TIMEFRAME_KEYS : STOCK_TIMEFRAME_KEYS).map((tf) => ({
@@ -172,9 +173,13 @@ export default function App() {
     const match =
       tab === "vn30"
         ? symbols.filter((s) => s.is_vn30).sort((a, b) => a.ticker.localeCompare(b.ticker))[0]
-        : symbols
-            .filter((s) => s.asset_class === "crypto" && s.is_watchlist)
-            .sort((a, b) => a.ticker.localeCompare(b.ticker))[0];
+        : tab === "top100"
+          ? symbols
+              .filter((s) => s.is_top100)
+              .sort((a, b) => (a.top100_rank ?? Infinity) - (b.top100_rank ?? Infinity))[0]
+          : symbols
+              .filter((s) => s.asset_class === "crypto" && s.is_watchlist)
+              .sort((a, b) => a.ticker.localeCompare(b.ticker))[0];
     setSelected(match?.ticker ?? null);
   };
 

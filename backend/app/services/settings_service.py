@@ -61,6 +61,8 @@ DEFAULTS: dict[str, str] = {
     ),
     "crypto_analysis_enabled": "true",
     "crypto_analysis_interval": "4h",
+    "top100_auto_refresh_enabled": "true",
+    "top100_refresh_time": "07:00",
 }
 
 # Allowed values for settings that are a fixed choice rather than a free number.
@@ -81,6 +83,7 @@ _INT_KEYS = {
 }
 _BOOL_KEYS = {
     "scheduler_enabled", "screener_enabled", "screener_require_volume_rising", "crypto_analysis_enabled",
+    "top100_auto_refresh_enabled",
 }
 _LIST_KEYS = {"crypto_exchanges"}
 
@@ -237,6 +240,14 @@ def get_scheduler_config(session: Session) -> dict:
         "half_morning_time": stored.get("half_morning_time", DEFAULTS["half_morning_time"]),
         "half_afternoon_time": stored.get("half_afternoon_time", DEFAULTS["half_afternoon_time"]),
         "daily_time": stored.get("daily_time", DEFAULTS["daily_time"]),
+    }
+
+
+def get_top100_config(session: Session) -> dict:
+    stored = _stored(session)
+    return {
+        "enabled": _as_bool(stored.get("top100_auto_refresh_enabled", DEFAULTS["top100_auto_refresh_enabled"])),
+        "time": stored.get("top100_refresh_time", DEFAULTS["top100_refresh_time"]),
     }
 
 

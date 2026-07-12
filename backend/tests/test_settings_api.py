@@ -162,3 +162,21 @@ def test_put_settings_rejects_unknown_crypto_analysis_interval(client, auth_head
         "/settings", json={"crypto_analysis_interval": "bogus"}, headers=auth_header
     )
     assert resp.status_code == 422
+
+
+def test_get_settings_exposes_top100_defaults(client, auth_header):
+    body = client.get("/settings", headers=auth_header).json()
+    assert body["top100_auto_refresh_enabled"] is True
+    assert body["top100_refresh_time"] == "07:00"
+
+
+def test_put_settings_accepts_top100_settings(client, auth_header):
+    resp = client.put(
+        "/settings",
+        json={"top100_auto_refresh_enabled": False, "top100_refresh_time": "09:30"},
+        headers=auth_header,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["top100_auto_refresh_enabled"] is False
+    assert body["top100_refresh_time"] == "09:30"

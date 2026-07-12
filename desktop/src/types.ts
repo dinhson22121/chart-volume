@@ -8,6 +8,8 @@ export interface SymbolItem {
   asset_class: AssetClass;
   is_vn30: boolean;
   is_watchlist: boolean;
+  is_top100: boolean;
+  top100_rank: number | null;
   added_at: string;
 }
 
@@ -133,6 +135,8 @@ export interface Settings {
   crypto_exchanges: string[];
   crypto_analysis_enabled: boolean;
   crypto_analysis_interval: string;
+  top100_auto_refresh_enabled: boolean;
+  top100_refresh_time: string;
   has_anthropic_key: boolean;
 }
 
@@ -203,6 +207,7 @@ export interface ConfigLogPage {
 export type SystemAction =
   | "screener_scan"
   | "vn30_seed"
+  | "top100_seed"
   | "half_session_morning"
   | "half_session_afternoon"
   | "daily_close"

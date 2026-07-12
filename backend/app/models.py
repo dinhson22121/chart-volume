@@ -57,6 +57,11 @@ class Symbol(SQLModel, table=True):
     asset_class: str = Field(default=AssetClass.STOCK, index=True)
     is_vn30: bool = False
     is_watchlist: bool = False
+    # Top-100-by-market-cap membership (crypto analog of is_vn30) -- seeded
+    # from CoinGecko, refreshed manually or by the top100_refresh cron job.
+    # rank is 1-based display order; NULL when the coin is not in the top 100.
+    is_top100: bool = False
+    top100_rank: Optional[int] = None
     added_at: datetime = Field(default_factory=_utcnow)
     # Crypto only, all optional -- populated at promote time or lazily on
     # first ingest. coingecko_id links back to the screener candidate for the

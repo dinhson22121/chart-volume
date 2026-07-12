@@ -16,6 +16,7 @@ const PAGE_SIZE = 20;
 const ACTION_KEY: Record<SystemAction, string> = {
   screener_scan: "logs.action.screener_scan",
   vn30_seed: "logs.action.vn30_seed",
+  top100_seed: "logs.action.top100_seed",
   half_session_morning: "logs.action.half_session_morning",
   half_session_afternoon: "logs.action.half_session_afternoon",
   daily_close: "logs.action.daily_close",

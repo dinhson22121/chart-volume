@@ -22,8 +22,29 @@ def get_engine():
     return _engine
 
 
+# Columns added to the Symbol model after the first release. create_all only
+# creates missing *tables*, never alters existing ones, so a user's live DB
+# needs these backfilled explicitly. Maps column name -> ALTER clause.
+_SYMBOL_COLUMN_MIGRATIONS = {
+    "is_top100": "is_top100 BOOLEAN NOT NULL DEFAULT 0",
+    "top100_rank": "top100_rank INTEGER",
+}
+
+
+def _ensure_symbol_columns(engine) -> None:
+    with engine.connect() as conn:
+        existing = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(symbol)")}
+        if not existing:
+            return  # table doesn't exist yet; create_all will build it complete
+        for column, clause in _SYMBOL_COLUMN_MIGRATIONS.items():
+            if column not in existing:
+                conn.exec_driver_sql(f"ALTER TABLE symbol ADD COLUMN {clause}")
+        conn.commit()
+
+
 def init_db() -> None:
-    """Create tables if they do not exist."""
+    """Create tables if they do not exist, and backfill columns added later."""
+    _ensure_symbol_columns(_engine)
     SQLModel.metadata.create_all(_engine)
 
 

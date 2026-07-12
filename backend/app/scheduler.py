@@ -25,7 +25,7 @@ from sqlmodel import Session, select
 from app.config import TIMEZONE
 from app.db import get_engine
 from app.models import AssetClass, Symbol, Timeframe
-from app.services import activity_log, crypto_screener, ingest, settings_service
+from app.services import activity_log, crypto_screener, ingest, settings_service, top100
 from app.services.analysis import run_analysis
 
 logger = logging.getLogger("chart_volume.scheduler")
@@ -38,6 +38,7 @@ _WEEKDAYS = "mon-fri"
 _STOCK_JOB_IDS = ("half_session_morning", "half_session_afternoon", "daily_close")
 _SCREENER_JOB_ID = "crypto_screener_scan"
 _CRYPTO_JOB_ID = "crypto_analysis_refresh"
+_TOP100_JOB_ID = "top100_refresh"
 
 # Set once by build_scheduler() -- interval jobs are self-rescheduling (see
 # _reschedule_after_run) and need a handle to the live scheduler to queue
@@ -140,6 +141,16 @@ def _half_session_job(action: str) -> None:
         except Exception as exc:  # noqa: BLE001 - isolate; run_batch already isolates per-ticker
             activity_log.log_action_finish(session, log_id, "error", str(exc))
             raise
+
+
+def _top100_job() -> None:
+    # log_action_start/finish live inside seed_top100 -- the job only isolates
+    # the exception so a failed CoinGecko fetch doesn't spam APScheduler.
+    with Session(get_engine()) as session:
+        try:
+            top100.seed_top100(session, "scheduled")
+        except Exception as exc:  # noqa: BLE001 - seed_top100 already logged the error
+            logger.warning("scheduled top100 refresh failed: %s", exc)
 
 
 def _reschedule_after_run(job_id: str, func, enabled: bool, interval_key: str) -> None:
@@ -245,7 +256,7 @@ def reschedule(scheduler: BackgroundScheduler) -> None:
     Stock (VN market cadence) and crypto-screener jobs have independent
     enable toggles -- one can be off while the other runs.
     """
-    for job_id in _STOCK_JOB_IDS:
+    for job_id in (*_STOCK_JOB_IDS, _TOP100_JOB_ID):
         if scheduler.get_job(job_id):
             scheduler.remove_job(job_id)
 
@@ -253,11 +264,22 @@ def reschedule(scheduler: BackgroundScheduler) -> None:
         stock_cfg = settings_service.get_scheduler_config(session)
         screener_cfg = settings_service.get_screener_config(session)
         crypto_analysis_cfg = settings_service.get_crypto_analysis_config(session)
+        top100_cfg = settings_service.get_top100_config(session)
 
     if stock_cfg["enabled"]:
         _add_jobs(scheduler, stock_cfg)
     else:
         logger.info("stock scheduler disabled by settings")
+
+    if top100_cfg["enabled"]:
+        top100_h, top100_m = _parse_hhmm(top100_cfg["time"], "07:00")
+        # Every day of the week -- crypto has no weekend close, unlike the
+        # _WEEKDAYS-bound stock jobs.
+        scheduler.add_job(
+            _top100_job, CronTrigger(hour=top100_h, minute=top100_m), id=_TOP100_JOB_ID
+        )
+    else:
+        logger.info("top100 auto refresh disabled by settings")
 
     _sync_interval_job(scheduler, _SCREENER_JOB_ID, _screener_job, screener_cfg["enabled"], "crypto screener")
     _sync_interval_job(

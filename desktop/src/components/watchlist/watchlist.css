@@ -95,6 +95,10 @@
   font-weight: 600;
   font-size: var(--text-sm);
 }
+.wl-row__rank {
+  font-size: var(--text-xs);
+  min-width: 2.2em;
+}
 .wl-row__name {
   flex: 1;
   min-width: 0;

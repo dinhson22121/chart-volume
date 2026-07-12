@@ -55,6 +55,59 @@ def test_add_symbol_rejects_invalid_ticker(client, auth_header, ticker):
     assert resp.status_code == 422
 
 
+def test_seed_top100_requires_token(client):
+    assert client.post("/symbols/seed-top100").status_code == 401
+
+
+def test_seed_top100_endpoint_seeds_and_returns_count(session, client, auth_header, mocker):
+    from app.crawler import coingecko_client
+    from app.models import Symbol
+
+    mocker.patch.object(
+        coingecko_client, "fetch_markets_page",
+        return_value=[{"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"}],
+    )
+
+    resp = client.post("/symbols/seed-top100", headers=auth_header)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"count": 1}
+    assert session.get(Symbol, "BITCOIN").is_top100 is True
+
+
+def test_seed_top100_endpoint_returns_502_on_crawl_failure(client, auth_header, mocker):
+    from app.crawler import coingecko_client
+
+    mocker.patch.object(
+        coingecko_client, "fetch_markets_page",
+        side_effect=coingecko_client.CrawlError("boom"),
+    )
+
+    resp = client.post("/symbols/seed-top100", headers=auth_header)
+
+    assert resp.status_code == 502
+
+
+def test_remove_symbol_keeps_top100_member_row(session, client, auth_header):
+    from app.models import AssetClass, Symbol
+
+    session.add(
+        Symbol(
+            ticker="BITCOIN", display_symbol="BTC", asset_class=AssetClass.CRYPTO,
+            is_top100=True, top100_rank=1, is_watchlist=True,
+        )
+    )
+    session.commit()
+
+    resp = client.delete("/symbols/BITCOIN", headers=auth_header)
+
+    assert resp.status_code == 200
+    symbol = session.get(Symbol, "BITCOIN")
+    assert symbol is not None  # top-100 membership keeps the row, like VN30
+    assert symbol.is_watchlist is False
+    assert symbol.is_top100 is True
+
+
 def test_refresh_then_get_analysis_and_candles(client, auth_header, mocker):
     mocker.patch.object(ingest.vnstock_client, "fetch_daily", return_value=_daily_df())
     mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)

@@ -74,6 +74,8 @@ interface FormState {
   screenerScanInterval: string;
   cryptoAnalysisEnabled: boolean;
   cryptoAnalysisInterval: string;
+  top100AutoRefreshEnabled: boolean;
+  top100RefreshTime: string;
 }
 
 function toForm(s: Settings): FormState {
@@ -112,6 +114,8 @@ function toForm(s: Settings): FormState {
     screenerScanInterval: s.screener_scan_interval,
     cryptoAnalysisEnabled: s.crypto_analysis_enabled,
     cryptoAnalysisInterval: s.crypto_analysis_interval,
+    top100AutoRefreshEnabled: s.top100_auto_refresh_enabled,
+    top100RefreshTime: s.top100_refresh_time,
   };
 }
 
@@ -150,6 +154,8 @@ function toUpdate(f: FormState): SettingsUpdate {
     screener_scan_interval: f.screenerScanInterval,
     crypto_analysis_enabled: f.cryptoAnalysisEnabled,
     crypto_analysis_interval: f.cryptoAnalysisInterval,
+    top100_auto_refresh_enabled: f.top100AutoRefreshEnabled,
+    top100_refresh_time: f.top100RefreshTime,
   };
   if (f.anthropicApiKey.trim()) {
     update.anthropic_api_key = f.anthropicApiKey.trim();
@@ -600,6 +606,25 @@ export function SettingsModal({ onClose }: Props) {
                   ))}
                 </select>
                 <span className="settings-hint faint">{t("settings.autoUpdate.cryptoIntervalHint")}</span>
+              </label>
+
+              <label className="settings-field settings-field--row">
+                <input
+                  type="checkbox"
+                  checked={form.top100AutoRefreshEnabled}
+                  onChange={(e) => set("top100AutoRefreshEnabled", e.target.checked)}
+                />
+                <span>{t("settings.autoUpdate.enableTop100")}</span>
+              </label>
+              <label className="settings-field">
+                <span>{t("settings.autoUpdate.top100Time")}</span>
+                <input
+                  type="time"
+                  value={form.top100RefreshTime}
+                  disabled={!form.top100AutoRefreshEnabled}
+                  onChange={(e) => set("top100RefreshTime", e.target.value)}
+                />
+                <span className="settings-hint faint">{t("settings.autoUpdate.top100Hint")}</span>
               </label>
             </section>
 

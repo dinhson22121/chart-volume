@@ -6,7 +6,7 @@ import { formatTime } from "../../lib/datetime";
 import { useI18n } from "../../i18n/I18nContext";
 import "./watchlist.css";
 
-export type WatchlistTab = "vn30" | "crypto";
+export type WatchlistTab = "vn30" | "top100" | "crypto";
 
 interface Props {
   symbols: SymbolItem[];
@@ -47,13 +47,19 @@ export function Watchlist({
   const [seeding, setSeeding] = useState(false);
   const [seedError, setSeedError] = useState<string | null>(null);
   const [lastSeed, setLastSeed] = useState<SeedResult | null>(null);
+  const [top100Seeding, setTop100Seeding] = useState(false);
+  const [top100SeedError, setTop100SeedError] = useState<string | null>(null);
+  const [lastTop100Seed, setLastTop100Seed] = useState<{ completedAt: number; count: number } | null>(null);
 
-  const { vn30, watchlist } = useMemo(() => {
+  const { vn30, top100, watchlist } = useMemo(() => {
     const vn30 = symbols.filter((s) => s.is_vn30).sort((a, b) => a.ticker.localeCompare(b.ticker));
+    const top100 = symbols
+      .filter((s) => s.is_top100)
+      .sort((a, b) => (a.top100_rank ?? Infinity) - (b.top100_rank ?? Infinity));
     const watchlist = symbols
       .filter((s) => s.is_watchlist && !s.is_vn30)
       .sort((a, b) => a.ticker.localeCompare(b.ticker));
-    return { vn30, watchlist };
+    return { vn30, top100, watchlist };
   }, [symbols]);
 
   const submit = (e: FormEvent) => {
@@ -79,7 +85,21 @@ export function Watchlist({
     }
   };
 
-  const renderRow = (s: SymbolItem, removable: boolean, card = false) => (
+  const handleSeedTop100 = async () => {
+    setTop100Seeding(true);
+    setTop100SeedError(null);
+    try {
+      const result = await api.seedTop100();
+      setLastTop100Seed({ completedAt: Date.now(), count: result.count });
+      onSeeded();
+    } catch (e) {
+      setTop100SeedError(e instanceof Error ? e.message : t("watchlist.seedTop100.error"));
+    } finally {
+      setTop100Seeding(false);
+    }
+  };
+
+  const renderRow = (s: SymbolItem, removable: boolean, card = false, showRank = false) => (
     <li key={s.ticker}>
       <button
         className={`${card ? "wl-crypto-card wl-row-card" : "wl-row"} ${
@@ -90,6 +110,9 @@ export function Watchlist({
         {card ? (
           <>
             <div className="wl-crypto-card__row1">
+              {showRank && s.top100_rank != null && (
+                <span className="wl-row__rank faint mono">#{s.top100_rank}</span>
+              )}
               <span className="wl-row__ticker mono">{s.display_symbol}</span>
               {removable && (
                 <span
@@ -163,6 +186,12 @@ export function Watchlist({
               {t("watchlist.tab.vn30")}
             </button>
             <button
+              className={activeTab === "top100" ? "is-active" : ""}
+              onClick={() => onTabChange("top100")}
+            >
+              {t("watchlist.tab.top100")}
+            </button>
+            <button
               className={activeTab === "crypto" ? "is-active" : ""}
               onClick={() => onTabChange("crypto")}
             >
@@ -202,6 +231,46 @@ export function Watchlist({
                 <p className="wl-empty faint">{t("watchlist.empty")}</p>
               ) : (
                 <ul className="wl-list--scroll wl-list--cards">{vn30.map((s) => renderRow(s, false, true))}</ul>
+              )}
+            </div>
+          ) : activeTab === "top100" ? (
+            <div className="wl-accordion__body">
+              <div className="wl-scanbar">
+                <span className="wl-status faint">
+                  {top100Seeding
+                    ? t("watchlist.seedTop100.loading")
+                    : top100SeedError
+                      ? t("watchlist.seedTop100.errorStatus")
+                      : lastTop100Seed
+                        ? t("watchlist.seedTop100.doneAt", {
+                            time: formatTime(lastTop100Seed.completedAt, language),
+                            count: lastTop100Seed.count,
+                          })
+                        : t("watchlist.seedTop100.never")}
+                </span>
+                <button
+                  className="wl-seed"
+                  onClick={() => void handleSeedTop100()}
+                  disabled={top100Seeding || busy}
+                >
+                  {top100Seeding ? t("watchlist.seedTop100.buttonLoading") : t("watchlist.seedTop100.button")}
+                </button>
+              </div>
+
+              {top100Seeding && (
+                <div className="wl-progress" role="progressbar" aria-label={t("watchlist.seedTop100.loading")}>
+                  <div className="wl-progress-fill" />
+                </div>
+              )}
+
+              {top100SeedError && <p className="wl-error">{top100SeedError}</p>}
+
+              {top100.length === 0 && !top100Seeding ? (
+                <p className="wl-empty faint">{t("watchlist.seedTop100.empty")}</p>
+              ) : (
+                <ul className="wl-list--scroll wl-list--cards">
+                  {top100.map((s) => renderRow(s, false, true, true))}
+                </ul>
               )}
             </div>
           ) : (

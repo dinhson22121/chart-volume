@@ -47,15 +47,25 @@ def test_build_scheduler_registers_expected_jobs(mocker):
 
     sched = build_scheduler()
     ids = {j.id for j in sched.get_jobs()}
-    # crypto_analysis_refresh is on by default too (see test_run_batch/crypto tests below).
-    assert ids == {"half_session_morning", "half_session_afternoon", "daily_close", "crypto_analysis_refresh"}
+    # crypto_analysis_refresh and top100_refresh are on by default too.
+    assert ids == {
+        "half_session_morning", "half_session_afternoon", "daily_close",
+        "crypto_analysis_refresh", "top100_refresh",
+    }
 
 
 def test_scheduler_disabled_registers_no_jobs(mocker):
     engine = _fresh_engine()
     mocker.patch("app.scheduler.get_engine", return_value=engine)
     with Session(engine) as s:
-        settings_service.update(s, {"scheduler_enabled": "false", "crypto_analysis_enabled": "false"})
+        settings_service.update(
+            s,
+            {
+                "scheduler_enabled": "false",
+                "crypto_analysis_enabled": "false",
+                "top100_auto_refresh_enabled": "false",
+            },
+        )
 
     sched = build_scheduler()
     assert sched.get_jobs() == []
@@ -78,7 +88,14 @@ def test_reschedule_can_toggle_back_on(mocker):
     engine = _fresh_engine()
     mocker.patch("app.scheduler.get_engine", return_value=engine)
     with Session(engine) as s:
-        settings_service.update(s, {"scheduler_enabled": "false", "crypto_analysis_enabled": "false"})
+        settings_service.update(
+            s,
+            {
+                "scheduler_enabled": "false",
+                "crypto_analysis_enabled": "false",
+                "top100_auto_refresh_enabled": "false",
+            },
+        )
 
     sched = build_scheduler()
     assert sched.get_jobs() == []
@@ -125,7 +142,12 @@ def test_screener_and_stock_scheduler_toggle_independently(mocker):
     with Session(engine) as s:
         settings_service.update(
             s,
-            {"scheduler_enabled": "false", "screener_enabled": "true", "crypto_analysis_enabled": "false"},
+            {
+                "scheduler_enabled": "false",
+                "screener_enabled": "true",
+                "crypto_analysis_enabled": "false",
+                "top100_auto_refresh_enabled": "false",
+            },
         )
 
     sched = build_scheduler()
@@ -150,6 +172,7 @@ def test_crypto_analysis_toggle_independent_of_stock_and_screener(mocker):
                 "screener_enabled": "false",
                 "crypto_analysis_enabled": "true",
                 "crypto_analysis_interval": "1h",
+                "top100_auto_refresh_enabled": "false",
             },
         )
 
@@ -159,6 +182,68 @@ def test_crypto_analysis_toggle_independent_of_stock_and_screener(mocker):
     assert ids == {"crypto_analysis_refresh"}
     job = sched.get_job("crypto_analysis_refresh")
     assert job.trigger.run_date - datetime.now(_TZ) < timedelta(seconds=5)
+
+
+def test_top100_refresh_registers_daily_cron_at_configured_time(mocker):
+    engine = _fresh_engine()
+    mocker.patch("app.scheduler.get_engine", return_value=engine)
+    with Session(engine) as s:
+        settings_service.update(
+            s,
+            {
+                "scheduler_enabled": "false",
+                "crypto_analysis_enabled": "false",
+                "top100_refresh_time": "08:45",
+            },
+        )
+
+    sched = build_scheduler()
+    job = sched.get_job("top100_refresh")
+
+    assert job is not None
+    fields = {f.name: f for f in job.trigger.fields}
+    assert str(fields["hour"]) == "8"
+    assert str(fields["minute"]) == "45"
+    # Unlike the stock jobs, crypto runs 7 days a week (no mon-fri restriction).
+    assert str(fields["day_of_week"]) == "*"
+
+
+def test_top100_refresh_toggle_removes_and_restores_job(mocker):
+    engine = _fresh_engine()
+    mocker.patch("app.scheduler.get_engine", return_value=engine)
+
+    sched = build_scheduler()
+    assert sched.get_job("top100_refresh") is not None  # on by default
+
+    with Session(engine) as s:
+        settings_service.update(s, {"top100_auto_refresh_enabled": "false"})
+    reschedule(sched)
+    assert sched.get_job("top100_refresh") is None
+
+    with Session(engine) as s:
+        settings_service.update(s, {"top100_auto_refresh_enabled": "true"})
+    reschedule(sched)
+    assert sched.get_job("top100_refresh") is not None
+
+
+def test_top100_job_swallows_crawl_errors(mocker):
+    from app.crawler import coingecko_client
+    from app.scheduler import _top100_job
+
+    engine = _fresh_engine()
+    mocker.patch("app.scheduler.get_engine", return_value=engine)
+    mocker.patch.object(
+        coingecko_client, "fetch_markets_page",
+        side_effect=coingecko_client.CrawlError("down"),
+    )
+
+    _top100_job()  # must not raise -- seed_top100 already logged the error
+
+    with Session(engine) as s:
+        entry = s.exec(select(SystemActionLog)).one()
+    assert entry.action == "top100_seed"
+    assert entry.trigger == "scheduled"
+    assert entry.status == "error"
 
 
 def test_run_batch_processes_all_tracked(session, mocker):

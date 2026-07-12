@@ -1,0 +1,44 @@
+.license-gate {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  z-index: 200;
+}
+
+.license-card {
+  width: min(480px, 92vw);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 60px oklch(5% 0.01 250 / 0.5);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.license-card h2 {
+  font-size: var(--text-lg);
+  font-weight: 700;
+}
+
+.license-card textarea {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  font-family: "JetBrains Mono", monospace;
+  font-size: var(--text-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: var(--space-3);
+}
+
+.license-card__actions {
+  display: flex;
+  justify-content: flex-end;
+}

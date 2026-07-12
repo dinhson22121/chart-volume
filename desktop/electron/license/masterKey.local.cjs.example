@@ -1,0 +1,7 @@
+// Copy this file to masterKey.local.cjs (gitignored, never committed) to
+// enable a permanent, no-signature local test bypass in `npm run dev`.
+// Leave masterKey.local.cjs absent/deleted to disable the bypass entirely
+// and require real Ed25519-signed tokens (see tools/license/).
+module.exports = {
+  MASTER_KEY: "change-me-to-your-own-local-test-passphrase",
+};

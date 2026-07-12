@@ -1,5 +1,11 @@
 /// <reference types="vite/client" />
 
+interface LicenseStatus {
+  valid: boolean;
+  payload?: { iat: number; exp: number | null; note?: string; master?: boolean };
+  reason?: "empty" | "bad_format" | "bad_signature" | "expired";
+}
+
 interface Window {
   chartVolume?: {
     apiBase: string;
@@ -7,5 +13,8 @@ interface Window {
     totalMemGB: number;
     platform: string;
     openExternal: (url: string) => Promise<void>;
+    getLicenseStatus: () => Promise<LicenseStatus>;
+    activateLicense: (token: string) => Promise<LicenseStatus>;
+    onLicenseExpired: (cb: () => void) => void;
   };
 }

@@ -7,6 +7,15 @@ const fs = require("fs");
 const http = require("http");
 const os = require("os");
 const path = require("path");
+const { verifyToken } = require("./license/verify.cjs");
+const { loadLicense, saveLicense } = require("./license/store.cjs");
+
+// How often to re-check the stored license against its own TTL while the app
+// stays open across the expiry boundary. Deliberately does NOT kill an
+// already-running backend/in-flight scan on expiry -- it only tells the
+// renderer to show the activation screen again; a full restart re-applies
+// the hard gate in app.whenReady() below.
+const LICENSE_RECHECK_MS = 15 * 60 * 1000;
 
 // Rounded down: used only to gate/recommend local-AI (Ollama) setup in
 // Settings, not a hard resource limit -- os.totalmem() is cross-platform
@@ -111,6 +120,19 @@ function waitForHealth(onReady, attempts = 120) {
   tick(attempts);
 }
 
+function startBackendAndWaitReady() {
+  return new Promise((resolve) => {
+    startBackend();
+    waitForHealth(resolve);
+  });
+}
+
+function getLicenseStatus() {
+  const token = loadLicense(app.getPath("userData"));
+  if (!token) return { valid: false, reason: "empty" };
+  return verifyToken(token);
+}
+
 // nativeImage (used by BrowserWindow's `icon` and app.dock.setIcon) loads
 // PNG/JPEG, not .icns -- the .icns is only for electron-builder's packaged
 // app icon (build.mac.icon in package.json), a separate mechanism.
@@ -157,6 +179,19 @@ ipcMain.handle("open-external", (_event, url) => {
   }
 });
 
+ipcMain.handle("license:get-status", () => getLicenseStatus());
+
+// Verifies the token, persists it, then starts the backend and only resolves
+// once it's healthy -- the renderer's activation screen awaits this single
+// promise instead of juggling a separate "backend ready" event channel.
+ipcMain.handle("license:activate", async (_event, token) => {
+  const result = verifyToken(token);
+  if (!result.valid) return result;
+  saveLicense(app.getPath("userData"), token);
+  await startBackendAndWaitReady();
+  return result;
+});
+
 function shutdownBackend() {
   if (backendProc) {
     backendProc.kill();
@@ -168,8 +203,26 @@ app.whenReady().then(() => {
   if (process.platform === "darwin" && app.dock) {
     app.dock.setIcon(ICON_PATH); // dev-mode dock icon; packaged builds use build.mac.icon instead
   }
-  startBackend();
-  waitForHealth(createWindow);
+
+  // Gate: only auto-start the backend if a still-valid license is already on
+  // disk from a previous activation. Otherwise open the window right away
+  // (no backend, no health wait) -- the renderer sees an inactive license
+  // status and renders the activation screen; the backend only starts once
+  // the user submits a valid token (see the license:activate handler above).
+  if (getLicenseStatus().valid) {
+    startBackend();
+    waitForHealth(createWindow);
+  } else {
+    createWindow();
+  }
+
+  setInterval(() => {
+    const status = getLicenseStatus();
+    if (!status.valid && mainWindow) {
+      mainWindow.webContents.send("license:expired");
+    }
+  }, LICENSE_RECHECK_MS);
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

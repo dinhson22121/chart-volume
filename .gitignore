@@ -20,6 +20,10 @@ desktop/dist/
 desktop/.env
 desktop/release/
 
+# License activation: local-only master-key bypass, never committed (see
+# desktop/electron/license/masterKey.local.cjs.example for the template)
+desktop/electron/license/masterKey.local.cjs
+
 # OS
 .DS_Store
 

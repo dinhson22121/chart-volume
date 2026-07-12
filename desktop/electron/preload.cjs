@@ -10,4 +10,7 @@ contextBridge.exposeInMainWorld("chartVolume", {
   totalMemGB: config.totalMemGB,
   platform: config.platform,
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
+  getLicenseStatus: () => ipcRenderer.invoke("license:get-status"),
+  activateLicense: (token) => ipcRenderer.invoke("license:activate", token),
+  onLicenseExpired: (cb) => ipcRenderer.on("license:expired", cb),
 });

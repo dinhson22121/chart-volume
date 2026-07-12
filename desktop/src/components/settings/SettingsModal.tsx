@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api/client";
-import type { NarrativeProvider, OllamaStatus, Settings, SettingsUpdate, StrategyOption } from "../../types";
+import type { NarrativeProvider, OllamaStatus, Settings, SettingsUpdate } from "../../types";
 import { useI18n } from "../../i18n/I18nContext";
 import type { Language } from "../../i18n/translations";
 import "./settings.css";
 
 interface Props {
   onClose: () => void;
+  // App.tsx's header now owns the strategy dropdown (see App.tsx's
+  // handleStrategyChange), which saves immediately -- if the user flips it
+  // while this modal happens to already be open, sync form/loaded here too
+  // so the right per-strategy threshold section shows without needing to
+  // close and reopen Settings.
+  strategy: string;
 }
 
 const OLLAMA_SUGGESTIONS = ["qwen2.5:7b", "qwen2.5:3b", "llama3.1:8b", "deepseek-r1:7b", "mistral:7b"];
@@ -163,14 +169,22 @@ function toUpdate(f: FormState): SettingsUpdate {
   return update;
 }
 
-export function SettingsModal({ onClose }: Props) {
+export function SettingsModal({ onClose, strategy }: Props) {
   const { t, language, setLanguage } = useI18n();
   const [loaded, setLoaded] = useState<Settings | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
+
+  // Keeps an already-open modal in sync if the header's strategy dropdown
+  // changes while this is open -- updates loaded+form in lockstep so isDirty
+  // (which diffs form against toForm(loaded)) doesn't false-flag the Save
+  // button just because the header changed strategy out from under it.
+  useEffect(() => {
+    setLoaded((l) => (l && l.strategy !== strategy ? { ...l, strategy } : l));
+    setForm((f) => (f && f.strategy !== strategy ? { ...f, strategy } : f));
+  }, [strategy]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
-  const [strategies, setStrategies] = useState<StrategyOption[]>([]);
 
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [ollamaStatusLoading, setOllamaStatusLoading] = useState(false);
@@ -206,7 +220,6 @@ export function SettingsModal({ onClose }: Props) {
       setLoaded(s);
       setForm(toForm(s));
     });
-    void api.getStrategies().then(setStrategies);
   }, []);
 
   const refreshOllamaStatus = useCallback(async () => {
@@ -336,21 +349,6 @@ export function SettingsModal({ onClose }: Props) {
                   {t("settings.language.en")}
                 </button>
               </div>
-            </section>
-
-            <section className="settings-section">
-              <h3>{t("settings.section.strategy")}</h3>
-              <label className="settings-field">
-                <span>{t("settings.strategy.label")}</span>
-                <select value={form.strategy} onChange={(e) => set("strategy", e.target.value)}>
-                  {strategies.map((s) => (
-                    <option key={s.key} value={s.key}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
-                <span className="settings-hint faint">{t("settings.strategy.hint")}</span>
-              </label>
             </section>
 
             <section className="settings-section">

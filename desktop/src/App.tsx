@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api/client";
-import type { Analysis, Candle, SymbolItem, Timeframe } from "./types";
+import type { Analysis, Candle, StrategyOption, SymbolItem, Timeframe } from "./types";
 import { Watchlist, type WatchlistTab } from "./components/watchlist/Watchlist";
 import { CandleChart } from "./components/chart/CandleChart";
 import { AnalysisPanel } from "./components/analysis/AnalysisPanel";
@@ -41,6 +41,8 @@ export default function App() {
   const [logsOpen, setLogsOpen] = useState(false);
   const [traceBarTs, setTraceBarTs] = useState<string | null>(null);
   const [sidebarTab, setSidebarTab] = useState<WatchlistTab>("vn30");
+  const [strategies, setStrategies] = useState<StrategyOption[]>([]);
+  const [strategy, setStrategy] = useState<string>("");
 
   const selectedSymbol = useMemo(
     () => symbols.find((s) => s.ticker === selected) ?? null,
@@ -73,6 +75,27 @@ export default function App() {
   useEffect(() => {
     void loadSymbols();
   }, [loadSymbols]);
+
+  useEffect(() => {
+    void api.getStrategies().then(setStrategies);
+    void api.getSettings().then((s) => setStrategy(s.strategy));
+  }, []);
+
+  // Moved here (next to the analyze button) rather than living only inside
+  // Settings, so switching strategy and re-analyzing is a single quick flow
+  // instead of a detour through the Settings modal. Saves immediately
+  // (unlike the rest of Settings' fields, which batch behind their own Save
+  // button) since there's no surrounding form here to batch it with.
+  const handleStrategyChange = async (value: string) => {
+    const previous = strategy;
+    setStrategy(value);
+    try {
+      await api.updateSettings({ strategy: value });
+    } catch (e) {
+      setStrategy(previous);
+      setDataError(e instanceof Error ? e.message : t("app.error.strategyChange"));
+    }
+  };
 
   const loadData = useCallback(async (ticker: string, tf: Timeframe) => {
     setDataError(null);
@@ -212,6 +235,19 @@ export default function App() {
               </button>
             ))}
           </div>
+          <select
+            className="strategy-select"
+            value={strategy}
+            onChange={(e) => void handleStrategyChange(e.target.value)}
+            disabled={!strategies.length}
+            title={t("settings.strategy.hint")}
+          >
+            {strategies.map((s) => (
+              <option key={s.key} value={s.key}>
+                {s.label}
+              </option>
+            ))}
+          </select>
           <button
             className="btn btn--primary"
             onClick={handleRefresh}
@@ -299,7 +335,7 @@ export default function App() {
         </aside>
       </div>
 
-      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsModal strategy={strategy} onClose={() => setSettingsOpen(false)} />}
       {statsOpen && <SignalStatsModal onClose={() => setStatsOpen(false)} />}
       {dashboardOpen && (
         <DashboardModal onClose={() => setDashboardOpen(false)} onSelect={setSelected} />

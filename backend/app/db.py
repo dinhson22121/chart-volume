@@ -42,9 +42,26 @@ def _ensure_symbol_columns(engine) -> None:
         conn.commit()
 
 
+_ANALYSIS_COLUMN_MIGRATIONS = {
+    "sub_agents_json": "sub_agents_json TEXT",
+}
+
+
+def _ensure_analysis_columns(engine) -> None:
+    with engine.connect() as conn:
+        existing = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(analysis)")}
+        if not existing:
+            return  # table doesn't exist yet; create_all will build it complete
+        for column, clause in _ANALYSIS_COLUMN_MIGRATIONS.items():
+            if column not in existing:
+                conn.exec_driver_sql(f"ALTER TABLE analysis ADD COLUMN {clause}")
+        conn.commit()
+
+
 def init_db() -> None:
     """Create tables if they do not exist, and backfill columns added later."""
     _ensure_symbol_columns(_engine)
+    _ensure_analysis_columns(_engine)
     SQLModel.metadata.create_all(_engine)
 
 

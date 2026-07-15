@@ -116,11 +116,12 @@ def run_analysis(
 
     narrative_text: str | None = None
     advice_text: str | None = None
+    sub_agents_json: str | None = None
     provider_cfg = settings_service.get_narrative_config(session)
     if use_ai and result.phase not in _NO_AI_PHASES and narrative_mod.is_available(provider_cfg):
         try:
             strategy_label = strategy_registry.LABELS.get(strategy, strategy)
-            narrative_text, advice_text = narrative_mod.generate(
+            narrative_text, advice_text, sub_agents_json = narrative_mod.generate(
                 ticker, timeframe, result, candles[-_RECENT_FOR_PROMPT:], provider_cfg, strategy_label
             )
         except Exception as exc:  # noqa: BLE001 - never let LLM failure break analysis
@@ -135,6 +136,7 @@ def run_analysis(
         existing.levels_json = levels_json
         existing.narrative = narrative_text
         existing.advice = advice_text
+        existing.sub_agents_json = sub_agents_json
         existing.daily_trend = result.daily_trend
         existing.mtf_alignment = result.mtf_alignment
         session.add(existing)
@@ -153,6 +155,7 @@ def run_analysis(
         levels_json=levels_json,
         narrative=narrative_text,
         advice=advice_text,
+        sub_agents_json=sub_agents_json,
         daily_trend=result.daily_trend,
         mtf_alignment=result.mtf_alignment,
     )

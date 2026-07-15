@@ -125,6 +125,7 @@ class Analysis(SQLModel, table=True):
     advice: Optional[str] = None
     daily_trend: Optional[str] = None  # multi-timeframe context used, half_session only
     mtf_alignment: Optional[str] = None  # "aligned" | "conflicting" | None
+    sub_agents_json: Optional[str] = None  # JSON of spawned subagents details
     created_at: datetime = Field(default_factory=_utcnow)
 
 

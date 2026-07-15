@@ -30,7 +30,7 @@ def test_generate_dispatches_to_claude_for_anthropic_provider(mocker):
     )
     cfg = ProviderConfig(provider=PROVIDER_ANTHROPIC, model="claude-sonnet-4-5", api_key="sk-ant-x")
 
-    text, advice = narrative.generate("FPT", "daily", RESULT, [], cfg)
+    text, advice, sub_agents = narrative.generate("FPT", "daily", RESULT, [], cfg)
 
     spy.assert_called_once()
     assert spy.call_args[0][1] == "sk-ant-x"
@@ -45,7 +45,7 @@ def test_generate_dispatches_to_ollama_for_ollama_provider(mocker):
     )
     cfg = ProviderConfig(provider=PROVIDER_OLLAMA, model="qwen2.5:7b")
 
-    text, advice = narrative.generate("FPT", "daily", RESULT, [], cfg)
+    text, advice, sub_agents = narrative.generate("FPT", "daily", RESULT, [], cfg)
 
     spy.assert_called_once()
     assert spy.call_args[0][1] == "qwen2.5:7b"
@@ -59,7 +59,7 @@ def test_generate_uses_english_markers_and_disclaimer_when_language_is_en(mocker
     )
     cfg = ProviderConfig(provider=PROVIDER_ANTHROPIC, model="claude-sonnet-4-5", api_key="sk-ant-x", language="en")
 
-    text, advice = narrative.generate("FPT", "daily", RESULT, [], cfg)
+    text, advice, sub_agents = narrative.generate("FPT", "daily", RESULT, [], cfg)
 
     assert text == "x"
     assert narrative.DISCLAIMER_EN in advice
@@ -119,3 +119,20 @@ def test_call_ollama_posts_to_generate_endpoint(mocker):
     assert post_spy.call_args[0][0] == "http://localhost:11434/api/generate"
     assert post_spy.call_args[1]["json"]["model"] == "qwen2.5:7b"
     assert post_spy.call_args[1]["json"]["stream"] is False
+
+
+def test_generate_dispatches_to_antigravity_for_antigravity_provider(mocker):
+    from app.ai.narrative import PROVIDER_ANTIGRAVITY
+    spy = mocker.patch.object(
+        narrative, "_call_antigravity", return_value=("NHẬN ĐỊNH:\nx\n\nLỜI KHUYÊN:\n- y", "[]")
+    )
+    cfg = ProviderConfig(provider=PROVIDER_ANTIGRAVITY, model="gemini-3.5-flash", api_key="gemini-key")
+
+    text, advice, sub_agents = narrative.generate("FPT", "daily", RESULT, [], cfg)
+
+    spy.assert_called_once()
+    assert spy.call_args[0][1] == "gemini-3.5-flash"
+    assert spy.call_args[0][2] == "gemini-key"
+    assert text == "x"
+    assert sub_agents == "[]"
+    assert narrative.DISCLAIMER in advice

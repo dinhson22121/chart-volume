@@ -97,6 +97,35 @@ export function AnalysisPanel({ analysis, loading, error }: Props) {
           </section>
         )}
 
+        {analysis.sub_agents && analysis.sub_agents.length > 0 && (
+          <section className="ap-section">
+            <h4 className="ap-section__title">Antigravity Sub-agents</h4>
+            <div className="ap-subagents">
+              {analysis.sub_agents.map((agent, i) => (
+                <div key={i} className="ap-subagent-card">
+                  <div className="ap-subagent-header">
+                    <span className="ap-subagent-name mono">{agent.name}</span>
+                    <span className={`ap-subagent-status ap-subagent-status--${agent.status.toLowerCase()}`}>
+                      ● {agent.status}
+                    </span>
+                  </div>
+                  <div className="ap-subagent-meta faint">
+                    <span>{agent.role}</span>
+                    <span>·</span>
+                    <span>{agent.model}</span>
+                    {agent.output_length !== undefined && (
+                      <>
+                        <span>·</span>
+                        <span>{agent.output_length} chars</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {!analysis.narrative && (
           <p className="ap-hint faint">{t("analysis.noNarrative")}</p>
         )}

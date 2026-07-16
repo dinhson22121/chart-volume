@@ -16,16 +16,19 @@ import io
 import logging
 import time
 from contextlib import redirect_stdout
-from typing import Callable
+from typing import Callable, TypeVar
 
 import pandas as pd
-from vnstock.explorer.vci.listing import Listing
+import requests
+from vnstock.core.utils.user_agent import get_headers
+from vnstock.explorer.vci.const import _TRADING_URL
 from vnstock.explorer.vci.quote import Quote
 
 logger = logging.getLogger("chart_volume.crawler")
 
 _MAX_RETRIES = 3
 _RETRY_BASE_DELAY = 1.0
+_T = TypeVar("_T")
 
 # VN30 rebalances quarterly; this static seed is the fallback when the live
 # group endpoint is unavailable. Refresh manually when the index rebalances.
@@ -40,7 +43,7 @@ class CrawlError(RuntimeError):
     """Raised when a crawl fails after all retries."""
 
 
-def _with_retry(fn: Callable[[], pd.DataFrame], what: str) -> pd.DataFrame:
+def _with_retry(fn: Callable[[], _T], what: str) -> _T:
     last_exc: Exception | None = None
     for attempt in range(1, _MAX_RETRIES + 1):
         try:
@@ -70,6 +73,28 @@ def fetch_hourly(ticker: str, start: str, end: str) -> pd.DataFrame:
     )
 
 
+def _fetch_vn30_live() -> list[str]:
+    # Deliberately bypasses vnstock's own Listing.symbols_by_group("VN30"):
+    # that call is wrapped by vnai's "optimize_execution" quota/telemetry
+    # decorator (bundled with vnstock), which reliably breaks this specific
+    # endpoint with a JSON-decode error ("Expecting value...") -- an issue
+    # vnstock's own CLI banner attributes to needing their paid "Insiders"
+    # tier for "increased API limits", i.e. an intentional free-tier quota
+    # gate, not a random bug. A raw request with the exact same headers
+    # vnstock itself generates, but routed around that wrapper, succeeds
+    # consistently (verified with repeated manual runs). Reuses vnstock's
+    # own header-generation helper and base URL so it still tracks any
+    # future header/URL changes on their end.
+    headers = get_headers(data_source="VCI")
+    url = f"{_TRADING_URL}price/symbols/getByGroup?group=VN30"
+    resp = requests.get(url, headers=headers, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    if not data:
+        raise CrawlError("VN30 group endpoint returned empty data")
+    return [str(item["symbol"]).upper() for item in data if item.get("symbol")]
+
+
 def fetch_vn30() -> tuple[list[str], str]:
     """Live VN30 membership, falling back to the static seed on failure.
 
@@ -78,8 +103,7 @@ def fetch_vn30() -> tuple[list[str], str]:
     fresh data (mirrors how the crypto screener surfaces last_error/status).
     """
     try:
-        group = _with_retry(lambda: Listing().symbols_by_group("VN30"), "vn30 list")
-        tickers = [str(t).upper() for t in list(group) if str(t).strip()]
+        tickers = _with_retry(_fetch_vn30_live, "vn30 list")
         if tickers:
             return tickers, "live"
         logger.warning("VN30 live fetch returned empty, using fallback")

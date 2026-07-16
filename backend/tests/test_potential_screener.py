@@ -201,6 +201,33 @@ def test_run_potential_screen_lock_prevents_overlap(session, mocker):
 
 
 def test_run_potential_screen_one_bad_batch_does_not_abort_others(session, mocker):
+    # 12 symbols -> 2 batches (10 + 2): first batch's call fails, second
+    # succeeds -- a single bad batch among others must not flag the whole
+    # run as an error, since most of it still produced real results.
+    for i in range(12):
+        ticker = f"SYM{i}"
+        session.add(Symbol(ticker=ticker, is_watchlist=True))
+        _seed_candles(session, ticker, n=5)
+    mocker.patch(
+        "app.services.settings_service.get_narrative_config",
+        return_value=ProviderConfig(provider=PROVIDER_ANTHROPIC, model="claude-sonnet-4-5", api_key="sk-x"),
+    )
+    mocker.patch(
+        "app.ai.narrative.call_provider_raw",
+        side_effect=[RuntimeError("provider down"), '[{"ticker": "SYM10", "score": 60, "reason": "ok"}]'],
+    )
+
+    result = potential_screener.run_potential_screen(session, trigger="manual")
+
+    assert result["scored"] == 1
+    assert result["last_error"] is None  # per-batch failure isolated, not surfaced as a run failure
+
+
+def test_run_potential_screen_surfaces_error_when_every_batch_fails(session, mocker):
+    # Only one batch (2 symbols), and it fails -- e.g. the configured
+    # provider's SDK isn't even installed. Previously this looked identical
+    # to "ran fine, 0 candidates scoreable" (last_error stayed None); now the
+    # all-failed case must surface something the user can actually see.
     for i in range(2):
         ticker = f"SYM{i}"
         session.add(Symbol(ticker=ticker, is_watchlist=True))
@@ -214,4 +241,6 @@ def test_run_potential_screen_one_bad_batch_does_not_abort_others(session, mocke
     result = potential_screener.run_potential_screen(session, trigger="manual")
 
     assert result["scored"] == 0
-    assert result["last_error"] is None  # per-batch failure isolated, not surfaced as a run failure
+    assert result["last_error"] == "provider down"
+    entry = session.exec(select(SystemActionLog)).one()
+    assert entry.status == "error"

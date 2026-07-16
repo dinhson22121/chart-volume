@@ -10,6 +10,14 @@ pydantic-settings>=2.5,<3
 cryptography>=43,<46
 httpx>=0.27,<0.29
 
+# Optional Antigravity AI provider -- no wheel exists for Intel macOS
+# (only arm64 macOS, Windows, and Linux), and there's no sdist to build from
+# source either. The marker below (De Morgan's form of "not darwin+x86_64")
+# makes pip silently skip this line on Intel Mac instead of failing the
+# whole install; app.ai.narrative.is_available() already treats a missing
+# import as "provider unavailable" so the app degrades gracefully there.
+google-antigravity>=0.1,<0.2; sys_platform != "darwin" or platform_machine != "x86_64"
+
 # dev / test
 pytest>=8.3,<9
 pytest-mock>=3.14,<4

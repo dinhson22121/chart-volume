@@ -54,6 +54,17 @@ def is_available(cfg: ProviderConfig) -> bool:
     if cfg.provider == PROVIDER_OLLAMA:
         return bool(cfg.model)
     if cfg.provider == PROVIDER_ANTIGRAVITY:
+        # google-antigravity has no wheel for every platform (e.g. Intel
+        # macOS) -- checking the api_key alone would still claim "available"
+        # on a machine where the SDK can't even be imported, so callers only
+        # find out when the actual call blows up. Cheap key check first;
+        # only pay the (fairly heavy) import if a key is actually configured.
+        if not cfg.api_key:
+            return False
+        try:
+            import google.antigravity  # noqa: F401
+        except ImportError:
+            return False
         return True
     return bool(cfg.api_key)
 

@@ -119,7 +119,8 @@ def run_analysis(
     advice_text: str | None = None
     sub_agents_json: str | None = None
     provider_cfg = settings_service.get_narrative_config(session)
-    if use_ai and result.phase not in _NO_AI_PHASES and narrative_mod.is_available(provider_cfg):
+    wants_ai = use_ai and result.phase not in _NO_AI_PHASES
+    if wants_ai and narrative_mod.is_available(provider_cfg):
         try:
             strategy_label = strategy_registry.LABELS.get(strategy, strategy)
             narrative_text, advice_text, sub_agents_json = narrative_mod.generate(
@@ -127,6 +128,15 @@ def run_analysis(
             )
         except Exception as exc:  # noqa: BLE001 - never let LLM failure break analysis
             logger.warning("narrative generation failed for %s/%s: %s", ticker, timeframe, exc)
+    elif wants_ai:
+        # is_available() returning False here (missing api_key/model, or an
+        # SDK that isn't installed for this platform) previously left zero
+        # trace anywhere -- narrative_text just stayed None with no
+        # explanation. Log it so it shows up in the downloadable backend log.
+        logger.info(
+            "narrative skipped for %s/%s: provider '%s' not available",
+            ticker, timeframe, provider_cfg.provider,
+        )
 
     signals_json, levels_json = _serialize(result)
 

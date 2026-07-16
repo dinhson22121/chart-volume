@@ -200,17 +200,23 @@ def run_potential_screen(session: Session, trigger: str = "manual") -> dict:
         total = len(symbols)
         _state.update(running=True, total=total, scored=0, last_error=None)
 
+        batch_count = 0
+        failed_batch_count = 0
+        last_batch_error: str | None = None
         for i in range(0, len(symbols), BATCH_SIZE):
             batch = symbols[i : i + BATCH_SIZE]
             candles_by_ticker = _recent_candles_by_ticker(session, [s.ticker for s in batch])
             entries = [(s, candles_by_ticker[s.ticker]) for s in batch if candles_by_ticker.get(s.ticker)]
             if not entries:
                 continue
+            batch_count += 1
             prompt = _build_batch_prompt(entries, cfg.language)
             try:
                 raw = narrative_mod.call_provider_raw(prompt, cfg)
             except Exception as exc:  # noqa: BLE001 - one bad batch must not abort the run
                 logger.warning("potential screener batch failed: %s", exc)
+                failed_batch_count += 1
+                last_batch_error = str(exc)
                 continue
             parsed = _parse_batch_response(raw)
             for symbol, _candles in entries:
@@ -221,7 +227,16 @@ def run_potential_screen(session: Session, trigger: str = "manual") -> dict:
             session.commit()
             _state["scored"] = scored
 
-        activity_log.log_action_finish(session, log_id, "success", f"{scored}/{total} mã")
+        # Every batch failing (e.g. the configured provider's SDK isn't even
+        # installed) previously still reported "success" with 0 scored --
+        # indistinguishable from "ran fine, nothing scoreable". Only surface
+        # last_error in that all-failed case; a single bad batch among many
+        # good ones stays a warning-log-only blip, not a run-level error.
+        if batch_count > 0 and failed_batch_count == batch_count:
+            _state["last_error"] = last_batch_error
+            activity_log.log_action_finish(session, log_id, "error", last_batch_error)
+        else:
+            activity_log.log_action_finish(session, log_id, "success", f"{scored}/{total} mã")
     except Exception as exc:  # noqa: BLE001 - never let this crash the caller
         logger.warning("potential screen failed: %s", exc)
         _state["last_error"] = str(exc)

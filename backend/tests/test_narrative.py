@@ -31,6 +31,39 @@ def test_is_available_ollama_requires_model_not_api_key():
     assert not narrative.is_available(ProviderConfig(provider=PROVIDER_OLLAMA, model=""))
 
 
+def test_is_available_antigravity_requires_api_key():
+    from app.ai.narrative import PROVIDER_ANTIGRAVITY
+
+    assert not narrative.is_available(
+        ProviderConfig(provider=PROVIDER_ANTIGRAVITY, model="gemini-3.5-pro", api_key="")
+    )
+
+
+def test_is_available_antigravity_false_when_sdk_not_installed():
+    from app.ai.narrative import PROVIDER_ANTIGRAVITY
+
+    # google-antigravity genuinely isn't installed in this test venv (no
+    # wheel for every platform) -- confirms is_available() actually checks
+    # importability instead of trusting the api_key alone.
+    assert not narrative.is_available(
+        ProviderConfig(provider=PROVIDER_ANTIGRAVITY, model="gemini-3.5-pro", api_key="gemini-key")
+    )
+
+
+def test_is_available_antigravity_true_when_sdk_importable(monkeypatch):
+    import sys
+    import types
+
+    from app.ai.narrative import PROVIDER_ANTIGRAVITY
+
+    monkeypatch.setitem(sys.modules, "google", types.ModuleType("google"))
+    monkeypatch.setitem(sys.modules, "google.antigravity", types.ModuleType("google.antigravity"))
+
+    assert narrative.is_available(
+        ProviderConfig(provider=PROVIDER_ANTIGRAVITY, model="gemini-3.5-pro", api_key="gemini-key")
+    )
+
+
 def test_generate_dispatches_to_claude_for_anthropic_provider(mocker):
     spy = mocker.patch.object(
         narrative, "_call_claude", return_value="NHẬN ĐỊNH:\nx\n\nLỜI KHUYÊN:\n- y"

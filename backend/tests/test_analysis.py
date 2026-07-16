@@ -1,9 +1,10 @@
+import logging
 import types
 
 import pandas as pd
 from sqlmodel import select
 
-from app.ai.narrative import DISCLAIMER
+from app.ai.narrative import DISCLAIMER, ProviderConfig
 from app.models import Analysis, Candle, SignalOutcome, Timeframe
 from app.services import analysis as analysis_svc
 from app.services import settings_service
@@ -76,6 +77,25 @@ def test_use_ai_false_stores_without_narrative(session, mocker):
 
 def test_no_candles_returns_none(session):
     assert analysis_svc.run_analysis(session, "NOPE", Timeframe.DAILY) is None
+
+
+def test_narrative_unavailable_provider_is_logged(session, mocker, caplog):
+    # Previously is_available() returning False left zero trace -- narrative
+    # just stayed None with no explanation anywhere, including the
+    # downloadable backend log. Confirms the new log line fires instead.
+    _seed_candles(session, [dict(BASE) for _ in range(25)] + [SPRING_BAR])
+    mocker.patch.object(
+        settings_service,
+        "get_narrative_config",
+        return_value=ProviderConfig(provider="anthropic", model="claude-sonnet-4-5", api_key=""),
+    )
+
+    with caplog.at_level(logging.INFO, logger="chart_volume.analysis"):
+        result = analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY)
+
+    assert result.narrative is None
+    assert "not available" in caplog.text
+    assert "FPT" in caplog.text
 
 
 # --- Multi-timeframe context: half_session analysis reads the latest daily phase ---

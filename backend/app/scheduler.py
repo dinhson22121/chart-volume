@@ -243,6 +243,7 @@ def _parse_hhmm(value: str, fallback: str) -> tuple[int, int]:
         hour_s, minute_s = raw.split(":")
         return int(hour_s), int(minute_s)
     except (ValueError, AttributeError):
+        logger.warning("malformed HH:MM setting %r, falling back to %r", value, fallback)
         hour_s, minute_s = fallback.split(":")
         return int(hour_s), int(minute_s)
 

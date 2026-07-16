@@ -8,21 +8,32 @@ const { verifyToken, verifySignedToken, matchesMasterKey } = require("./verify.c
 // lives in this repo.
 const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
 
-function makeToken(payload, { key = privateKey } = {}) {
-  const payloadBytes = Buffer.from(JSON.stringify(payload), "utf8");
+// Payload is just the 4-byte big-endian expiry -- no JSON, no iat/note (see
+// verify.cjs's verifySignedToken for why).
+function makeToken(exp, { key = privateKey, prefix = "CV-" } = {}) {
+  const payloadBytes = Buffer.alloc(4);
+  payloadBytes.writeUInt32BE(exp);
   const signature = crypto.sign(null, payloadBytes, key);
-  return `${payloadBytes.toString("base64url")}.${signature.toString("base64url")}`;
+  return `${prefix}${payloadBytes.toString("base64url")}.${signature.toString("base64url")}`;
 }
 
 test("valid signature + future exp -> valid", () => {
-  const token = makeToken({ iat: 1000, exp: Math.floor(Date.now() / 1000) + 3600 });
+  const token = makeToken(Math.floor(Date.now() / 1000) + 3600);
   const result = verifySignedToken(token, publicKey);
   assert.equal(result.valid, true);
   assert.equal(result.payload.exp > Date.now() / 1000, true);
 });
 
+test("valid signature without the CV- prefix -> still valid", () => {
+  // A user pasting just the base64url part (stripped the cosmetic prefix by
+  // hand) must still work.
+  const token = makeToken(Math.floor(Date.now() / 1000) + 3600, { prefix: "" });
+  const result = verifySignedToken(token, publicKey);
+  assert.equal(result.valid, true);
+});
+
 test("valid signature + past exp -> expired", () => {
-  const token = makeToken({ iat: 1000, exp: Math.floor(Date.now() / 1000) - 10 });
+  const token = makeToken(Math.floor(Date.now() / 1000) - 10);
   const result = verifySignedToken(token, publicKey);
   assert.equal(result.valid, false);
   assert.equal(result.reason, "expired");
@@ -30,21 +41,31 @@ test("valid signature + past exp -> expired", () => {
 
 test("wrong key's signature -> bad_signature", () => {
   const other = crypto.generateKeyPairSync("ed25519");
-  const token = makeToken({ iat: 1000, exp: Math.floor(Date.now() / 1000) + 3600 }, { key: other.privateKey });
+  const token = makeToken(Math.floor(Date.now() / 1000) + 3600, { key: other.privateKey });
   const result = verifySignedToken(token, publicKey);
   assert.equal(result.valid, false);
   assert.equal(result.reason, "bad_signature");
 });
 
 test("tampered payload after signing -> bad_signature", () => {
-  const token = makeToken({ iat: 1000, exp: Math.floor(Date.now() / 1000) + 3600 });
+  const token = makeToken(Math.floor(Date.now() / 1000) + 3600);
   const [, sig] = token.split(".");
-  const tamperedPayload = Buffer.from(JSON.stringify({ iat: 1000, exp: 9999999999 }), "utf8").toString(
-    "base64url",
-  );
-  const result = verifySignedToken(`${tamperedPayload}.${sig}`, publicKey);
+  const tamperedPayload = Buffer.alloc(4);
+  tamperedPayload.writeUInt32BE(9999999999 % 0xffffffff);
+  const result = verifySignedToken(`CV-${tamperedPayload.toString("base64url")}.${sig}`, publicKey);
   assert.equal(result.valid, false);
   assert.equal(result.reason, "bad_signature");
+});
+
+test("payload of the wrong byte length -> bad_format", () => {
+  // e.g. someone pastes an old-format (JSON-payload) token against the new
+  // verifier -- must reject cleanly, not throw or misparse the expiry.
+  const oldStyleJsonPayload = Buffer.from(JSON.stringify({ exp: 9999999999 }), "utf8");
+  const signature = crypto.sign(null, oldStyleJsonPayload, privateKey);
+  const token = `CV-${oldStyleJsonPayload.toString("base64url")}.${signature.toString("base64url")}`;
+  const result = verifySignedToken(token, publicKey);
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, "bad_format");
 });
 
 test("malformed token (no dot separator) -> bad_format", () => {

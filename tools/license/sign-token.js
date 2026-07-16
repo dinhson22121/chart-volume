@@ -40,18 +40,25 @@ const privateKeyPem = fs.readFileSync(keyPath, "utf8");
 const privateKey = crypto.createPrivateKey(privateKeyPem);
 
 const nowSec = Math.floor(Date.now() / 1000);
-const payload = {
-  iat: nowSec,
-  exp: nowSec + Math.round(days * 86400),
-  ...(note ? { note } : {}),
-};
+const exp = nowSec + Math.round(days * 86400);
 
-const payloadBytes = Buffer.from(JSON.stringify(payload), "utf8");
+// Payload is just the 4-byte big-endian expiry (Unix seconds) -- no JSON,
+// no iat/note. Those extra fields were never read by anything except a
+// human generating the token, and JSON framing alone cost ~30-40 characters
+// in a string someone has to paste by hand. --note is still accepted for
+// the licensor's own bookkeeping but only ever printed here, never embedded
+// or verified.
+if (exp > 0xffffffff) {
+  console.error("Expiry exceeds what a 4-byte timestamp can hold (year 2106) -- use a smaller --days.");
+  process.exit(1);
+}
+const payloadBytes = Buffer.alloc(4);
+payloadBytes.writeUInt32BE(exp);
 const signature = crypto.sign(null, payloadBytes, privateKey);
 
-const token = `${payloadBytes.toString("base64url")}.${signature.toString("base64url")}`;
+const token = `CV-${payloadBytes.toString("base64url")}.${signature.toString("base64url")}`;
 
 console.log("License token (paste into the app's activation screen):\n");
 console.log(token);
-console.log("\nPayload:", payload);
-console.log("Expires at:", new Date(payload.exp * 1000).toISOString());
+if (note) console.log("\nNote (for your own records, not embedded in the token):", note);
+console.log("Expires at:", new Date(exp * 1000).toISOString());

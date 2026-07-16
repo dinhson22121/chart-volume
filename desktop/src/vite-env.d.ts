@@ -2,7 +2,7 @@
 
 interface LicenseStatus {
   valid: boolean;
-  payload?: { iat: number; exp: number | null; note?: string; master?: boolean };
+  payload?: { exp: number | null; iat?: number; master?: boolean };
   reason?: "empty" | "bad_format" | "bad_signature" | "expired";
 }
 

@@ -20,6 +20,11 @@
 const crypto = require("crypto");
 const { PUBLIC_KEY_B64 } = require("./publicKey.cjs");
 
+// Cosmetic only (an unbranded base64url blob doesn't read as "this is a real
+// license key") -- stripped before parsing, so a token pasted with or
+// without it verifies the same way.
+const TOKEN_PREFIX = "CV-";
+
 let MASTER_KEY = null;
 try {
   ({ MASTER_KEY } = require("./masterKey.local.cjs"));
@@ -48,7 +53,8 @@ function getPublicKey() {
  * @param {import("crypto").KeyObject} publicKey
  */
 function verifySignedToken(trimmed, publicKey) {
-  const parts = trimmed.split(".");
+  const withoutPrefix = trimmed.startsWith(TOKEN_PREFIX) ? trimmed.slice(TOKEN_PREFIX.length) : trimmed;
+  const parts = withoutPrefix.split(".");
   if (parts.length !== 2) {
     return { valid: false, reason: "bad_format" };
   }
@@ -62,6 +68,13 @@ function verifySignedToken(trimmed, publicKey) {
   } catch {
     return { valid: false, reason: "bad_format" };
   }
+  // The payload is just the 4-byte big-endian expiry (Unix seconds, valid
+  // until year 2106) -- no JSON, no iat/note. Those fields were never read
+  // by anything except a human generating the token, and JSON framing alone
+  // cost ~30-40 extra characters in a string a person has to paste by hand.
+  if (payloadBytes.length !== 4) {
+    return { valid: false, reason: "bad_format" };
+  }
 
   let verified;
   try {
@@ -73,18 +86,11 @@ function verifySignedToken(trimmed, publicKey) {
     return { valid: false, reason: "bad_signature" };
   }
 
-  let payload;
-  try {
-    payload = JSON.parse(payloadBytes.toString("utf8"));
-  } catch {
-    return { valid: false, reason: "bad_format" };
-  }
-  if (typeof payload.exp !== "number") {
-    return { valid: false, reason: "bad_format" };
-  }
+  const exp = payloadBytes.readUInt32BE(0);
+  const payload = { exp };
 
   const nowSec = Math.floor(Date.now() / 1000);
-  if (payload.exp <= nowSec) {
+  if (exp <= nowSec) {
     return { valid: false, reason: "expired", payload };
   }
 
@@ -106,7 +112,7 @@ function matchesMasterKey(trimmed, masterKey) {
 
 /**
  * @param {string} token
- * @returns {{valid: boolean, payload?: {iat: number, exp: number|null, note?: string, master?: boolean}, reason?: "empty"|"bad_format"|"bad_signature"|"expired"}}
+ * @returns {{valid: boolean, payload?: {exp: number|null, iat?: number, master?: boolean}, reason?: "empty"|"bad_format"|"bad_signature"|"expired"}}
  */
 function verifyToken(token) {
   if (!token || typeof token !== "string") {

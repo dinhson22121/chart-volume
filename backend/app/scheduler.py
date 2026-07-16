@@ -25,7 +25,7 @@ from sqlmodel import Session, select
 from app.config import TIMEZONE
 from app.db import get_engine
 from app.models import AssetClass, Symbol, Timeframe
-from app.services import activity_log, crypto_screener, ingest, settings_service, top100
+from app.services import activity_log, crypto_screener, ingest, potential_screener, settings_service, top100
 from app.services.analysis import run_analysis
 
 logger = logging.getLogger("chart_volume.scheduler")
@@ -39,6 +39,7 @@ _STOCK_JOB_IDS = ("half_session_morning", "half_session_afternoon", "daily_close
 _SCREENER_JOB_ID = "crypto_screener_scan"
 _CRYPTO_JOB_ID = "crypto_analysis_refresh"
 _TOP100_JOB_ID = "top100_refresh"
+_POTENTIAL_SCREEN_JOB_ID = "potential_screen_refresh"
 
 # Set once by build_scheduler() -- interval jobs are self-rescheduling (see
 # _reschedule_after_run) and need a handle to the live scheduler to queue
@@ -177,6 +178,16 @@ def _top100_job() -> None:
             logger.warning("scheduled top100 refresh failed: %s", exc)
 
 
+def _potential_screen_job() -> None:
+    # log_action_start/finish live inside run_potential_screen -- the job
+    # only isolates the exception so a failure doesn't spam APScheduler.
+    with Session(get_engine()) as session:
+        try:
+            potential_screener.run_potential_screen(session, "scheduled")
+        except Exception as exc:  # noqa: BLE001 - run_potential_screen already logged the error
+            logger.warning("scheduled potential screen failed: %s", exc)
+
+
 def _reschedule_after_run(job_id: str, func, enabled: bool, interval_key: str) -> None:
     """Queues the next run exactly ``interval_key`` after THIS run's
     completion (fixed-delay), not fixed-rate from registration time -- call
@@ -280,7 +291,7 @@ def reschedule(scheduler: BackgroundScheduler) -> None:
     Stock (VN market cadence) and crypto-screener jobs have independent
     enable toggles -- one can be off while the other runs.
     """
-    for job_id in (*_STOCK_JOB_IDS, _TOP100_JOB_ID):
+    for job_id in (*_STOCK_JOB_IDS, _TOP100_JOB_ID, _POTENTIAL_SCREEN_JOB_ID):
         if scheduler.get_job(job_id):
             scheduler.remove_job(job_id)
 
@@ -289,6 +300,7 @@ def reschedule(scheduler: BackgroundScheduler) -> None:
         screener_cfg = settings_service.get_screener_config(session)
         crypto_analysis_cfg = settings_service.get_crypto_analysis_config(session)
         top100_cfg = settings_service.get_top100_config(session)
+        potential_screen_cfg = settings_service.get_potential_screen_config(session)
 
     if stock_cfg["enabled"]:
         _add_jobs(scheduler, stock_cfg)
@@ -304,6 +316,14 @@ def reschedule(scheduler: BackgroundScheduler) -> None:
         )
     else:
         logger.info("top100 auto refresh disabled by settings")
+
+    if potential_screen_cfg["enabled"]:
+        ps_h, ps_m = _parse_hhmm(potential_screen_cfg["time"], "06:30")
+        scheduler.add_job(
+            _potential_screen_job, CronTrigger(hour=ps_h, minute=ps_m), id=_POTENTIAL_SCREEN_JOB_ID
+        )
+    else:
+        logger.info("potential screen auto refresh disabled by settings")
 
     _sync_interval_job(scheduler, _SCREENER_JOB_ID, _screener_job, screener_cfg["enabled"], "crypto screener")
     _sync_interval_job(

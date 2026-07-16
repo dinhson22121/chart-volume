@@ -226,6 +226,54 @@ def test_top100_refresh_toggle_removes_and_restores_job(mocker):
     assert sched.get_job("top100_refresh") is not None
 
 
+def test_potential_screen_refresh_off_by_default(mocker):
+    engine = _fresh_engine()
+    mocker.patch("app.scheduler.get_engine", return_value=engine)
+
+    sched = build_scheduler()
+
+    assert sched.get_job("potential_screen_refresh") is None
+
+
+def test_potential_screen_refresh_registers_daily_cron_when_enabled(mocker):
+    engine = _fresh_engine()
+    mocker.patch("app.scheduler.get_engine", return_value=engine)
+    with Session(engine) as s:
+        settings_service.update(
+            s,
+            {
+                "scheduler_enabled": "false",
+                "crypto_analysis_enabled": "false",
+                "potential_screen_auto_enabled": "true",
+                "potential_screen_time": "05:15",
+            },
+        )
+
+    sched = build_scheduler()
+    job = sched.get_job("potential_screen_refresh")
+
+    assert job is not None
+    fields = {f.name: f for f in job.trigger.fields}
+    assert str(fields["hour"]) == "5"
+    assert str(fields["minute"]) == "15"
+    assert str(fields["day_of_week"]) == "*"
+
+
+def test_potential_screen_refresh_toggle_removes_and_restores_job(mocker):
+    engine = _fresh_engine()
+    mocker.patch("app.scheduler.get_engine", return_value=engine)
+    with Session(engine) as s:
+        settings_service.update(s, {"potential_screen_auto_enabled": "true"})
+
+    sched = build_scheduler()
+    assert sched.get_job("potential_screen_refresh") is not None
+
+    with Session(engine) as s:
+        settings_service.update(s, {"potential_screen_auto_enabled": "false"})
+    reschedule(sched)
+    assert sched.get_job("potential_screen_refresh") is None
+
+
 def test_top100_job_swallows_crawl_errors(mocker):
     from app.crawler import coingecko_client
     from app.scheduler import _top100_job

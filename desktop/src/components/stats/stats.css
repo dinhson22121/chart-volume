@@ -77,3 +77,12 @@
   background: var(--accent);
   color: oklch(18% 0.02 250);
 }
+
+/* Determinate progress (scored/total known) -- unlike .wl-progress-fill's
+   indeterminate sliding animation used for unbounded scans. */
+.potential-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.4s ease-out;
+}

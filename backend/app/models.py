@@ -174,6 +174,18 @@ class SignalOutcome(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=_utcnow)
 
 
+class PotentialScreenResult(SQLModel, table=True):
+    """Latest AI-only growth-potential verdict per ticker -- deliberately
+    bypasses every quantitative strategy (Wyckoff/SMC/SonicR): the AI reads
+    raw OHLCV candles directly and scores/explains on its own judgment. One
+    row per ticker, overwritten each run -- no history kept."""
+
+    ticker: str = Field(primary_key=True)
+    score: float  # 0-100, the AI's own call -- unrelated to any strategy's confidence
+    reason: str
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
 class CryptoVolumeSnapshot(SQLModel, table=True):
     """One scan's (market_cap, 24h volume) reading for a coin.
 

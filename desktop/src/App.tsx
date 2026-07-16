@@ -9,6 +9,7 @@ import { TracePanel } from "./components/trace/TracePanel";
 import { SignalStatsModal } from "./components/stats/SignalStatsModal";
 import { DashboardModal } from "./components/dashboard/DashboardModal";
 import { ActivityLogModal } from "./components/logs/ActivityLogModal";
+import { PotentialScreenModal } from "./components/potential/PotentialScreenModal";
 import { useI18n } from "./i18n/I18nContext";
 import logoIcon from "./assets/logo-icon.png";
 
@@ -39,6 +40,7 @@ export default function App() {
   const [statsOpen, setStatsOpen] = useState(false);
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
+  const [potentialScreenOpen, setPotentialScreenOpen] = useState(false);
   const [traceBarTs, setTraceBarTs] = useState<string | null>(null);
   const [sidebarTab, setSidebarTab] = useState<WatchlistTab>("vn30");
   const [strategies, setStrategies] = useState<StrategyOption[]>([]);
@@ -281,6 +283,14 @@ export default function App() {
           </button>
           <button
             className="btn btn--icon"
+            onClick={() => setPotentialScreenOpen(true)}
+            aria-label={t("app.header.potentialScreen")}
+            title={t("app.header.potentialScreen")}
+          >
+            🔮
+          </button>
+          <button
+            className="btn btn--icon"
             onClick={() => setSettingsOpen(true)}
             aria-label={t("app.header.settings")}
             title={t("app.header.settings")}
@@ -341,6 +351,9 @@ export default function App() {
         <DashboardModal onClose={() => setDashboardOpen(false)} onSelect={setSelected} />
       )}
       {logsOpen && <ActivityLogModal onClose={() => setLogsOpen(false)} />}
+      {potentialScreenOpen && (
+        <PotentialScreenModal onClose={() => setPotentialScreenOpen(false)} onSelect={setSelected} />
+      )}
       {traceBarTs && selected && (
         <TracePanel
           ticker={selected}

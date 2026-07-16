@@ -10,6 +10,8 @@ import type {
   ConfigLogPage,
   OllamaPullEvent,
   OllamaStatus,
+  PotentialScreenRow,
+  PotentialScreenStatus,
   ScanStatus,
   SeedVn30Result,
   Settings,
@@ -128,6 +130,10 @@ export const api = {
     req<ConfigLogPage>(`/logs/config?page=${page}&page_size=${pageSize}`),
   getSystemLogs: (page: number, pageSize: number) =>
     req<SystemLogPage>(`/logs/system?page=${page}&page_size=${pageSize}`),
+  exportLogs: () => req<{ content: string; generated_at: string }>("/logs/export"),
+  runPotentialScreen: () => req<{ status: string }>("/potential-screen/run", { method: "POST" }),
+  getPotentialScreenStatus: () => req<PotentialScreenStatus>("/potential-screen/status"),
+  getPotentialScreenResults: () => req<PotentialScreenRow[]>("/potential-screen/results"),
 };
 
 export { API_BASE };

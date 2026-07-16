@@ -199,3 +199,21 @@ def test_put_settings_accepts_top100_settings(client, auth_header):
     body = resp.json()
     assert body["top100_auto_refresh_enabled"] is False
     assert body["top100_refresh_time"] == "09:30"
+
+
+def test_get_settings_exposes_potential_screen_defaults(client, auth_header):
+    body = client.get("/settings", headers=auth_header).json()
+    assert body["potential_screen_auto_enabled"] is False  # AI-heaviest feature, off by default
+    assert body["potential_screen_time"] == "06:30"
+
+
+def test_put_settings_accepts_potential_screen_settings(client, auth_header):
+    resp = client.put(
+        "/settings",
+        json={"potential_screen_auto_enabled": True, "potential_screen_time": "05:00"},
+        headers=auth_header,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["potential_screen_auto_enabled"] is True
+    assert body["potential_screen_time"] == "05:00"

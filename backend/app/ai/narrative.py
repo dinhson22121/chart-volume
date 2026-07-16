@@ -272,6 +272,42 @@ def _call_antigravity(prompt: str, model: str, api_key: str) -> tuple[str, str]:
     return final_text, sub_agents_json
 
 
+def _call_antigravity_raw(prompt: str, model: str, api_key: str) -> str:
+    """Single-agent, neutral-system-instruction Antigravity call for features
+    that are NOT the Wyckoff narrative (e.g. the potential screener) -- does
+    NOT reuse _call_antigravity()'s 3-agent pipeline, since that one's system
+    instructions explicitly reference Wyckoff/SMC/Sonic R and would leak
+    strategy framing into a prompt that's meant to be strategy-independent."""
+    import asyncio
+    from google.antigravity import Agent, LocalAgentConfig
+
+    async def _async_call() -> str:
+        config = LocalAgentConfig(
+            model=model or "gemini-3.5-pro",
+            api_key=api_key,
+            system_instruction=(
+                "Bạn là trợ lý phân tích dữ liệu tài chính thô. Trả lời chính xác theo đúng "
+                "định dạng được yêu cầu trong câu hỏi, không thêm giải thích ngoài định dạng đó."
+            ),
+        )
+        async with Agent(config) as agent:
+            resp = await agent.chat(prompt)
+            return await resp.text()
+
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    if loop.is_running():
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(lambda: asyncio.run(_async_call()))
+            return future.result()
+    return asyncio.run(_async_call())
+
+
 def _parse(raw: str, language: str = "vi") -> tuple[str, str]:
     advice_marker = _ADVICE_MARKER_EN if language == "en" else _ADVICE_MARKER
     narrative_marker = _NARRATIVE_MARKER_EN if language == "en" else _NARRATIVE_MARKER
@@ -307,3 +343,16 @@ def generate(
         raw = _call_claude(prompt, cfg.api_key, cfg.model)
         narrative, advice = _parse(raw, cfg.language)
         return narrative, advice, None
+
+
+def call_provider_raw(prompt: str, cfg: ProviderConfig) -> str:
+    """Prompt-in/text-out dispatch for AI features that are NOT the Wyckoff
+    narrative (e.g. the potential screener) -- skips build_prompt()/_parse()
+    entirely, since those are shaped around AnalysisResult/strategy output."""
+    if cfg.provider == PROVIDER_OLLAMA:
+        return _call_ollama(prompt, cfg.model, cfg.base_url)
+    if cfg.provider == PROVIDER_CODEX:
+        return _call_codex(prompt, cfg.api_key, cfg.model)
+    if cfg.provider == PROVIDER_ANTIGRAVITY:
+        return _call_antigravity_raw(prompt, cfg.model, cfg.api_key)
+    return _call_claude(prompt, cfg.api_key, cfg.model)

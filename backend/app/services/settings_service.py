@@ -82,6 +82,11 @@ DEFAULTS: dict[str, str] = {
     "ai_narrative_vn30": "true",
     "ai_narrative_watchlist": "true",
     "ai_narrative_top100": "false",
+    # AI-only potential screener: bypasses every quantitative strategy, so a
+    # full run is the most AI-call-heavy action in the app (1 call per
+    # 10-ticker batch across the whole tracked universe) -- off by default.
+    "potential_screen_auto_enabled": "false",
+    "potential_screen_time": "06:30",
 }
 
 # Allowed values for settings that are a fixed choice rather than a free number.
@@ -104,6 +109,7 @@ _BOOL_KEYS = {
     "scheduler_enabled", "screener_enabled", "screener_require_volume_rising", "crypto_analysis_enabled",
     "top100_auto_refresh_enabled",
     "ai_narrative_vn30", "ai_narrative_watchlist", "ai_narrative_top100",
+    "potential_screen_auto_enabled",
 }
 _LIST_KEYS = {"crypto_exchanges"}
 
@@ -293,6 +299,16 @@ def get_top100_config(session: Session) -> dict:
     return {
         "enabled": _as_bool(stored.get("top100_auto_refresh_enabled", DEFAULTS["top100_auto_refresh_enabled"])),
         "time": stored.get("top100_refresh_time", DEFAULTS["top100_refresh_time"]),
+    }
+
+
+def get_potential_screen_config(session: Session) -> dict:
+    stored = _stored(session)
+    return {
+        "enabled": _as_bool(
+            stored.get("potential_screen_auto_enabled", DEFAULTS["potential_screen_auto_enabled"])
+        ),
+        "time": stored.get("potential_screen_time", DEFAULTS["potential_screen_time"]),
     }
 
 

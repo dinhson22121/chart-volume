@@ -86,6 +86,8 @@ interface FormState {
   cryptoAnalysisInterval: string;
   top100AutoRefreshEnabled: boolean;
   top100RefreshTime: string;
+  potentialScreenAutoEnabled: boolean;
+  potentialScreenTime: string;
   aiNarrativeVn30: boolean;
   aiNarrativeWatchlist: boolean;
   aiNarrativeTop100: boolean;
@@ -133,6 +135,8 @@ function toForm(s: Settings): FormState {
     cryptoAnalysisInterval: s.crypto_analysis_interval,
     top100AutoRefreshEnabled: s.top100_auto_refresh_enabled,
     top100RefreshTime: s.top100_refresh_time,
+    potentialScreenAutoEnabled: s.potential_screen_auto_enabled,
+    potentialScreenTime: s.potential_screen_time,
     aiNarrativeVn30: s.ai_narrative_vn30,
     aiNarrativeWatchlist: s.ai_narrative_watchlist,
     aiNarrativeTop100: s.ai_narrative_top100,
@@ -178,6 +182,8 @@ function toUpdate(f: FormState): SettingsUpdate {
     crypto_analysis_interval: f.cryptoAnalysisInterval,
     top100_auto_refresh_enabled: f.top100AutoRefreshEnabled,
     top100_refresh_time: f.top100RefreshTime,
+    potential_screen_auto_enabled: f.potentialScreenAutoEnabled,
+    potential_screen_time: f.potentialScreenTime,
     ai_narrative_vn30: f.aiNarrativeVn30,
     ai_narrative_watchlist: f.aiNarrativeWatchlist,
     ai_narrative_top100: f.aiNarrativeTop100,
@@ -789,6 +795,25 @@ export function SettingsModal({ onClose, strategy }: Props) {
                   onChange={(e) => set("top100RefreshTime", e.target.value)}
                 />
                 <span className="settings-hint faint">{t("settings.autoUpdate.top100Hint")}</span>
+              </label>
+
+              <label className="settings-field settings-field--row">
+                <input
+                  type="checkbox"
+                  checked={form.potentialScreenAutoEnabled}
+                  onChange={(e) => set("potentialScreenAutoEnabled", e.target.checked)}
+                />
+                <span>{t("settings.autoUpdate.enablePotentialScreen")}</span>
+              </label>
+              <label className="settings-field">
+                <span>{t("settings.autoUpdate.potentialScreenTime")}</span>
+                <input
+                  type="time"
+                  value={form.potentialScreenTime}
+                  disabled={!form.potentialScreenAutoEnabled}
+                  onChange={(e) => set("potentialScreenTime", e.target.value)}
+                />
+                <span className="settings-hint faint">{t("settings.autoUpdate.potentialScreenHint")}</span>
               </label>
             </section>
 

@@ -140,6 +140,8 @@ export interface Settings {
   crypto_analysis_interval: string;
   top100_auto_refresh_enabled: boolean;
   top100_refresh_time: string;
+  potential_screen_auto_enabled: boolean;
+  potential_screen_time: string;
   ai_narrative_vn30: boolean;
   ai_narrative_watchlist: boolean;
   ai_narrative_top100: boolean;
@@ -188,6 +190,24 @@ export interface CandidatesPage {
   page_size: number;
 }
 
+export interface PotentialScreenRow {
+  ticker: string;
+  display_symbol: string;
+  name: string;
+  asset_class: AssetClass;
+  score: number;
+  reason: string;
+  updated_at: string;
+}
+
+export interface PotentialScreenStatus {
+  running: boolean;
+  total: number | null;
+  scored: number | null;
+  last_completed_at: string | null;
+  last_error: string | null;
+}
+
 export interface ScanStatus {
   running: boolean;
   last_completed_at: string | null;
@@ -221,7 +241,8 @@ export type SystemAction =
   | "half_session_morning"
   | "half_session_afternoon"
   | "daily_close"
-  | "crypto_analysis_refresh";
+  | "crypto_analysis_refresh"
+  | "potential_screen";
 
 export interface SystemActionLogEntry {
   id: number;

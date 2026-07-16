@@ -25,6 +25,7 @@ _SCHEDULER_KEYS = {
     "screener_enabled", "screener_scan_interval",
     "crypto_analysis_enabled", "crypto_analysis_interval",
     "top100_auto_refresh_enabled", "top100_refresh_time",
+    "potential_screen_auto_enabled", "potential_screen_time",
 }
 
 
@@ -71,6 +72,8 @@ class SettingsIn(BaseModel):
     crypto_analysis_interval: str | None = None
     top100_auto_refresh_enabled: bool | None = None
     top100_refresh_time: str | None = None
+    potential_screen_auto_enabled: bool | None = None
+    potential_screen_time: str | None = None
     ai_narrative_vn30: bool | None = None
     ai_narrative_watchlist: bool | None = None
     ai_narrative_top100: bool | None = None

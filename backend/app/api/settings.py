@@ -31,12 +31,14 @@ _SCHEDULER_KEYS = {
 class SettingsIn(BaseModel):
     language: str | None = Field(default=None, pattern="^(vi|en)$")
     strategy: str | None = None
-    narrative_provider: str | None = Field(default=None, pattern="^(anthropic|ollama|antigravity)$")
+    narrative_provider: str | None = Field(default=None, pattern="^(anthropic|ollama|antigravity|codex)$")
     anthropic_api_key: str | None = Field(default=None, description="Empty string clears the key")
     anthropic_model: str | None = None
     ollama_model: str | None = None
     antigravity_model: str | None = None
     gemini_api_key: str | None = Field(default=None, description="Empty string clears the key")
+    openai_api_key: str | None = Field(default=None, description="Empty string clears the key")
+    openai_model: str | None = None
     daily_lookback_days: int | None = Field(default=None, ge=30, le=3650)
     half_session_lookback_days: int | None = Field(default=None, ge=1, le=365)
     scheduler_enabled: bool | None = None
@@ -129,11 +131,15 @@ def get_settings_view(session: Session = Depends(get_session)) -> dict:
 def update_settings(
     payload: SettingsIn, request: Request, session: Session = Depends(get_session)
 ) -> dict:
-    partial = payload.model_dump(exclude_none=True, exclude={"anthropic_api_key", "gemini_api_key"})
+    partial = payload.model_dump(
+        exclude_none=True, exclude={"anthropic_api_key", "gemini_api_key", "openai_api_key"}
+    )
     if payload.anthropic_api_key is not None:
         partial["anthropic_api_key"] = payload.anthropic_api_key
     if payload.gemini_api_key is not None:
         partial["gemini_api_key"] = payload.gemini_api_key
+    if payload.openai_api_key is not None:
+        partial["openai_api_key"] = payload.openai_api_key
 
     settings_service.update(session, partial)
 

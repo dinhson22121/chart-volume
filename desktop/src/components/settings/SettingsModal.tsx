@@ -53,6 +53,8 @@ interface FormState {
   ollamaModel: string;
   antigravityModel: string;
   geminiApiKey: string;
+  openaiModel: string;
+  openaiApiKey: string;
   dailyLookbackDays: string;
   halfSessionLookbackDays: string;
   schedulerEnabled: boolean;
@@ -98,6 +100,8 @@ function toForm(s: Settings): FormState {
     ollamaModel: s.ollama_model,
     antigravityModel: s.antigravity_model,
     geminiApiKey: "",
+    openaiModel: s.openai_model,
+    openaiApiKey: "",
     dailyLookbackDays: String(s.daily_lookback_days),
     halfSessionLookbackDays: String(s.half_session_lookback_days),
     schedulerEnabled: s.scheduler_enabled,
@@ -142,6 +146,7 @@ function toUpdate(f: FormState): SettingsUpdate {
     anthropic_model: f.anthropicModel,
     ollama_model: f.ollamaModel,
     antigravity_model: f.antigravityModel,
+    openai_model: f.openaiModel,
     daily_lookback_days: Number(f.dailyLookbackDays),
     half_session_lookback_days: Number(f.halfSessionLookbackDays),
     scheduler_enabled: f.schedulerEnabled,
@@ -182,6 +187,9 @@ function toUpdate(f: FormState): SettingsUpdate {
   }
   if (f.geminiApiKey.trim()) {
     update.gemini_api_key = f.geminiApiKey.trim();
+  }
+  if (f.openaiApiKey.trim()) {
+    update.openai_api_key = f.openaiApiKey.trim();
   }
   return update;
 }
@@ -350,6 +358,20 @@ export function SettingsModal({ onClose, strategy }: Props) {
     }
   };
 
+  const handleClearOpenaiKey = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await api.updateSettings({ openai_api_key: "" });
+      setLoaded(updated);
+      setForm((prev) => (prev ? { ...toForm(updated), ...prev, openaiApiKey: "" } : prev));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t("settings.error.clearKeyFailed"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="settings-overlay" onClick={onClose}>
       <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
@@ -396,6 +418,12 @@ export function SettingsModal({ onClose, strategy }: Props) {
                   onClick={() => set("narrativeProvider", "antigravity")}
                 >
                   {t("settings.ai.antigravity")}
+                </button>
+                <button
+                  className={form.narrativeProvider === "codex" ? "is-active" : ""}
+                  onClick={() => set("narrativeProvider", "codex")}
+                >
+                  {t("settings.ai.codex")}
                 </button>
                 <button
                   className={form.narrativeProvider === "ollama" ? "is-active" : ""}
@@ -483,6 +511,41 @@ export function SettingsModal({ onClose, strategy }: Props) {
                       <option value="gemini-3.5-flash">Gemini 3.5 Flash (Tối ưu/Nhanh)</option>
                       <option value="gemini-3.5-pro">Gemini 3.5 Pro (Thông minh/Sâu sắc)</option>
                       <option value="gemini-3.1-pro">Gemini 3.1 Pro (Bản Pro ổn định)</option>
+                    </select>
+                  </label>
+                </>
+              )}
+
+              {form.narrativeProvider === "codex" && (
+                <>
+                  <label className="settings-field">
+                    <span>
+                      {t("settings.ai.apiKeyLabel")}{" "}
+                      {loaded?.has_openai_key && (
+                        <em className="settings-badge">{t("settings.ai.apiKeySaved")}</em>
+                      )}
+                    </span>
+                    <div className="settings-field__row">
+                      <input
+                        type="password"
+                        placeholder={loaded?.has_openai_key ? t("settings.ai.apiKeyPlaceholderChange") : "sk-..."}
+                        value={form.openaiApiKey}
+                        onChange={(e) => set("openaiApiKey", e.target.value)}
+                      />
+                      {loaded?.has_openai_key && (
+                        <button className="btn" onClick={() => void handleClearOpenaiKey()} disabled={saving}>
+                          {t("settings.ai.apiKeyClear")}
+                        </button>
+                      )}
+                    </div>
+                    <span className="settings-hint faint">{t("settings.ai.apiKeyHint")}</span>
+                  </label>
+                  <label className="settings-field">
+                    <span>{t("settings.ai.modelLabel")}</span>
+                    <select value={form.openaiModel} onChange={(e) => set("openaiModel", e.target.value)}>
+                      <option value="gpt-5">GPT-5 (khuyến nghị)</option>
+                      <option value="gpt-5-mini">GPT-5 Mini (nhanh, rẻ)</option>
+                      <option value="gpt-5-codex">GPT-5 Codex (chuyên code)</option>
                     </select>
                   </label>
                 </>

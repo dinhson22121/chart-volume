@@ -9,7 +9,13 @@ from __future__ import annotations
 
 from sqlmodel import Session, select
 
-from app.ai.narrative import PROVIDER_ANTHROPIC, PROVIDER_OLLAMA, PROVIDER_ANTIGRAVITY, ProviderConfig
+from app.ai.narrative import (
+    PROVIDER_ANTHROPIC,
+    PROVIDER_ANTIGRAVITY,
+    PROVIDER_CODEX,
+    PROVIDER_OLLAMA,
+    ProviderConfig,
+)
 from app.config import get_settings
 from app.crypto import decrypt, encrypt
 from app.models import CryptoExchange, Setting
@@ -21,6 +27,7 @@ from app.wyckoff.config import WyckoffConfig
 
 KEY_API = "anthropic_api_key"
 KEY_GEMINI_API = "gemini_api_key"
+KEY_OPENAI_API = "openai_api_key"
 
 DEFAULTS: dict[str, str] = {
     "language": "vi",  # "vi" | "en" -- controls both UI text and AI narrative language
@@ -30,6 +37,8 @@ DEFAULTS: dict[str, str] = {
     "ollama_model": "",
     "antigravity_model": "gemini-3.5-flash",
     "gemini_api_key": "",
+    "openai_model": "gpt-5",
+    "openai_api_key": "",
     "daily_lookback_days": "730",
     "half_session_lookback_days": "60",
     "scheduler_enabled": "true",
@@ -125,6 +134,7 @@ def get_public(session: Session) -> dict:
     out = {key: _typed(key, stored.get(key, default)) for key, default in DEFAULTS.items()}
     out["has_anthropic_key"] = bool(stored.get(KEY_API))
     out["has_gemini_key"] = bool(stored.get(KEY_GEMINI_API))
+    out["has_openai_key"] = bool(stored.get(KEY_OPENAI_API))
     return out
 
 
@@ -140,7 +150,7 @@ def _set(session: Session, key: str, value: str) -> None:
 def update(session: Session, partial: dict) -> None:
     before = _stored(session)
     for key, value in partial.items():
-        if key in (KEY_API, KEY_GEMINI_API):
+        if key in (KEY_API, KEY_GEMINI_API, KEY_OPENAI_API):
             # Empty string clears the key; otherwise store encrypted. Never
             # log the real (encrypted) value -- only whether it's set.
             new_raw = encrypt(str(value)) if value else ""
@@ -190,6 +200,10 @@ def get_narrative_config(session: Session) -> ProviderConfig:
         model = stored.get("antigravity_model") or DEFAULTS["antigravity_model"]
         api_key = decrypt(stored.get(KEY_GEMINI_API, "")) or get_settings().gemini_api_key
         return ProviderConfig(provider=PROVIDER_ANTIGRAVITY, model=model, api_key=api_key, language=language)
+    if provider == PROVIDER_CODEX:
+        model = stored.get("openai_model") or DEFAULTS["openai_model"]
+        api_key = decrypt(stored.get(KEY_OPENAI_API, "")) or get_settings().openai_api_key
+        return ProviderConfig(provider=PROVIDER_CODEX, model=model, api_key=api_key, language=language)
     api_key = decrypt(stored.get(KEY_API, "")) or get_settings().anthropic_api_key
     model = stored.get("anthropic_model") or get_settings().anthropic_model
     return ProviderConfig(provider=PROVIDER_ANTHROPIC, model=model, api_key=api_key, language=language)

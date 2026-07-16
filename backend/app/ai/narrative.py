@@ -5,10 +5,11 @@ recent-candle table, and writes an assessment + advice in the user's chosen
 language (Vietnamese or English). It never decides the phase itself. A
 disclaimer is always appended so it can't be lost.
 
-Two interchangeable providers: Anthropic's hosted API (paid, needs an API key)
-or a local Ollama model (free, runs on the user's machine). Both take the same
-prompt and return the same two-section format (marker text differs by
-language -- NHẬN ĐỊNH/LỜI KHUYÊN for Vietnamese, ASSESSMENT/ADVICE for English).
+Four interchangeable providers: Anthropic's hosted API, OpenAI's hosted API
+("Codex"), Google Antigravity's multi-agent SDK, or a local Ollama model
+(free, runs on the user's machine). All take the same prompt and return the
+same two-section format (marker text differs by language -- NHẬN ĐỊNH/LỜI
+KHUYÊN for Vietnamese, ASSESSMENT/ADVICE for English).
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from dataclasses import dataclass
 
 import httpx
 from anthropic import Anthropic
+from openai import OpenAI
 
 from app.wyckoff import AnalysisResult
 
@@ -34,15 +36,16 @@ _NARRATIVE_MARKER_EN = "ASSESSMENT:"
 PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_OLLAMA = "ollama"
 PROVIDER_ANTIGRAVITY = "antigravity"
+PROVIDER_CODEX = "codex"
 
 _OLLAMA_TIMEOUT = 120.0  # local inference on modest hardware can be slow
 
 
 @dataclass(frozen=True)
 class ProviderConfig:
-    provider: str  # PROVIDER_ANTHROPIC | PROVIDER_OLLAMA | PROVIDER_ANTIGRAVITY
+    provider: str  # PROVIDER_ANTHROPIC | PROVIDER_OLLAMA | PROVIDER_ANTIGRAVITY | PROVIDER_CODEX
     model: str
-    api_key: str = ""  # anthropic only
+    api_key: str = ""  # anthropic + codex
     base_url: str = "http://localhost:11434"  # ollama only
     language: str = "vi"  # "vi" | "en" -- controls the prompt/output language
 
@@ -145,6 +148,16 @@ def _call_claude(prompt: str, api_key: str, model: str) -> str:
     return "".join(
         getattr(block, "text", "") for block in resp.content if getattr(block, "type", "text") == "text"
     )
+
+
+def _call_codex(prompt: str, api_key: str, model: str) -> str:
+    client = OpenAI(api_key=api_key)
+    resp = client.chat.completions.create(
+        model=model,
+        max_tokens=1024,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return resp.choices[0].message.content or ""
 
 
 def _call_ollama(prompt: str, model: str, base_url: str) -> str:
@@ -280,6 +293,10 @@ def generate(
     prompt = build_prompt(ticker, timeframe, result, recent, cfg.language, strategy_label)
     if cfg.provider == PROVIDER_OLLAMA:
         raw = _call_ollama(prompt, cfg.model, cfg.base_url)
+        narrative, advice = _parse(raw, cfg.language)
+        return narrative, advice, None
+    elif cfg.provider == PROVIDER_CODEX:
+        raw = _call_codex(prompt, cfg.api_key, cfg.model)
         narrative, advice = _parse(raw, cfg.language)
         return narrative, advice, None
     elif cfg.provider == PROVIDER_ANTIGRAVITY:

@@ -19,6 +19,13 @@ def test_is_available_anthropic_requires_api_key():
     assert not narrative.is_available(ProviderConfig(provider=PROVIDER_ANTHROPIC, model="claude-sonnet-4-5", api_key=""))
 
 
+def test_is_available_codex_requires_api_key():
+    from app.ai.narrative import PROVIDER_CODEX
+
+    assert narrative.is_available(ProviderConfig(provider=PROVIDER_CODEX, model="gpt-5", api_key="sk-oai-x"))
+    assert not narrative.is_available(ProviderConfig(provider=PROVIDER_CODEX, model="gpt-5", api_key=""))
+
+
 def test_is_available_ollama_requires_model_not_api_key():
     assert narrative.is_available(ProviderConfig(provider=PROVIDER_OLLAMA, model="qwen2.5:7b"))
     assert not narrative.is_available(ProviderConfig(provider=PROVIDER_OLLAMA, model=""))
@@ -36,6 +43,24 @@ def test_generate_dispatches_to_claude_for_anthropic_provider(mocker):
     assert spy.call_args[0][1] == "sk-ant-x"
     assert spy.call_args[0][2] == "claude-sonnet-4-5"
     assert text == "x"
+    assert narrative.DISCLAIMER in advice
+
+
+def test_generate_dispatches_to_codex_for_openai_provider(mocker):
+    from app.ai.narrative import PROVIDER_CODEX
+
+    spy = mocker.patch.object(
+        narrative, "_call_codex", return_value="NHẬN ĐỊNH:\nx\n\nLỜI KHUYÊN:\n- y"
+    )
+    cfg = ProviderConfig(provider=PROVIDER_CODEX, model="gpt-5", api_key="sk-oai-x")
+
+    text, advice, sub_agents = narrative.generate("FPT", "daily", RESULT, [], cfg)
+
+    spy.assert_called_once()
+    assert spy.call_args[0][1] == "sk-oai-x"
+    assert spy.call_args[0][2] == "gpt-5"
+    assert text == "x"
+    assert sub_agents is None
     assert narrative.DISCLAIMER in advice
 
 

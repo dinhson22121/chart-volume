@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # Gemini / Google Antigravity
     gemini_api_key: str = ""
 
+    # OpenAI / Codex
+    openai_api_key: str = ""
+    openai_model: str = "gpt-5"
+
     # SQLite file location.
     db_path: str = "chart_volume.db"
 

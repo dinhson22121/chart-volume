@@ -93,7 +93,7 @@ export interface SignalStat {
   win_rate_20: number | null;
 }
 
-export type NarrativeProvider = "anthropic" | "ollama" | "antigravity";
+export type NarrativeProvider = "anthropic" | "ollama" | "antigravity" | "codex";
 
 export interface StrategyOption {
   key: string;
@@ -107,6 +107,7 @@ export interface Settings {
   anthropic_model: string;
   ollama_model: string;
   antigravity_model: string;
+  openai_model: string;
   daily_lookback_days: number;
   half_session_lookback_days: number;
   scheduler_enabled: boolean;
@@ -144,11 +145,13 @@ export interface Settings {
   ai_narrative_top100: boolean;
   has_anthropic_key: boolean;
   has_gemini_key: boolean;
+  has_openai_key: boolean;
 }
 
-export type SettingsUpdate = Partial<Omit<Settings, "has_anthropic_key" | "has_gemini_key">> & {
+export type SettingsUpdate = Partial<Omit<Settings, "has_anthropic_key" | "has_gemini_key" | "has_openai_key">> & {
   anthropic_api_key?: string;
   gemini_api_key?: string;
+  openai_api_key?: string;
 };
 
 export interface OllamaStatus {

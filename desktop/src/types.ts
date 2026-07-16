@@ -137,6 +137,9 @@ export interface Settings {
   crypto_analysis_interval: string;
   top100_auto_refresh_enabled: boolean;
   top100_refresh_time: string;
+  ai_narrative_vn30: boolean;
+  ai_narrative_watchlist: boolean;
+  ai_narrative_top100: boolean;
   has_anthropic_key: boolean;
 }
 
@@ -256,4 +259,6 @@ export interface DashboardRow {
   as_of: string | null;
   latest_signal: DashboardSignal | null;
   has_data: boolean;
+  is_bullish: boolean | null;
+  opportunity_score: number | null;
 }

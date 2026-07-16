@@ -67,6 +67,9 @@ class SettingsIn(BaseModel):
     crypto_analysis_interval: str | None = None
     top100_auto_refresh_enabled: bool | None = None
     top100_refresh_time: str | None = None
+    ai_narrative_vn30: bool | None = None
+    ai_narrative_watchlist: bool | None = None
+    ai_narrative_top100: bool | None = None
 
     @field_validator("strategy")
     @classmethod

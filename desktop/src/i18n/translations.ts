@@ -70,6 +70,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "dashboard.filter.all": "Tất cả",
     "dashboard.filter.stock": "Cổ phiếu",
     "dashboard.filter.crypto": "Crypto",
+    "dashboard.filter.onlyBullish": "Chỉ hiện cơ hội tăng",
     "dashboard.empty": "Chưa có mã nào trong danh mục này.",
     "dashboard.table.ticker": "Mã",
     "dashboard.table.phase": "Phase",
@@ -82,7 +83,9 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     // --- Signal stats modal ---
     "stats.title": "Thống kê hiệu quả tín hiệu",
     "stats.hint":
-      "Tỷ lệ thắng (win-rate) = % số lần tín hiệu này xảy ra và giá đi đúng chiều kỳ vọng, sau N nến. Dữ liệu tổng hợp từ toàn bộ mã đã crawl.",
+      "Win = giá đi đúng chiều kỳ vọng và vượt ngưỡng 1% sau N nến (không tính nhiễu <1%). Kỳ vọng lợi nhuận (cột cuối) mới là thước đo quan trọng nhất: một tín hiệu thắng <50% vẫn tốt nếu lãi khi thắng lớn hơn lỗ khi thua. Tổng hợp từ toàn bộ mã đã crawl.",
+    "stats.alignedOnly": "Chỉ tín hiệu thuận xu hướng (bỏ tín hiệu ngược trend đã bị hệ thống loại)",
+    "stats.expectancyHint": "Lợi nhuận trung bình mỗi lần xuất hiện tín hiệu, sau 10 nến — thước đo kỳ vọng thực (thắng đậm/thua nông vẫn dương).",
     "stats.empty": 'Chưa có dữ liệu. Hãy "Phân tích" vài mã trước.',
     "stats.error": "Không tải được thống kê",
     "stats.table.signal": "Tín hiệu",
@@ -91,6 +94,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "stats.table.win10": "Win 10 nến",
     "stats.table.win20": "Win 20 nến",
     "stats.table.avgReturn10": "Return TB (10 nến)",
+    "stats.table.expectancy10": "Kỳ vọng LN (10 nến)",
 
     // --- Activity log modal ---
     "logs.title": "Nhật ký",
@@ -210,6 +214,11 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "settings.ai.apiKeyPlaceholderChange": "•••••••••••••••• (nhập để thay)",
     "settings.ai.apiKeyClear": "Xoá",
     "settings.ai.apiKeyHint": "Mã hoá khi lưu vào máy. Không có key thì vẫn phân tích Wyckoff định lượng, chỉ thiếu nhận định AI.",
+    "settings.ai.narrativeGroupsLabel": "Sinh nhận định AI tự động cho",
+    "settings.ai.narrativeGroupsHint": "Áp dụng cho các đợt phân tích theo lịch — bấm Phân tích thủ công thì luôn có nhận định AI. Tắt bớt để tiết kiệm chi phí API.",
+    "settings.ai.narrativeVn30": "Cổ phiếu VN30",
+    "settings.ai.narrativeWatchlist": "Danh sách theo dõi",
+    "settings.ai.narrativeTop100": "Top 100 coin (tốn nhiều API — nên tắt)",
     "settings.ai.modelLabel": "Model",
     "settings.ai.model.sonnet": "Claude Sonnet 4.5 (khuyến nghị)",
     "settings.ai.model.opus": "Claude Opus 4.5 (mạnh hơn, đắt hơn)",
@@ -396,6 +405,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "dashboard.filter.all": "All",
     "dashboard.filter.stock": "Stocks",
     "dashboard.filter.crypto": "Crypto",
+    "dashboard.filter.onlyBullish": "Bullish opportunities only",
     "dashboard.empty": "No tickers in this category yet.",
     "dashboard.table.ticker": "Ticker",
     "dashboard.table.phase": "Phase",
@@ -408,7 +418,9 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     // --- Signal stats modal ---
     "stats.title": "Signal performance stats",
     "stats.hint":
-      "Win rate = % of times this signal occurred and price moved in the expected direction, after N bars. Aggregated across every crawled ticker.",
+      "Win = price moved in the expected direction AND cleared 1% after N bars (sub-1% noise doesn't count). Expectancy (last column) is the metric that matters most: a signal can win <50% of the time and still be good if its wins outsize its losses. Aggregated across every crawled ticker.",
+    "stats.alignedOnly": "Trend-aligned signals only (exclude counter-trend signals the engine discounted)",
+    "stats.expectancyHint": "Average return per signal occurrence after 10 bars — the true edge metric (big wins / small losses stay positive).",
     "stats.empty": 'No data yet. "Analyze" a few tickers first.',
     "stats.error": "Couldn't load stats",
     "stats.table.signal": "Signal",
@@ -417,6 +429,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "stats.table.win10": "Win @10 bars",
     "stats.table.win20": "Win @20 bars",
     "stats.table.avgReturn10": "Avg return (10 bars)",
+    "stats.table.expectancy10": "Expectancy (10 bars)",
 
     // --- Activity log modal ---
     "logs.title": "Activity log",
@@ -536,6 +549,11 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "settings.ai.apiKeyPlaceholderChange": "•••••••••••••••• (enter to change)",
     "settings.ai.apiKeyClear": "Clear",
     "settings.ai.apiKeyHint": "Encrypted at rest. Without a key, quantitative Wyckoff analysis still runs — only the AI assessment is missing.",
+    "settings.ai.narrativeGroupsLabel": "Auto-generate AI assessments for",
+    "settings.ai.narrativeGroupsHint": "Applies to scheduled analysis runs — manually clicking Analyze always includes the AI assessment. Turn groups off to save API costs.",
+    "settings.ai.narrativeVn30": "VN30 stocks",
+    "settings.ai.narrativeWatchlist": "Watchlist",
+    "settings.ai.narrativeTop100": "Top 100 coins (API-heavy — keep off)",
     "settings.ai.modelLabel": "Model",
     "settings.ai.model.sonnet": "Claude Sonnet 4.5 (recommended)",
     "settings.ai.model.opus": "Claude Opus 4.5 (stronger, pricier)",

@@ -82,6 +82,9 @@ interface FormState {
   cryptoAnalysisInterval: string;
   top100AutoRefreshEnabled: boolean;
   top100RefreshTime: string;
+  aiNarrativeVn30: boolean;
+  aiNarrativeWatchlist: boolean;
+  aiNarrativeTop100: boolean;
 }
 
 function toForm(s: Settings): FormState {
@@ -122,6 +125,9 @@ function toForm(s: Settings): FormState {
     cryptoAnalysisInterval: s.crypto_analysis_interval,
     top100AutoRefreshEnabled: s.top100_auto_refresh_enabled,
     top100RefreshTime: s.top100_refresh_time,
+    aiNarrativeVn30: s.ai_narrative_vn30,
+    aiNarrativeWatchlist: s.ai_narrative_watchlist,
+    aiNarrativeTop100: s.ai_narrative_top100,
   };
 }
 
@@ -162,6 +168,9 @@ function toUpdate(f: FormState): SettingsUpdate {
     crypto_analysis_interval: f.cryptoAnalysisInterval,
     top100_auto_refresh_enabled: f.top100AutoRefreshEnabled,
     top100_refresh_time: f.top100RefreshTime,
+    ai_narrative_vn30: f.aiNarrativeVn30,
+    ai_narrative_watchlist: f.aiNarrativeWatchlist,
+    ai_narrative_top100: f.aiNarrativeTop100,
   };
   if (f.anthropicApiKey.trim()) {
     update.anthropic_api_key = f.anthropicApiKey.trim();
@@ -514,6 +523,35 @@ export function SettingsModal({ onClose, strategy }: Props) {
                   </label>
                 </div>
               )}
+
+              <div className="settings-field">
+                <span>{t("settings.ai.narrativeGroupsLabel")}</span>
+                <span className="settings-hint faint">{t("settings.ai.narrativeGroupsHint")}</span>
+                <label className="settings-field--row" style={{ display: "flex", gap: "var(--space-2)" }}>
+                  <input
+                    type="checkbox"
+                    checked={form.aiNarrativeVn30}
+                    onChange={(e) => set("aiNarrativeVn30", e.target.checked)}
+                  />
+                  <span>{t("settings.ai.narrativeVn30")}</span>
+                </label>
+                <label className="settings-field--row" style={{ display: "flex", gap: "var(--space-2)" }}>
+                  <input
+                    type="checkbox"
+                    checked={form.aiNarrativeWatchlist}
+                    onChange={(e) => set("aiNarrativeWatchlist", e.target.checked)}
+                  />
+                  <span>{t("settings.ai.narrativeWatchlist")}</span>
+                </label>
+                <label className="settings-field--row" style={{ display: "flex", gap: "var(--space-2)" }}>
+                  <input
+                    type="checkbox"
+                    checked={form.aiNarrativeTop100}
+                    onChange={(e) => set("aiNarrativeTop100", e.target.checked)}
+                  />
+                  <span>{t("settings.ai.narrativeTop100")}</span>
+                </label>
+              </div>
             </section>
 
             <section className="settings-section">

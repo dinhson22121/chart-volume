@@ -67,16 +67,33 @@ _INTERVAL_TRIGGER_KWARGS = {
 
 
 def _tracked_symbols(session: Session, asset_class: str) -> list[Symbol]:
+    # is_top100 is only ever True on crypto symbols (top100.seed_top100 always
+    # sets asset_class=CRYPTO), so including it here is a no-op for the stock
+    # batch and extends the crypto batch to also auto-analyze the Top 100
+    # list -- needed so dashboard ranking has real Analysis data for them,
+    # not just symbols the user happened to open manually.
     return session.exec(
         select(Symbol).where(
-            (Symbol.is_vn30 == True) | (Symbol.is_watchlist == True),  # noqa: E712
+            (Symbol.is_vn30 == True) | (Symbol.is_watchlist == True) | (Symbol.is_top100 == True),  # noqa: E712
             Symbol.asset_class == asset_class,
         )
     ).all()
 
 
+def _symbol_gets_ai(symbol: Symbol, ai_groups: dict) -> bool:
+    """OR across the symbol's group memberships -- being in any AI-enabled
+    group is enough (a VN30 stock the user also watchlisted follows whichever
+    of the two toggles is on)."""
+    return (
+        (symbol.is_vn30 and ai_groups["vn30"])
+        or (symbol.is_watchlist and ai_groups["watchlist"])
+        or (symbol.is_top100 and ai_groups["top100"])
+    )
+
+
 def run_batch(session: Session, timeframe: str, use_ai: bool = True) -> int:
     """Ingest + analyse every tracked STOCK ticker. Returns how many succeeded."""
+    ai_groups = settings_service.get_ai_narrative_groups(session)
     ok = 0
     for symbol in _tracked_symbols(session, AssetClass.STOCK):
         ticker = symbol.ticker
@@ -85,7 +102,7 @@ def run_batch(session: Session, timeframe: str, use_ai: bool = True) -> int:
                 ingest.ingest_daily(session, ticker)
             else:
                 ingest.ingest_half_session(session, ticker)
-            run_analysis(session, ticker, timeframe, use_ai=use_ai)
+            run_analysis(session, ticker, timeframe, use_ai=use_ai and _symbol_gets_ai(symbol, ai_groups))
             ok += 1
         except Exception as exc:  # noqa: BLE001 - isolate per-ticker failures
             logger.warning("batch %s failed for %s: %s", timeframe, ticker, exc)
@@ -102,15 +119,22 @@ def run_crypto_batch(session: Session, use_ai: bool = True) -> int:
     scheduled refresh stocks already had.
     """
     exchanges = settings_service.get_crypto_exchanges(session)
+    ai_groups = settings_service.get_ai_narrative_groups(session)
     ok = 0
     for symbol in _tracked_symbols(session, AssetClass.CRYPTO):
+        # Per-group AI narrative toggles (Settings): a symbol still gets the
+        # quantitative analysis (phase/confidence/signals feed the dashboard
+        # ranking) either way -- the toggle only controls the LLM call.
+        # Top100 defaults off: ~100 coins x 3 timeframes per cycle of
+        # narratives nobody opens is a token burn.
+        symbol_use_ai = use_ai and _symbol_gets_ai(symbol, ai_groups)
         for timeframe in _CRYPTO_TIMEFRAMES:
             try:
                 ingest.ingest_crypto(
                     session, symbol.ticker, timeframe,
                     exchange_symbol=symbol.display_symbol, exchanges=exchanges, symbol=symbol,
                 )
-                run_analysis(session, symbol.ticker, timeframe, use_ai=use_ai)
+                run_analysis(session, symbol.ticker, timeframe, use_ai=symbol_use_ai)
                 ok += 1
             except Exception as exc:  # noqa: BLE001 - isolate per-ticker/timeframe failures
                 logger.warning("crypto batch %s/%s failed: %s", symbol.ticker, timeframe, exc)

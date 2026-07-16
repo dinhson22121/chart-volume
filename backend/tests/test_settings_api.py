@@ -170,6 +170,25 @@ def test_get_settings_exposes_top100_defaults(client, auth_header):
     assert body["top100_refresh_time"] == "07:00"
 
 
+def test_ai_narrative_group_defaults_and_roundtrip(client, auth_header):
+    body = client.get("/settings", headers=auth_header).json()
+    assert body["ai_narrative_vn30"] is True
+    assert body["ai_narrative_watchlist"] is True
+    assert body["ai_narrative_top100"] is False  # API-heavy, off by default
+
+    resp = client.put(
+        "/settings",
+        json={"ai_narrative_top100": True, "ai_narrative_vn30": False},
+        headers=auth_header,
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ai_narrative_top100"] is True
+    assert body["ai_narrative_vn30"] is False
+    assert body["ai_narrative_watchlist"] is True  # untouched
+
+
 def test_put_settings_accepts_top100_settings(client, auth_header):
     resp = client.put(
         "/settings",

@@ -296,6 +296,76 @@ def test_run_crypto_batch_ingests_all_three_timeframes(session, mocker):
     assert tickers_called == {"PEPE"}
 
 
+def test_run_crypto_batch_includes_top100_symbols(session, mocker):
+    # Top100 coins aren't vn30/watchlist -- must still get auto-analyzed so
+    # the dashboard's bullish ranking has real data for them.
+    session.add(
+        Symbol(
+            ticker="BITCOIN", display_symbol="BTC", asset_class=AssetClass.CRYPTO,
+            is_top100=True, top100_rank=1, is_watchlist=False, is_vn30=False,
+        )
+    )
+    session.commit()
+
+    ingest_spy = mocker.patch.object(ingest, "ingest_crypto", return_value=1)
+
+    ok = run_crypto_batch(session)
+
+    assert ok == 3  # 1h + 4h + daily
+    tickers_called = {call.args[1] for call in ingest_spy.call_args_list}
+    assert tickers_called == {"BITCOIN"}
+
+
+def test_run_crypto_batch_skips_ai_narrative_for_top100_only_symbols_by_default(session, mocker):
+    # Default per-group AI toggles: vn30=on, watchlist=on, top100=OFF -- a
+    # top100-only coin gets the quantitative analysis (feeds the dashboard
+    # ranking) but must NOT trigger LLM narrative generation; watchlisted
+    # coins keep AI narratives.
+    session.add(
+        Symbol(
+            ticker="BITCOIN", display_symbol="BTC", asset_class=AssetClass.CRYPTO,
+            is_top100=True, is_watchlist=False,
+        )
+    )
+    session.add(
+        Symbol(ticker="PEPE", display_symbol="PEPE", asset_class=AssetClass.CRYPTO, is_watchlist=True)
+    )
+    session.commit()
+
+    mocker.patch.object(ingest, "ingest_crypto", return_value=1)
+    analysis_spy = mocker.patch("app.scheduler.run_analysis", return_value=None)
+
+    run_crypto_batch(session)
+
+    use_ai_by_ticker = {call.args[1]: call.kwargs["use_ai"] for call in analysis_spy.call_args_list}
+    assert use_ai_by_ticker == {"BITCOIN": False, "PEPE": True}
+
+
+def test_run_crypto_batch_ai_group_toggles_are_configurable(session, mocker):
+    # Flipping the per-group Settings toggles inverts the default behavior.
+    session.add(
+        Symbol(
+            ticker="BITCOIN", display_symbol="BTC", asset_class=AssetClass.CRYPTO,
+            is_top100=True, is_watchlist=False,
+        )
+    )
+    session.add(
+        Symbol(ticker="PEPE", display_symbol="PEPE", asset_class=AssetClass.CRYPTO, is_watchlist=True)
+    )
+    session.commit()
+    settings_service.update(
+        session, {"ai_narrative_top100": "true", "ai_narrative_watchlist": "false"}
+    )
+
+    mocker.patch.object(ingest, "ingest_crypto", return_value=1)
+    analysis_spy = mocker.patch("app.scheduler.run_analysis", return_value=None)
+
+    run_crypto_batch(session)
+
+    use_ai_by_ticker = {call.args[1]: call.kwargs["use_ai"] for call in analysis_spy.call_args_list}
+    assert use_ai_by_ticker == {"BITCOIN": True, "PEPE": False}
+
+
 def test_run_crypto_batch_isolates_timeframe_failures(session, mocker):
     session.add(Symbol(ticker="PEPE", is_watchlist=True, asset_class=AssetClass.CRYPTO))
     session.commit()

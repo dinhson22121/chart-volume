@@ -63,6 +63,13 @@ DEFAULTS: dict[str, str] = {
     "crypto_analysis_interval": "4h",
     "top100_auto_refresh_enabled": "true",
     "top100_refresh_time": "07:00",
+    # Per-group toggles for LLM narrative generation during scheduled
+    # batches (manual per-ticker refresh always generates AI regardless).
+    # Top100 defaults off: ~100 coins x 3 timeframes per cycle of narratives
+    # nobody opens is a token burn, not a feature.
+    "ai_narrative_vn30": "true",
+    "ai_narrative_watchlist": "true",
+    "ai_narrative_top100": "false",
 }
 
 # Allowed values for settings that are a fixed choice rather than a free number.
@@ -84,6 +91,7 @@ _INT_KEYS = {
 _BOOL_KEYS = {
     "scheduler_enabled", "screener_enabled", "screener_require_volume_rising", "crypto_analysis_enabled",
     "top100_auto_refresh_enabled",
+    "ai_narrative_vn30", "ai_narrative_watchlist", "ai_narrative_top100",
 }
 _LIST_KEYS = {"crypto_exchanges"}
 
@@ -240,6 +248,21 @@ def get_scheduler_config(session: Session) -> dict:
         "half_morning_time": stored.get("half_morning_time", DEFAULTS["half_morning_time"]),
         "half_afternoon_time": stored.get("half_afternoon_time", DEFAULTS["half_afternoon_time"]),
         "daily_time": stored.get("daily_time", DEFAULTS["daily_time"]),
+    }
+
+
+def get_ai_narrative_groups(session: Session) -> dict:
+    """Which tracked-symbol groups get LLM narratives during scheduled
+    batches. A symbol in several groups gets AI if ANY of its groups is on."""
+    stored = _stored(session)
+
+    def flag(key: str) -> bool:
+        return _as_bool(stored.get(key, DEFAULTS[key]))
+
+    return {
+        "vn30": flag("ai_narrative_vn30"),
+        "watchlist": flag("ai_narrative_watchlist"),
+        "top100": flag("ai_narrative_top100"),
     }
 
 

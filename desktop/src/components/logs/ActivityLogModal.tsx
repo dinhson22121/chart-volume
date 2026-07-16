@@ -21,6 +21,7 @@ const ACTION_KEY: Record<SystemAction, string> = {
   half_session_afternoon: "logs.action.half_session_afternoon",
   daily_close: "logs.action.daily_close",
   crypto_analysis_refresh: "logs.action.crypto_analysis_refresh",
+  potential_screen: "logs.action.potential_screen",
 };
 
 const TRIGGER_KEY: Record<SystemActionLogEntry["trigger"], string> = {
@@ -86,6 +87,11 @@ const FIELD_LABELS: Record<string, Record<string, string>> = {
     crypto_analysis_interval: "Phân tích crypto Interval",
     top100_auto_refresh_enabled: "Cập nhật Top 100",
     top100_refresh_time: "Giờ cập nhật Top 100",
+    ai_narrative_vn30: "AI cho VN30",
+    ai_narrative_watchlist: "AI cho danh sách theo dõi",
+    ai_narrative_top100: "AI cho Top 100",
+    potential_screen_auto_enabled: "Tự động chạy AI Đánh giá tiềm năng",
+    potential_screen_time: "Giờ chạy AI Đánh giá tiềm năng",
   },
   en: {
     language: "Language",
@@ -130,6 +136,11 @@ const FIELD_LABELS: Record<string, Record<string, string>> = {
     crypto_analysis_interval: "Crypto Analysis Interval",
     top100_auto_refresh_enabled: "Top 100 Auto Refresh",
     top100_refresh_time: "Top 100 Refresh Time",
+    ai_narrative_vn30: "AI for VN30",
+    ai_narrative_watchlist: "AI for Watchlist",
+    ai_narrative_top100: "AI for Top 100",
+    potential_screen_auto_enabled: "AI Potential Screen Auto-run",
+    potential_screen_time: "AI Potential Screen Run Time",
   }
 };
 
@@ -141,6 +152,7 @@ export function ActivityLogModal({ onClose }: Props) {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     setPage(1);
@@ -177,6 +189,26 @@ export function ActivityLogModal({ onClose }: Props) {
   }, [onClose]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  const handleExport = async () => {
+    setExporting(true);
+    setError(null);
+    try {
+      const { content } = await api.exportLogs();
+      const blob = new Blob([content], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 16);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `chart-volume-log-${stamp}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t("logs.export.error"));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="settings-overlay" onClick={onClose}>
@@ -301,7 +333,10 @@ export function ActivityLogModal({ onClose }: Props) {
           )}
         </div>
 
-        <footer className="settings-modal__footer">
+        <footer className="settings-modal__footer" style={{ justifyContent: "space-between" }}>
+          <button className="btn" onClick={() => void handleExport()} disabled={exporting}>
+            {exporting ? t("logs.export.buttonLoading") : t("logs.export.button")}
+          </button>
           <button className="btn" onClick={onClose}>
             {t("common.close")}
           </button>

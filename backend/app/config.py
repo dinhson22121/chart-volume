@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import secrets
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -55,3 +56,14 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def log_file_path() -> Path:
+    """Backend technical log lives next to the SQLite DB (same userData dir
+    in the packaged app as license.json/settings-key.enc) -- one shared
+    source of truth read by both main.py (writes) and api.logs (reads back
+    for export). Named after the DB file's own stem (not a fixed literal) so
+    a test run's DB_PATH=test_chart_volume.db gets its own
+    test_chart_volume.log instead of colliding with real dev-mode logs."""
+    db_path = Path(get_settings().db_path).resolve()
+    return db_path.with_suffix(".log")

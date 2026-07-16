@@ -4,19 +4,42 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from sqlmodel import Session
 
-from app.api import analysis, candles, crypto, logs, ollama, settings as settings_api, signals, strategies, symbols
-from app.config import get_settings
+from app.api import (
+    analysis,
+    candles,
+    crypto,
+    logs,
+    ollama,
+    potential_screen,
+    settings as settings_api,
+    signals,
+    strategies,
+    symbols,
+)
+from app.config import get_settings, log_file_path
 from app.db import get_engine, init_db
 from app.scheduler import build_scheduler
 from app.services import activity_log
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+# Console handler (dev terminal / Electron's stdout capture) + a rotating
+# file next to the DB, so "Download log" in the UI has real content to
+# export even in a packaged build where there's no terminal to read from.
+_LOG_FORMAT = "%(asctime)s %(name)s %(levelname)s %(message)s"
+_root_logger = logging.getLogger()
+_root_logger.setLevel(logging.INFO)
+_console_handler = logging.StreamHandler()
+_console_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+_root_logger.addHandler(_console_handler)
+_file_handler = RotatingFileHandler(log_file_path(), maxBytes=5_000_000, backupCount=2, encoding="utf-8")
+_file_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+_root_logger.addHandler(_file_handler)
 logger = logging.getLogger("chart_volume")
 
 
@@ -63,6 +86,7 @@ app.include_router(ollama.router)
 app.include_router(strategies.router)
 app.include_router(crypto.router)
 app.include_router(logs.router)
+app.include_router(potential_screen.router)
 
 
 @app.get("/health")

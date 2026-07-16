@@ -1,11 +1,11 @@
 """Lightweight column migrations: create_all never ALTERs an existing table,
 so columns added to Symbol after first release must be backfilled explicitly
-(see app.db._ensure_symbol_columns)."""
+(see app.db._ensure_columns)."""
 
 from sqlalchemy.pool import StaticPool
 from sqlmodel import create_engine
 
-from app.db import _ensure_symbol_columns
+from app.db import _ensure_columns
 
 
 def _make_engine():
@@ -29,7 +29,7 @@ def test_adds_missing_columns_to_pre_existing_symbol_table():
         conn.exec_driver_sql("INSERT INTO symbol (ticker, name, is_vn30) VALUES ('FPT', 'FPT Corp', 1)")
         conn.commit()
 
-    _ensure_symbol_columns(engine)
+    _ensure_columns(engine)
 
     cols = _symbol_columns(engine)
     assert {"is_top100", "top100_rank"} <= cols
@@ -43,7 +43,7 @@ def test_adds_missing_columns_to_pre_existing_symbol_table():
 def test_noop_when_symbol_table_does_not_exist_yet():
     engine = _make_engine()
 
-    _ensure_symbol_columns(engine)  # must not raise or create the table
+    _ensure_columns(engine)  # must not raise or create the table
 
     assert _symbol_columns(engine) == set()
 
@@ -57,6 +57,28 @@ def test_noop_when_columns_already_present():
         )
         conn.commit()
 
-    _ensure_symbol_columns(engine)  # second run must not raise (duplicate column)
+    _ensure_columns(engine)  # second run must not raise (duplicate column)
 
     assert {"is_top100", "top100_rank"} <= _symbol_columns(engine)
+
+
+def test_adds_aligned_column_to_pre_existing_signaloutcome_table():
+    engine = _make_engine()
+    with engine.connect() as conn:
+        # Old-release schema: signaloutcome without the aligned column.
+        conn.exec_driver_sql(
+            "CREATE TABLE signaloutcome (id INTEGER PRIMARY KEY, ticker VARCHAR, "
+            "timeframe VARCHAR, strategy VARCHAR, event_type VARCHAR, is_bullish BOOLEAN)"
+        )
+        conn.exec_driver_sql(
+            "INSERT INTO signaloutcome (ticker, event_type, is_bullish) VALUES ('FPT', 'Spring', 1)"
+        )
+        conn.commit()
+
+    _ensure_columns(engine)
+
+    with engine.connect() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(signaloutcome)")}
+        assert "aligned" in cols
+        row = conn.exec_driver_sql("SELECT ticker, aligned FROM signaloutcome").one()
+    assert row == ("FPT", None)  # old row keeps null alignment

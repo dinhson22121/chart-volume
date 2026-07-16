@@ -197,6 +197,25 @@ def test_dashboard_shows_has_data_false_for_unanalyzed_symbol(session, client, a
     assert row["has_data"] is False
     assert row["phase"] is None
     assert row["latest_signal"] is None
+    assert row["is_bullish"] is None
+
+
+def test_dashboard_includes_top100_symbol_not_in_watchlist(session, client, auth_header):
+    from app.models import AssetClass, Symbol
+
+    session.add(
+        Symbol(
+            ticker="BITCOIN", display_symbol="BTC", asset_class=AssetClass.CRYPTO,
+            is_top100=True, top100_rank=1, is_vn30=False, is_watchlist=False,
+        )
+    )
+    session.commit()
+
+    resp = client.get("/analysis/dashboard", headers=auth_header)
+
+    assert resp.status_code == 200
+    tickers = [r["ticker"] for r in resp.json()]
+    assert "BITCOIN" in tickers
 
 
 def test_dashboard_shows_latest_daily_analysis_with_latest_signal(session, client, auth_header):
@@ -227,6 +246,124 @@ def test_dashboard_shows_latest_daily_analysis_with_latest_signal(session, clien
     assert row["phase"] == "Accumulation"
     assert row["confidence"] == 0.8
     assert row["latest_signal"] == {"type": "SOS", "ts": "2024-12-28T00:00:00"}
+    assert row["is_bullish"] is True  # Accumulation is a bullish wyckoff phase
+
+
+def test_dashboard_stablecoin_never_ranks_bullish(session, client, auth_header):
+    # A pegged asset's "Accumulation" phase is noise around the peg, not an
+    # opportunity -- it must stay listed but never flagged bullish.
+    import json as jsonlib
+
+    from app.models import Analysis, AssetClass, Symbol, Timeframe
+
+    session.add(
+        Symbol(
+            ticker="USD-COIN", display_symbol="USDC", asset_class=AssetClass.CRYPTO,
+            is_top100=True, top100_rank=5,
+        )
+    )
+    session.add(
+        Analysis(
+            ticker="USD-COIN", timeframe=Timeframe.DAILY, strategy="wyckoff",
+            as_of=pd.Timestamp("2025-01-01").to_pydatetime(),
+            phase="Accumulation", confidence=0.9,
+            signals_json=jsonlib.dumps([]), levels_json=jsonlib.dumps({"support": 1, "resistance": 2}),
+        )
+    )
+    session.commit()
+
+    resp = client.get("/analysis/dashboard", headers=auth_header)
+
+    row = resp.json()[0]
+    assert row["ticker"] == "USD-COIN"
+    assert row["has_data"] is True
+    assert row["is_bullish"] is False
+
+
+def test_dashboard_opportunity_score_equals_confidence_without_history(session, client, auth_header):
+    import json as jsonlib
+
+    from app.models import Analysis, Symbol, Timeframe
+
+    session.add(Symbol(ticker="FPT", is_vn30=True))
+    session.add(
+        Analysis(
+            ticker="FPT", timeframe=Timeframe.DAILY, strategy="wyckoff",
+            as_of=pd.Timestamp("2025-01-01").to_pydatetime(),
+            phase="Accumulation", confidence=0.8,
+            signals_json=jsonlib.dumps(
+                [{"type": "Spring", "ts": "2024-12-20T00:00:00", "price": 20.0, "note": ""}]
+            ),
+            levels_json=jsonlib.dumps({"support": 19.0, "resistance": 25.0}),
+        )
+    )
+    session.commit()
+
+    resp = client.get("/analysis/dashboard", headers=auth_header)
+
+    row = resp.json()[0]
+    assert row["opportunity_score"] == 0.8  # no SignalOutcome history -> plain confidence
+
+
+def test_dashboard_opportunity_score_blends_historical_expectancy(session, client, auth_header):
+    # 5+ aligned outcomes for the row's latest signal type -> the 10-bar
+    # expectancy (avg return) blends 50/50 with confidence, breaking ties
+    # between same-confidence rows.
+    import json as jsonlib
+
+    from app.models import Analysis, SignalOutcome, Symbol, Timeframe
+
+    session.add(Symbol(ticker="FPT", is_vn30=True))
+    session.add(
+        Analysis(
+            ticker="FPT", timeframe=Timeframe.DAILY, strategy="wyckoff",
+            as_of=pd.Timestamp("2025-01-01").to_pydatetime(),
+            phase="Accumulation", confidence=0.6,
+            signals_json=jsonlib.dumps(
+                [{"type": "Spring", "ts": "2024-12-20T00:00:00", "price": 20.0, "note": ""}]
+            ),
+            levels_json=jsonlib.dumps({"support": 19.0, "resistance": 25.0}),
+        )
+    )
+    # 4 x +5% and 1 x -5% -> avg_return_10 = 0.03 -> edge = 0.03/0.04 = 0.75.
+    # aligned=True so the aligned-only stats lookup includes them.
+    for i, ret10 in enumerate([0.05, 0.05, 0.05, 0.05, -0.05]):
+        session.add(
+            SignalOutcome(
+                ticker="FPT", timeframe=Timeframe.DAILY, strategy="wyckoff",
+                event_type="Spring", event_ts=pd.Timestamp(f"2024-11-{i + 1:02d}").to_pydatetime(),
+                event_price=20.0, is_bullish=True, aligned=True,
+                return_10=ret10, is_win_10=ret10 > 0,
+            )
+        )
+    session.commit()
+
+    resp = client.get("/analysis/dashboard", headers=auth_header)
+
+    row = resp.json()[0]
+    assert row["opportunity_score"] == 0.675  # 0.5*0.6 confidence + 0.5*0.75 edge
+
+
+def test_dashboard_is_bullish_false_for_bearish_phase(session, client, auth_header):
+    import json as jsonlib
+
+    from app.models import Analysis, Symbol, Timeframe
+
+    session.add(Symbol(ticker="FPT", is_vn30=True))
+    session.add(
+        Analysis(
+            ticker="FPT", timeframe=Timeframe.DAILY, strategy="wyckoff",
+            as_of=pd.Timestamp("2025-01-01").to_pydatetime(),
+            phase="Distribution", confidence=0.6,
+            signals_json=jsonlib.dumps([]), levels_json=jsonlib.dumps({"support": 1, "resistance": 2}),
+        )
+    )
+    session.commit()
+
+    resp = client.get("/analysis/dashboard", headers=auth_header)
+
+    row = resp.json()[0]
+    assert row["is_bullish"] is False
 
 
 def test_dashboard_ignores_non_daily_analysis(session, client, auth_header):

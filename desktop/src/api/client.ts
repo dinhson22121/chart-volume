@@ -71,10 +71,11 @@ export const api = {
   getIndicators: (ticker: string, timeframe: Timeframe) =>
     req<IndicatorSeries>(`/analysis/${ticker}/indicators?timeframe=${timeframe}`),
   getDashboard: () => req<DashboardRow[]>("/analysis/dashboard"),
-  getSignalStats: (ticker?: string, timeframe?: Timeframe) => {
+  getSignalStats: (ticker?: string, timeframe?: Timeframe, alignedOnly?: boolean) => {
     const params = new URLSearchParams();
     if (ticker) params.set("ticker", ticker);
     if (timeframe) params.set("timeframe", timeframe);
+    if (alignedOnly) params.set("aligned_only", "true");
     const qs = params.toString();
     return req<SignalStat[]>(`/signals/stats${qs ? `?${qs}` : ""}`);
   },

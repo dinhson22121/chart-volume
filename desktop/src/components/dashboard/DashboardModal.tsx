@@ -18,6 +18,7 @@ export function DashboardModal({ onClose, onSelect }: Props) {
   const [rows, setRows] = useState<DashboardRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
+  const [onlyBullish, setOnlyBullish] = useState(false);
 
   const FILTER_OPTIONS: { value: Filter; label: string }[] = [
     { value: "all", label: t("dashboard.filter.all") },
@@ -44,9 +45,14 @@ export function DashboardModal({ onClose, onSelect }: Props) {
 
   const filtered = useMemo(() => {
     if (!rows) return null;
-    if (filter === "all") return rows;
-    return rows.filter((r) => r.asset_class === filter);
-  }, [rows, filter]);
+    const byAssetClass = filter === "all" ? rows : rows.filter((r) => r.asset_class === filter);
+    if (!onlyBullish) return byAssetClass;
+    // opportunity_score falls back to confidence server-side when no signal
+    // history exists, so sorting by it alone is always meaningful.
+    return byAssetClass
+      .filter((r) => r.is_bullish === true)
+      .sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0));
+  }, [rows, filter, onlyBullish]);
 
   const handleRowClick = (ticker: string) => {
     onSelect(ticker);
@@ -66,16 +72,34 @@ export function DashboardModal({ onClose, onSelect }: Props) {
         <div className="settings-modal__body">
           <p className="faint stats-hint">{t("dashboard.hint")}</p>
 
-          <div className="wl-tabs" style={{ marginBottom: "var(--space-3)", maxWidth: 280 }}>
-            {FILTER_OPTIONS.map((o) => (
-              <button
-                key={o.value}
-                className={filter === o.value ? "is-active" : ""}
-                onClick={() => setFilter(o.value)}
-              >
-                {o.label}
-              </button>
-            ))}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "var(--space-3)",
+              marginBottom: "var(--space-3)",
+            }}
+          >
+            <div className="wl-tabs" style={{ maxWidth: 280 }}>
+              {FILTER_OPTIONS.map((o) => (
+                <button
+                  key={o.value}
+                  className={filter === o.value ? "is-active" : ""}
+                  onClick={() => setFilter(o.value)}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            <label className="settings-field--row" style={{ display: "flex", gap: "var(--space-2)" }}>
+              <input
+                type="checkbox"
+                checked={onlyBullish}
+                onChange={(e) => setOnlyBullish(e.target.checked)}
+              />
+              <span className="faint">{t("dashboard.filter.onlyBullish")}</span>
+            </label>
           </div>
 
           {error && <p className="settings-error">{error}</p>}

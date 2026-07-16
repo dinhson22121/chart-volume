@@ -100,7 +100,8 @@ def run_analysis(
     # narrative cache below, so forward returns keep backfilling as new
     # candles arrive even when the LLM step is skipped (cached or no AI).
     signal_outcomes.record_outcomes(
-        session, ticker, timeframe, strategy, candles, result.events, strategy_module.BULLISH_EVENTS
+        session, ticker, timeframe, strategy, candles, result.events, strategy_module.BULLISH_EVENTS,
+        phase_trend=strategy_module.phase_trend(result.phase),
     )
 
     existing = session.exec(

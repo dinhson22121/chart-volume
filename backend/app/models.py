@@ -163,6 +163,13 @@ class SignalOutcome(SQLModel, table=True):
     is_win_5: Optional[bool] = None
     is_win_10: Optional[bool] = None
     is_win_20: Optional[bool] = None
+    # True when the event's own polarity matched the phase/regime trend the
+    # engine classified at detection time (e.g. a bullish Spring inside a
+    # bullish Accumulation phase). A counter-trend signal the engine already
+    # discounted shouldn't drag down the "does this signal work" stats, so
+    # get_stats can filter to aligned-only. Null on rows written before this
+    # column existed.
+    aligned: Optional[bool] = None
     updated_at: datetime = Field(default_factory=_utcnow)
 
 

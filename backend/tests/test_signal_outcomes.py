@@ -131,6 +131,72 @@ def test_get_stats_filters_by_strategy(session):
     assert sum(s["count"] for s in signal_outcomes.get_stats(session)) == 2
 
 
+def test_win_requires_clearing_the_threshold_not_just_positive(session):
+    # A +0.5% drift (below the 1% threshold) is NOT a win -- only real moves count.
+    candles = [_candle(i, 100.0) for i in range(30)]
+    candles[10].close = 100.5  # +0.5% at the 5-bar horizon from index 5
+    candles[15].close = 102.0  # +2.0% at the 10-bar horizon
+    event = _event(SPRING, 5, candles[5].bucket_start, candles[5].close)
+
+    signal_outcomes.record_outcomes(session, "FPT", Timeframe.DAILY, STRATEGY, candles, [event], BULLISH_EVENTS)
+
+    row = session.exec(_select_outcome()).first()
+    assert row.is_win_5 is False  # +0.5% < 1% threshold
+    assert row.is_win_10 is True  # +2.0% clears it
+
+
+def test_record_outcomes_stores_alignment_from_phase_trend(session):
+    candles = [_candle(i, 100.0 + i) for i in range(30)]
+    aligned_event = _event(SPRING, 5, candles[5].bucket_start, candles[5].close)  # bullish
+    counter_event = _event(SOW, 8, candles[8].bucket_start, candles[8].close)  # bearish
+
+    # Engine classified a bullish trend: the bullish Spring is aligned, the
+    # bearish SOW is counter-trend.
+    signal_outcomes.record_outcomes(
+        session, "FPT", Timeframe.DAILY, STRATEGY, candles,
+        [aligned_event, counter_event], BULLISH_EVENTS, phase_trend="bullish",
+    )
+
+    rows = {r.event_type: r for r in session.exec(_select_outcome()).all()}
+    assert rows[SPRING].aligned is True
+    assert rows[SOW].aligned is False
+
+
+def test_get_stats_aligned_only_excludes_counter_trend(session):
+    candles = [_candle(i, 100.0 + i) for i in range(30)]
+    signal_outcomes.record_outcomes(
+        session, "FPT", Timeframe.DAILY, STRATEGY, candles,
+        [_event(SPRING, 3, candles[3].bucket_start, candles[3].close)], BULLISH_EVENTS,
+        phase_trend="bullish",  # aligned
+    )
+    signal_outcomes.record_outcomes(
+        session, "VCB", Timeframe.DAILY, STRATEGY, candles,
+        [_event(SPRING, 3, candles[3].bucket_start, candles[3].close)], BULLISH_EVENTS,
+        phase_trend="bearish",  # counter-trend
+    )
+
+    all_count = sum(s["count"] for s in signal_outcomes.get_stats(session))
+    aligned_count = sum(s["count"] for s in signal_outcomes.get_stats(session, aligned_only=True))
+    assert all_count == 2
+    assert aligned_count == 1
+
+
+def test_get_stats_win_rate_recomputed_from_returns_with_threshold(session):
+    # Two Spring outcomes: one +0.5% (below threshold), one +2%. Win rate must
+    # be 1/2 = 0.5, derived from the returns, regardless of stored is_win flags.
+    candles = [_candle(i, 100.0) for i in range(30)]
+    candles[13].close = 100.5  # index-3 Spring, 10-bar return +0.5%
+    candles[20].close = 102.0  # index-10 Spring, 10-bar return +2.0%
+    events = [
+        _event(SPRING, 3, candles[3].bucket_start, candles[3].close),
+        _event(SPRING, 10, candles[10].bucket_start, candles[10].close),
+    ]
+    signal_outcomes.record_outcomes(session, "FPT", Timeframe.DAILY, STRATEGY, candles, events, BULLISH_EVENTS)
+
+    spring_stats = next(s for s in signal_outcomes.get_stats(session) if s["type"] == SPRING)
+    assert spring_stats["win_rate_10"] == 0.5
+
+
 def _select_outcome():
     from sqlmodel import select
 

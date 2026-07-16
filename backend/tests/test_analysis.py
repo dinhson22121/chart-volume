@@ -173,7 +173,9 @@ def test_switching_strategy_creates_a_separate_analysis_row(session, mocker):
     assert wyckoff_result.strategy == "wyckoff"
     assert wyckoff_result.phase == "Accumulation"
 
-    fake_strategy = types.SimpleNamespace(analyze=_fake_analyze, BULLISH_EVENTS=set())
+    fake_strategy = types.SimpleNamespace(
+        analyze=_fake_analyze, BULLISH_EVENTS=set(), phase_trend=lambda _phase: "neutral"
+    )
     mocker.patch.dict(strategy_registry.REGISTRY, {"fake-strategy": fake_strategy})
     settings_service.update(session, {"strategy": "fake-strategy"})
 

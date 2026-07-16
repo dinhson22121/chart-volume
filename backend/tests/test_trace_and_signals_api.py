@@ -95,3 +95,10 @@ def test_signal_stats_filters_by_ticker(client, auth_header, mocker):
 
     assert client.get("/signals/stats?ticker=FPT", headers=auth_header).json()
     assert client.get("/signals/stats?ticker=ZZZ", headers=auth_header).json() == []
+
+
+def test_signal_stats_aligned_only_param_is_accepted(client, auth_header, mocker):
+    _refresh_fpt(client, auth_header, mocker)
+
+    resp = client.get("/signals/stats?aligned_only=true", headers=auth_header)
+    assert resp.status_code == 200

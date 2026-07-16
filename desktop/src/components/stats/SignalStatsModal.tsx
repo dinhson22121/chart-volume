@@ -21,13 +21,16 @@ export function SignalStatsModal({ onClose }: Props) {
   const { t, language } = useI18n();
   const [stats, setStats] = useState<SignalStat[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [alignedOnly, setAlignedOnly] = useState(false);
 
   useEffect(() => {
-    api.getSignalStats().then(setStats).catch((e: unknown) => {
+    setStats(null);
+    setError(null);
+    api.getSignalStats(undefined, undefined, alignedOnly).then(setStats).catch((e: unknown) => {
       setError(e instanceof Error ? e.message : t("stats.error"));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [alignedOnly]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -50,6 +53,18 @@ export function SignalStatsModal({ onClose }: Props) {
         <div className="settings-modal__body">
           <p className="faint stats-hint">{t("stats.hint")}</p>
 
+          <label
+            className="settings-field--row"
+            style={{ display: "flex", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}
+          >
+            <input
+              type="checkbox"
+              checked={alignedOnly}
+              onChange={(e) => setAlignedOnly(e.target.checked)}
+            />
+            <span className="faint">{t("stats.alignedOnly")}</span>
+          </label>
+
           {error && <p className="settings-error">{error}</p>}
           {!stats && !error && <p className="faint">{t("common.loading")}</p>}
           {stats && stats.length === 0 && (
@@ -66,7 +81,7 @@ export function SignalStatsModal({ onClose }: Props) {
                     <th>{t("stats.table.win5")}</th>
                     <th>{t("stats.table.win10")}</th>
                     <th>{t("stats.table.win20")}</th>
-                    <th>{t("stats.table.avgReturn10")}</th>
+                    <th title={t("stats.expectancyHint")}>{t("stats.table.expectancy10")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -80,7 +95,20 @@ export function SignalStatsModal({ onClose }: Props) {
                       <td className="mono">{pct(s.win_rate_5)}</td>
                       <td className="mono">{pct(s.win_rate_10)}</td>
                       <td className="mono">{pct(s.win_rate_20)}</td>
-                      <td className="mono">{ret(s.avg_return_10)}</td>
+                      <td
+                        className="mono"
+                        style={{
+                          fontWeight: 700,
+                          color:
+                            s.avg_return_10 === null
+                              ? undefined
+                              : s.avg_return_10 >= 0
+                                ? "var(--bull)"
+                                : "var(--bear)",
+                        }}
+                      >
+                        {ret(s.avg_return_10)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

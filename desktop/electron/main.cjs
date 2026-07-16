@@ -207,8 +207,19 @@ function shutdownBackend() {
 }
 
 app.whenReady().then(() => {
-  if (process.platform === "darwin" && app.dock) {
-    app.dock.setIcon(ICON_PATH); // dev-mode dock icon; packaged builds use build.mac.icon instead
+  // Dev-only: build/icon.png isn't bundled into the packaged app (it's an
+  // electron-builder input, not a runtime resource), so ICON_PATH resolves
+  // to a nonexistent path inside app.asar in production. Setting the icon
+  // there previously threw synchronously, which -- because this whole
+  // block runs inside a .then() with no .catch() -- silently aborted every
+  // statement after it (license check, createWindow, the license-recheck
+  // interval), so the packaged app never opened a window at all.
+  if (!app.isPackaged && process.platform === "darwin" && app.dock) {
+    try {
+      app.dock.setIcon(ICON_PATH);
+    } catch (err) {
+      console.error("failed to set dev dock icon:", err);
+    }
   }
 
   // Gate: only auto-start the backend if a still-valid license is already on

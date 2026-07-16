@@ -5,5 +5,5 @@
 // Generate with: node tools/license/keygen.js <private-key-output-path>
 // then paste the printed base64 value below.
 module.exports = {
-  PUBLIC_KEY_B64: "MCowBQYDK2VwAyEAJmuvTGwvDnYzHipj9VnxxBGzHwp83e11bK3uUq2hWGM=",
+  PUBLIC_KEY_B64: "MCowBQYDK2VwAyEAbuIWfQcARihHOP3nIVwJYhdS3873OJIdltSxOWeY5II=",
 };

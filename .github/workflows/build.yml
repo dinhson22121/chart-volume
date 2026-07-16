@@ -87,6 +87,21 @@ jobs:
         working-directory: desktop
         run: npm ci
 
+      # Deliberately embeds the MASTER_KEY bypass into tagged public
+      # releases (see electron/license/verify.cjs's NOTE) -- reads from the
+      # MASTER_KEY repo secret rather than committing it, since this file is
+      # normally gitignored dev-only. Written via node + JSON.stringify
+      # (not a shell heredoc) so the secret value is safely escaped
+      # regardless of quotes/special characters, and so the same command
+      # works unmodified on the Windows runner.
+      - name: Embed master key
+        working-directory: desktop
+        shell: bash
+        env:
+          MASTER_KEY: ${{ secrets.MASTER_KEY }}
+        run: |
+          node -e "require('fs').writeFileSync('electron/license/masterKey.local.cjs', 'module.exports = ' + JSON.stringify({ MASTER_KEY: process.env.MASTER_KEY }) + ';\n')"
+
       - name: Build renderer
         working-directory: desktop
         run: npm run build

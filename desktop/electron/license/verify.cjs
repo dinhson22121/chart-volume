@@ -11,12 +11,16 @@
 // public forever the moment it's pushed. Instead it's read from
 // masterKey.local.cjs, a gitignored sibling file (see
 // masterKey.local.cjs.example for the format) that only needs to exist on
-// the developer's own machine for `npm run dev`. It is also excluded from
-// electron-builder's packaged output (see package.json's `build.files`
-// negation entry), so it never ships even if present on the machine that
-// runs a production build. No local file -> MASTER_KEY is null -> the
-// bypass is simply disabled, which is the default for anyone else who
-// clones this repo.
+// the developer's own machine for `npm run dev`. No local file -> MASTER_KEY
+// is null -> the bypass is simply disabled, which is the default for anyone
+// else who clones this repo.
+//
+// NOTE: as of the "v*" tag release workflow, CI regenerates this file from
+// the MASTER_KEY GitHub Actions secret before packaging (see build.yml), so
+// tagged public releases DO ship with the bypass active -- a deliberate
+// choice, not an oversight. If that's ever reverted, restore the
+// "!electron/license/masterKey.local.cjs" negation entry in package.json's
+// `build.files` too.
 const crypto = require("crypto");
 const { PUBLIC_KEY_B64 } = require("./publicKey.cjs");
 

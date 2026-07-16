@@ -52,6 +52,9 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "chart.hint": "Click vào nến để xem lý do",
     "chart.support": "Hỗ trợ",
     "chart.resistance": "Kháng cự",
+    "chart.scenarioEntry": "Vào lệnh",
+    "chart.scenarioSl": "Cắt lỗ",
+    "chart.scenarioTp": "Chốt lời",
 
     // --- Analysis panel ---
     "analysis.loading": "Đang phân tích…",
@@ -60,6 +63,11 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "analysis.confidence": "Độ tin cậy {pct}%",
     "analysis.mtf.aligned": "Khớp xu hướng ngày",
     "analysis.mtf.conflicting": "Ngược xu hướng ngày",
+    "analysis.section.scenario": "Kịch bản giao dịch",
+    "analysis.scenario.entry": "Vào lệnh",
+    "analysis.scenario.sl": "Cắt lỗ",
+    "analysis.scenario.tp": "Chốt lời",
+    "analysis.scenario.duration": "Tối đa {bars} nến để đạt mục tiêu",
     "analysis.section.signals": "Tín hiệu Wyckoff",
     "analysis.section.narrative": "Nhận định",
     "analysis.section.advice": "Lời khuyên",
@@ -427,6 +435,9 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "chart.hint": "Click a candle to see why",
     "chart.support": "Support",
     "chart.resistance": "Resistance",
+    "chart.scenarioEntry": "Entry",
+    "chart.scenarioSl": "Stop-Loss",
+    "chart.scenarioTp": "Take-Profit",
 
     // --- Analysis panel ---
     "analysis.loading": "Analyzing…",
@@ -435,6 +446,11 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "analysis.confidence": "Confidence {pct}%",
     "analysis.mtf.aligned": "Aligned with daily trend",
     "analysis.mtf.conflicting": "Conflicts with daily trend",
+    "analysis.section.scenario": "Trade Scenario",
+    "analysis.scenario.entry": "Entry",
+    "analysis.scenario.sl": "Stop-Loss",
+    "analysis.scenario.tp": "Take-Profit",
+    "analysis.scenario.duration": "Up to {bars} candles to reach target",
     "analysis.section.signals": "Wyckoff signals",
     "analysis.section.narrative": "Assessment",
     "analysis.section.advice": "Advice",

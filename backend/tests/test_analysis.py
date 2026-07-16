@@ -51,7 +51,10 @@ def test_run_analysis_caches_and_skips_llm(session, mocker):
     analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY)
     analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY)  # same as_of -> cached
 
-    assert spy.call_count == 1
+    # 2 calls from the first run only: 1 narrative + 1 trade_scenario
+    # explanation for the new Spring event -- the second (cached) run makes
+    # neither call again (narrative cache hit, scenario already exists).
+    assert spy.call_count == 2
     assert len(session.exec(select(Analysis)).all()) == 1
 
 
@@ -62,7 +65,10 @@ def test_force_reruns_llm(session, mocker):
     analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY)
     analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY, force=True)
 
-    assert spy.call_count == 2
+    # First run: narrative (1) + scenario explanation for the new event (1).
+    # Forced second run: narrative regenerates (+1); the scenario for the
+    # same event already exists, so no second explanation call.
+    assert spy.call_count == 3
 
 
 def test_use_ai_false_stores_without_narrative(session, mocker):
@@ -194,7 +200,7 @@ def test_switching_strategy_creates_a_separate_analysis_row(session, mocker):
     assert wyckoff_result.phase == "Accumulation"
 
     fake_strategy = types.SimpleNamespace(
-        analyze=_fake_analyze, BULLISH_EVENTS=set(), phase_trend=lambda _phase: "neutral"
+        analyze=_fake_analyze, BULLISH_EVENTS=set(), BEARISH_EVENTS=set(), phase_trend=lambda _phase: "neutral"
     )
     mocker.patch.dict(strategy_registry.REGISTRY, {"fake-strategy": fake_strategy})
     settings_service.update(session, {"strategy": "fake-strategy"})

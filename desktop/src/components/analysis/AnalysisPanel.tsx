@@ -69,6 +69,38 @@ export function AnalysisPanel({ analysis, loading, error }: Props) {
           </div>
         </div>
 
+        {analysis.scenario && (
+          <section className="ap-scenario">
+            <h4 className="ap-section__title">{t("analysis.section.scenario")}</h4>
+            <div className="ap-scenario__grid">
+              <div className="ap-scenario__item">
+                <span className="ap-level__label faint">{t("analysis.scenario.entry")}</span>
+                <span className="ap-level__value mono">{formatPrice(analysis.scenario.entry)}</span>
+              </div>
+              <div className="ap-scenario__item">
+                <span className="ap-level__label faint">{t("analysis.scenario.sl")}</span>
+                <span className="ap-level__value mono" style={{ color: "var(--bear)" }}>
+                  {formatPrice(analysis.scenario.stop_loss)}
+                </span>
+              </div>
+              <div className="ap-scenario__item">
+                <span className="ap-level__label faint">{t("analysis.scenario.tp")}</span>
+                <span className="ap-level__value mono" style={{ color: "var(--bull)" }}>
+                  {formatPrice(analysis.scenario.take_profit)}
+                </span>
+              </div>
+            </div>
+            {analysis.scenario.status === "active" ? (
+              <p className="faint">{t("analysis.scenario.duration", { bars: analysis.scenario.max_bars })}</p>
+            ) : (
+              <p className="ap-scenario__closed faint">{analysis.scenario.close_reason}</p>
+            )}
+            {analysis.scenario.explanation && (
+              <div className="ap-scenario__explanation">{analysis.scenario.explanation}</div>
+            )}
+          </section>
+        )}
+
         {analysis.signals.length > 0 && (
           <section className="ap-section">
             <h4 className="ap-section__title">{t("analysis.section.signals")}</h4>

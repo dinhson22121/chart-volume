@@ -42,6 +42,18 @@ export interface Levels {
   resistance: number;
 }
 
+export interface TradeScenario {
+  event_type: string;
+  is_bullish: boolean;
+  entry: number;
+  stop_loss: number;
+  take_profit: number;
+  max_bars: number;
+  status: "active" | "hit_tp" | "hit_sl" | "expired";
+  explanation: string | null;
+  close_reason: string | null;
+}
+
 export interface Analysis {
   ticker: string;
   timeframe: Timeframe;
@@ -57,6 +69,7 @@ export interface Analysis {
   daily_trend: "bullish" | "bearish" | "neutral" | null;
   mtf_alignment: "aligned" | "conflicting" | null;
   created_at: string;
+  scenario: TradeScenario | null;
 }
 
 export interface TraceCheck {

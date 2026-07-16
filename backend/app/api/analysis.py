@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 from app.auth import require_token
 from app.db import get_session
 from app.models import AssetClass, Analysis, Symbol, Timeframe
-from app.services import ingest, settings_service, signal_outcomes, sonicr_indicators, trace_service
+from app.services import ingest, settings_service, signal_outcomes, sonicr_indicators, trace_service, trade_scenario
 from app.strategies import registry as strategy_registry
 from app.services.analysis import run_analysis
 
@@ -39,7 +39,24 @@ def _is_stablecoin(symbol: Symbol) -> bool:
     return (symbol.display_symbol or symbol.ticker).upper() in _STABLECOIN_SYMBOLS
 
 
-def _analysis_out(a: Analysis) -> dict:
+def _scenario_out(s) -> dict | None:
+    if s is None:
+        return None
+    return {
+        "event_type": s.event_type,
+        "is_bullish": s.is_bullish,
+        "entry": s.entry,
+        "stop_loss": s.stop_loss,
+        "take_profit": s.take_profit,
+        "max_bars": s.max_bars,
+        "status": s.status,
+        "explanation": s.explanation,
+        "close_reason": s.close_reason,
+    }
+
+
+def _analysis_out(a: Analysis, session: Session) -> dict:
+    scenario = trade_scenario.get_scenario(session, a.ticker, a.timeframe, a.strategy)
     return {
         "ticker": a.ticker,
         "timeframe": a.timeframe,
@@ -55,6 +72,7 @@ def _analysis_out(a: Analysis) -> dict:
         "daily_trend": a.daily_trend,
         "mtf_alignment": a.mtf_alignment,
         "created_at": a.created_at,
+        "scenario": _scenario_out(scenario),
     }
 
 
@@ -205,7 +223,7 @@ def get_analysis(
     ).first()
     if not row:
         raise HTTPException(status_code=404, detail="no analysis yet; call refresh first")
-    return _analysis_out(row)
+    return _analysis_out(row, session)
 
 
 @router.post("/{ticker}/refresh")
@@ -256,7 +274,7 @@ def refresh_analysis(
         else:
             detail = "could not fetch candles for analysis"
         raise HTTPException(status_code=502, detail=detail)
-    return _analysis_out(analysis)
+    return _analysis_out(analysis, session)
 
 
 @router.get("/{ticker}/indicators")

@@ -16,7 +16,7 @@ from sqlmodel import Session, select
 
 from app.ai import narrative as narrative_mod
 from app.models import Analysis, Candle, Timeframe
-from app.services import settings_service, signal_outcomes
+from app.services import settings_service, signal_outcomes, trade_scenario
 from app.strategies import registry as strategy_registry
 from app.wyckoff import AnalysisResult
 
@@ -93,6 +93,7 @@ def run_analysis(
         else None
     )
     language = settings_service.get_language(session)
+    provider_cfg = settings_service.get_narrative_config(session)
     result = strategy_module.analyze(candles, strategy_cfg, daily_trend, language)
     as_of = result.as_of
 
@@ -102,6 +103,11 @@ def run_analysis(
     signal_outcomes.record_outcomes(
         session, ticker, timeframe, strategy, candles, result.events, strategy_module.BULLISH_EVENTS,
         phase_trend=strategy_module.phase_trend(result.phase),
+    )
+    trade_scenario.sync_scenarios(
+        session, ticker, timeframe, strategy, candles, result.events,
+        strategy_module.BULLISH_EVENTS, strategy_module.BEARISH_EVENTS, result.levels,
+        provider_cfg, use_ai=use_ai,
     )
 
     existing = session.exec(
@@ -118,7 +124,6 @@ def run_analysis(
     narrative_text: str | None = None
     advice_text: str | None = None
     sub_agents_json: str | None = None
-    provider_cfg = settings_service.get_narrative_config(session)
     wants_ai = use_ai and result.phase not in _NO_AI_PHASES
     if wants_ai and narrative_mod.is_available(provider_cfg):
         try:

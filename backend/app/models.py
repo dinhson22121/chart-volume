@@ -174,6 +174,43 @@ class SignalOutcome(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=_utcnow)
 
 
+class TradeScenario(SQLModel, table=True):
+    """Entry/SL/TP plan spawned from one bullish/bearish event, tracked until
+    it hits TP, hits SL, or expires after ``max_bars`` candles with neither.
+
+    Mirrors SignalOutcome's shape (same identity tuple, populated once at
+    detection then updated as later analysis runs bring in new candles) --
+    see app.services.trade_scenario for the create/update logic.
+    """
+
+    __table_args__ = (
+        UniqueConstraint(
+            "ticker", "timeframe", "strategy", "event_type", "event_ts", name="uq_trade_scenario"
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    ticker: str
+    timeframe: str
+    strategy: str
+    event_type: str
+    event_ts: datetime
+    is_bullish: bool
+    entry: float
+    stop_loss: float
+    take_profit: float
+    max_bars: int
+    status: str = Field(default="active")  # active | hit_tp | hit_sl | expired
+    # Plain-language rationale, set once at creation -- AI-written when a
+    # narrative provider is configured, else a deterministic template built
+    # from the scenario's own numbers (see app.services.trade_scenario).
+    explanation: Optional[str] = None
+    closed_at: Optional[datetime] = None
+    closed_bar_ts: Optional[datetime] = None
+    close_reason: Optional[str] = None
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
 class PotentialScreenResult(SQLModel, table=True):
     """Latest AI-only growth-potential verdict per ticker -- deliberately
     bypasses every quantitative strategy (Wyckoff/SMC/SonicR): the AI reads

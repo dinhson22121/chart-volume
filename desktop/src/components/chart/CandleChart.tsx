@@ -32,6 +32,7 @@ const COLORS = {
   dragon: "#9575cd",
   t3Fast: "#4fc3f7",
   t3Slow: "#ffb74d",
+  entry: "#4fc3f7",
 };
 
 function toTime(iso: string): UTCTimestamp {
@@ -246,6 +247,37 @@ export function CandleChart({ candles, analysis, onBarClick }: Props) {
           lineWidth: 1,
           axisLabelVisible: true,
           title: t("chart.resistance"),
+        }),
+      );
+    }
+
+    // Entry / SL / TP lines for the active (or last) trade scenario.
+    if (analysis?.scenario) {
+      const { entry, stop_loss, take_profit } = analysis.scenario;
+      priceLinesRef.current.push(
+        candleSeries.createPriceLine({
+          price: entry,
+          color: COLORS.entry,
+          lineStyle: LineStyle.Solid,
+          lineWidth: 2,
+          axisLabelVisible: true,
+          title: t("chart.scenarioEntry"),
+        }),
+        candleSeries.createPriceLine({
+          price: stop_loss,
+          color: COLORS.bear,
+          lineStyle: LineStyle.Solid,
+          lineWidth: 2,
+          axisLabelVisible: true,
+          title: t("chart.scenarioSl"),
+        }),
+        candleSeries.createPriceLine({
+          price: take_profit,
+          color: COLORS.bull,
+          lineStyle: LineStyle.Solid,
+          lineWidth: 2,
+          axisLabelVisible: true,
+          title: t("chart.scenarioTp"),
         }),
       );
     }

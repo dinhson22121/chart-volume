@@ -24,7 +24,11 @@ const CRYPTO_TIMEFRAME_KEYS: { key: Timeframe; labelKey: string }[] = [
   { key: "daily", labelKey: "app.timeframe.dailyCrypto" },
 ];
 
-export default function App() {
+interface Props {
+  onLicenseCleared: () => void;
+}
+
+export default function App({ onLicenseCleared }: Props) {
   const { t } = useI18n();
   const [symbols, setSymbols] = useState<SymbolItem[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -345,7 +349,9 @@ export default function App() {
         </aside>
       </div>
 
-      {settingsOpen && <SettingsModal strategy={strategy} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <SettingsModal strategy={strategy} onClose={() => setSettingsOpen(false)} onLicenseCleared={onLicenseCleared} />
+      )}
       {statsOpen && <SignalStatsModal onClose={() => setStatsOpen(false)} />}
       {dashboardOpen && (
         <DashboardModal onClose={() => setDashboardOpen(false)} onSelect={setSelected} />

@@ -45,6 +45,12 @@ export function ActivationScreen({ onActivated }: Props) {
         />
         {error && <p className="settings-error">{error}</p>}
         <div className="license-card__actions">
+          {activating && (
+            <span className="license-card__status">
+              <span className="spinner" />
+              {t("license.activatingHint")}
+            </span>
+          )}
           <button className="btn btn--primary" onClick={() => void submit()} disabled={activating || !token.trim()}>
             {activating ? t("license.activating") : t("license.button")}
           </button>

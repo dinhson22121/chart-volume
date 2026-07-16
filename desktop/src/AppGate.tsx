@@ -20,5 +20,5 @@ export default function AppGate() {
 
   if (status === "checking") return null;
   if (status === "inactive") return <ActivationScreen onActivated={() => setStatus("active")} />;
-  return <App />;
+  return <App onLicenseCleared={() => setStatus("inactive")} />;
 }

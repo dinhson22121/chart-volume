@@ -8,7 +8,7 @@ const http = require("http");
 const os = require("os");
 const path = require("path");
 const { verifyToken } = require("./license/verify.cjs");
-const { loadLicense, saveLicense } = require("./license/store.cjs");
+const { loadLicense, saveLicense, clearLicense } = require("./license/store.cjs");
 
 // How often to re-check the stored license against its own TTL while the app
 // stays open across the expiry boundary. Deliberately does NOT kill an
@@ -190,6 +190,13 @@ ipcMain.handle("license:activate", async (_event, token) => {
   saveLicense(app.getPath("userData"), token);
   await startBackendAndWaitReady();
   return result;
+});
+
+// Shuts down the running backend first -- otherwise a subsequent
+// license:activate would spawn a second backend process on the same port.
+ipcMain.handle("license:clear", () => {
+  shutdownBackend();
+  clearLicense(app.getPath("userData"));
 });
 
 function shutdownBackend() {

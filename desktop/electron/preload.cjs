@@ -12,5 +12,6 @@ contextBridge.exposeInMainWorld("chartVolume", {
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
   getLicenseStatus: () => ipcRenderer.invoke("license:get-status"),
   activateLicense: (token) => ipcRenderer.invoke("license:activate", token),
+  clearLicense: () => ipcRenderer.invoke("license:clear"),
   onLicenseExpired: (cb) => ipcRenderer.on("license:expired", cb),
 });

@@ -3,6 +3,7 @@ import { api } from "../../api/client";
 import type { NarrativeProvider, OllamaStatus, Settings, SettingsUpdate } from "../../types";
 import { useI18n } from "../../i18n/I18nContext";
 import type { Language } from "../../i18n/translations";
+import { LicenseSection } from "../license/LicenseSection";
 import "./settings.css";
 
 interface Props {
@@ -13,6 +14,7 @@ interface Props {
   // so the right per-strategy threshold section shows without needing to
   // close and reopen Settings.
   strategy: string;
+  onLicenseCleared: () => void;
 }
 
 const OLLAMA_SUGGESTIONS = ["qwen2.5:7b", "qwen2.5:3b", "llama3.1:8b", "deepseek-r1:7b", "mistral:7b"];
@@ -200,7 +202,7 @@ function toUpdate(f: FormState): SettingsUpdate {
   return update;
 }
 
-export function SettingsModal({ onClose, strategy }: Props) {
+export function SettingsModal({ onClose, strategy, onLicenseCleared }: Props) {
   const { t, language, setLanguage } = useI18n();
   const [loaded, setLoaded] = useState<Settings | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
@@ -392,6 +394,8 @@ export function SettingsModal({ onClose, strategy }: Props) {
           <div className="settings-modal__body faint">{t("common.loading")}</div>
         ) : (
           <div className="settings-modal__body">
+            <LicenseSection onCleared={onLicenseCleared} />
+
             <section className="settings-section">
               <h3>{t("settings.language.title")}</h3>
               <div className="tf-toggle settings-provider-toggle">

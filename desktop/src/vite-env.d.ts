@@ -15,6 +15,7 @@ interface Window {
     openExternal: (url: string) => Promise<void>;
     getLicenseStatus: () => Promise<LicenseStatus>;
     activateLicense: (token: string) => Promise<LicenseStatus>;
+    clearLicense: () => Promise<void>;
     onLicenseExpired: (cb: () => void) => void;
   };
 }

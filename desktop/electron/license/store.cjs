@@ -24,4 +24,12 @@ function saveLicense(userDataDir, token) {
   fs.writeFileSync(file, JSON.stringify({ token }), { mode: 0o600 });
 }
 
-module.exports = { loadLicense, saveLicense };
+function clearLicense(userDataDir) {
+  try {
+    fs.unlinkSync(licensePath(userDataDir));
+  } catch {
+    // already gone -- nothing to clear.
+  }
+}
+
+module.exports = { loadLicense, saveLicense, clearLicense };

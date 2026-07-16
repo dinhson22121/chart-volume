@@ -62,6 +62,13 @@
   gap: var(--space-5);
 }
 
+.settings-section {
+  border: 1.5px dashed var(--border-strong);
+  border-radius: 8px;
+  padding: var(--space-4);
+  background: rgba(255, 255, 255, 0.015);
+}
+
 .settings-section h3 {
   font-size: var(--text-xs);
   font-weight: 700;
@@ -69,6 +76,7 @@
   letter-spacing: 0.12em;
   color: var(--accent);
   margin-bottom: var(--space-3);
+  margin-top: 0;
 }
 
 .settings-field {

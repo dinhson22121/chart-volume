@@ -51,6 +51,8 @@ interface FormState {
   anthropicApiKey: string;
   anthropicModel: string;
   ollamaModel: string;
+  antigravityModel: string;
+  geminiApiKey: string;
   dailyLookbackDays: string;
   halfSessionLookbackDays: string;
   schedulerEnabled: boolean;
@@ -94,6 +96,8 @@ function toForm(s: Settings): FormState {
     anthropicApiKey: "",
     anthropicModel: s.anthropic_model,
     ollamaModel: s.ollama_model,
+    antigravityModel: s.antigravity_model,
+    geminiApiKey: "",
     dailyLookbackDays: String(s.daily_lookback_days),
     halfSessionLookbackDays: String(s.half_session_lookback_days),
     schedulerEnabled: s.scheduler_enabled,
@@ -137,6 +141,7 @@ function toUpdate(f: FormState): SettingsUpdate {
     narrative_provider: f.narrativeProvider,
     anthropic_model: f.anthropicModel,
     ollama_model: f.ollamaModel,
+    antigravity_model: f.antigravityModel,
     daily_lookback_days: Number(f.dailyLookbackDays),
     half_session_lookback_days: Number(f.halfSessionLookbackDays),
     scheduler_enabled: f.schedulerEnabled,
@@ -174,6 +179,9 @@ function toUpdate(f: FormState): SettingsUpdate {
   };
   if (f.anthropicApiKey.trim()) {
     update.anthropic_api_key = f.anthropicApiKey.trim();
+  }
+  if (f.geminiApiKey.trim()) {
+    update.gemini_api_key = f.geminiApiKey.trim();
   }
   return update;
 }
@@ -328,6 +336,20 @@ export function SettingsModal({ onClose, strategy }: Props) {
     }
   };
 
+  const handleClearGeminiKey = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await api.updateSettings({ gemini_api_key: "" });
+      setLoaded(updated);
+      setForm((prev) => (prev ? { ...toForm(updated), ...prev, geminiApiKey: "" } : prev));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t("settings.error.clearKeyFailed"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="settings-overlay" onClick={onClose}>
       <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
@@ -370,6 +392,12 @@ export function SettingsModal({ onClose, strategy }: Props) {
                   {t("settings.ai.claude")}
                 </button>
                 <button
+                  className={form.narrativeProvider === "antigravity" ? "is-active" : ""}
+                  onClick={() => set("narrativeProvider", "antigravity")}
+                >
+                  {t("settings.ai.antigravity")}
+                </button>
+                <button
                   className={form.narrativeProvider === "ollama" ? "is-active" : ""}
                   onClick={() => set("narrativeProvider", "ollama")}
                   disabled={!hasEnoughRamForLocalAI}
@@ -388,7 +416,7 @@ export function SettingsModal({ onClose, strategy }: Props) {
                 </p>
               )}
 
-              {form.narrativeProvider === "anthropic" ? (
+              {form.narrativeProvider === "anthropic" && (
                 <>
                   <label className="settings-field">
                     <span>
@@ -423,7 +451,44 @@ export function SettingsModal({ onClose, strategy }: Props) {
                     </select>
                   </label>
                 </>
-              ) : (
+              )}
+
+              {form.narrativeProvider === "antigravity" && (
+                <>
+                  <label className="settings-field">
+                    <span>
+                      {t("settings.ai.geminiApiKeyLabel")}{" "}
+                      {loaded?.has_gemini_key && (
+                        <em className="settings-badge">{t("settings.ai.apiKeySaved")}</em>
+                      )}
+                    </span>
+                    <div className="settings-field__row">
+                      <input
+                        type="password"
+                        placeholder={loaded?.has_gemini_key ? t("settings.ai.geminiApiKeyPlaceholderChange") : "AIzaSy..."}
+                        value={form.geminiApiKey}
+                        onChange={(e) => set("geminiApiKey", e.target.value)}
+                      />
+                      {loaded?.has_gemini_key && (
+                        <button className="btn" onClick={() => void handleClearGeminiKey()} disabled={saving}>
+                          {t("settings.ai.apiKeyClear")}
+                        </button>
+                      )}
+                    </div>
+                    <span className="settings-hint faint">{t("settings.ai.geminiApiKeyHint")}</span>
+                  </label>
+                  <label className="settings-field">
+                    <span>{t("settings.ai.antigravityModelLabel")}</span>
+                    <select value={form.antigravityModel} onChange={(e) => set("antigravityModel", e.target.value)}>
+                      <option value="gemini-3.5-flash">Gemini 3.5 Flash (Tối ưu/Nhanh)</option>
+                      <option value="gemini-3.5-pro">Gemini 3.5 Pro (Thông minh/Sâu sắc)</option>
+                      <option value="gemini-3.1-pro">Gemini 3.1 Pro (Bản Pro ổn định)</option>
+                    </select>
+                  </label>
+                </>
+              )}
+
+              {form.narrativeProvider === "ollama" && (
                 <div className="settings-ollama">
                   {!hasEnoughRamForLocalAI && (
                     <p className="settings-hint settings-hint--warn">

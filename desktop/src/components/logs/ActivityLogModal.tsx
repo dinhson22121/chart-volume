@@ -42,6 +42,93 @@ const STATUS_COLOR: Record<SystemActionLogEntry["status"], string> = {
   cancelled: "var(--text-faint)",
 };
 
+const FIELD_LABELS: Record<string, Record<string, string>> = {
+  vi: {
+    language: "Ngôn ngữ",
+    strategy: "Chiến lược",
+    narrative_provider: "Nhà cung cấp AI",
+    anthropic_api_key: "Claude API Key",
+    anthropic_model: "Claude Model",
+    ollama_model: "Ollama Model",
+    antigravity_model: "Antigravity Model",
+    gemini_api_key: "Gemini API Key",
+    daily_lookback_days: "Số ngày lịch sử (ngày)",
+    half_session_lookback_days: "Số ngày lịch sử (nửa phiên)",
+    scheduler_enabled: "Tự động phân tích",
+    half_morning_time: "Giờ chạy sáng",
+    half_afternoon_time: "Giờ chạy chiều",
+    daily_time: "Giờ chạy ngày",
+    climax_vol_mult: "Hệ số Climax Volume",
+    wide_spread_mult: "Hệ số Wide Spread",
+    narrow_spread_mult: "Hệ số Narrow Spread",
+    low_vol_mult: "Hệ số Low Volume",
+    sos_vol_mult: "Hệ số SOS Volume",
+    lps_lookback_bars: "Số nến xác nhận LPS",
+    sonicr_dragon_period: "Sonic R Dragon Period",
+    sonicr_t3_fast_period: "Sonic R T3 Fast Period",
+    sonicr_t3_slow_period: "Sonic R T3 Slow Period",
+    sonicr_t3_vfactor: "Sonic R T3 VFactor",
+    sonicr_cci_fast_period: "Sonic R CCI Fast Period",
+    sonicr_cci_slow_period: "Sonic R CCI Slow Period",
+    sonicr_pullback_lookback_bars: "Sonic R Pullback Lookback",
+    smc_swing_lookback: "SMC Swing Lookback",
+    smc_ob_lookback_bars: "SMC OB Lookback",
+    smc_fvg_min_gap_mult: "SMC FVG Min Gap",
+    screener_enabled: "Crypto Screener",
+    screener_mcap_max: "Screener Max Cap",
+    screener_require_volume_rising: "Screener Require Vol Rising",
+    screener_min_volume_change_pct: "Screener Min Vol Change %",
+    screener_scan_interval: "Screener Interval",
+    crypto_exchanges: "Sàn giao dịch crypto",
+    crypto_analysis_enabled: "Phân tích crypto",
+    crypto_analysis_interval: "Phân tích crypto Interval",
+    top100_auto_refresh_enabled: "Cập nhật Top 100",
+    top100_refresh_time: "Giờ cập nhật Top 100",
+  },
+  en: {
+    language: "Language",
+    strategy: "Strategy",
+    narrative_provider: "AI Provider",
+    anthropic_api_key: "Claude API Key",
+    anthropic_model: "Claude Model",
+    ollama_model: "Ollama Model",
+    antigravity_model: "Antigravity Model",
+    gemini_api_key: "Gemini API Key",
+    daily_lookback_days: "Lookback Days (Daily)",
+    half_session_lookback_days: "Lookback Days (Half Session)",
+    scheduler_enabled: "Auto Analysis",
+    half_morning_time: "Morning Run Time",
+    half_afternoon_time: "Afternoon Run Time",
+    daily_time: "Daily Run Time",
+    climax_vol_mult: "Climax Volume Multiplier",
+    wide_spread_mult: "Wide Spread Multiplier",
+    narrow_spread_mult: "Narrow Spread Multiplier",
+    low_vol_mult: "Low Volume Multiplier",
+    sos_vol_mult: "SOS Volume Multiplier",
+    lps_lookback_bars: "LPS Lookback Bars",
+    sonicr_dragon_period: "Sonic R Dragon Period",
+    sonicr_t3_fast_period: "Sonic R T3 Fast Period",
+    sonicr_t3_slow_period: "Sonic R T3 Slow Period",
+    sonicr_t3_vfactor: "Sonic R T3 VFactor",
+    sonicr_cci_fast_period: "Sonic R CCI Fast Period",
+    sonicr_cci_slow_period: "Sonic R CCI Slow Period",
+    sonicr_pullback_lookback_bars: "Sonic R Pullback Lookback",
+    smc_swing_lookback: "SMC Swing Lookback",
+    smc_ob_lookback_bars: "SMC OB Lookback",
+    smc_fvg_min_gap_mult: "SMC FVG Min Gap",
+    screener_enabled: "Crypto Screener",
+    screener_mcap_max: "Screener Max Cap",
+    screener_require_volume_rising: "Screener Require Vol Rising",
+    screener_min_volume_change_pct: "Screener Min Vol Change %",
+    screener_scan_interval: "Screener Interval",
+    crypto_exchanges: "Crypto Exchanges",
+    crypto_analysis_enabled: "Crypto Analysis",
+    crypto_analysis_interval: "Crypto Analysis Interval",
+    top100_auto_refresh_enabled: "Top 100 Auto Refresh",
+    top100_refresh_time: "Top 100 Refresh Time",
+  }
+};
+
 export function ActivityLogModal({ onClose }: Props) {
   const { t, language } = useI18n();
   const [tab, setTab] = useState<Tab>("config");
@@ -130,7 +217,7 @@ export function ActivityLogModal({ onClose }: Props) {
                       {configItems.map((e) => (
                         <tr key={e.id}>
                           <td className="faint">{formatDateTimeMedium(e.changed_at, language)}</td>
-                          <td className="mono">{e.key}</td>
+                          <td className="mono">{FIELD_LABELS[language]?.[e.key] || e.key}</td>
                           <td className="mono faint">{e.old_value || t("common.dash")}</td>
                           <td className="mono">{e.new_value || t("common.dash")}</td>
                         </tr>

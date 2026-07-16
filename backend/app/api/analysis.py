@@ -51,6 +51,7 @@ def _analysis_out(a: Analysis) -> dict:
         "levels": json.loads(a.levels_json),
         "narrative": a.narrative,
         "advice": a.advice,
+        "sub_agents": json.loads(a.sub_agents_json) if a.sub_agents_json else None,
         "daily_trend": a.daily_trend,
         "mtf_alignment": a.mtf_alignment,
         "created_at": a.created_at,

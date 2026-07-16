@@ -55,3 +55,25 @@
 .stats-dot--bear {
   background: var(--bear);
 }
+
+.wl-tabs {
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2px;
+  gap: 2px;
+}
+.wl-tabs button {
+  flex: 1;
+  padding: 6px 4px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+  transition: color var(--duration), background var(--duration);
+}
+.wl-tabs button.is-active {
+  background: var(--accent);
+  color: oklch(18% 0.02 250);
+}

@@ -53,6 +53,7 @@ export interface Analysis {
   levels: Levels;
   narrative: string | null;
   advice: string | null;
+  sub_agents?: Array<{ name: string; role: string; model: string; status: string; output_length?: number }> | null;
   daily_trend: "bullish" | "bearish" | "neutral" | null;
   mtf_alignment: "aligned" | "conflicting" | null;
   created_at: string;
@@ -92,7 +93,7 @@ export interface SignalStat {
   win_rate_20: number | null;
 }
 
-export type NarrativeProvider = "anthropic" | "ollama";
+export type NarrativeProvider = "anthropic" | "ollama" | "antigravity";
 
 export interface StrategyOption {
   key: string;
@@ -105,6 +106,7 @@ export interface Settings {
   narrative_provider: NarrativeProvider;
   anthropic_model: string;
   ollama_model: string;
+  antigravity_model: string;
   daily_lookback_days: number;
   half_session_lookback_days: number;
   scheduler_enabled: boolean;
@@ -141,10 +143,12 @@ export interface Settings {
   ai_narrative_watchlist: boolean;
   ai_narrative_top100: boolean;
   has_anthropic_key: boolean;
+  has_gemini_key: boolean;
 }
 
-export type SettingsUpdate = Partial<Omit<Settings, "has_anthropic_key">> & {
+export type SettingsUpdate = Partial<Omit<Settings, "has_anthropic_key" | "has_gemini_key">> & {
   anthropic_api_key?: string;
+  gemini_api_key?: string;
 };
 
 export interface OllamaStatus {

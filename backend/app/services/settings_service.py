@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from sqlmodel import Session, select
 
-from app.ai.narrative import PROVIDER_ANTHROPIC, PROVIDER_OLLAMA, ProviderConfig
+from app.ai.narrative import PROVIDER_ANTHROPIC, PROVIDER_OLLAMA, PROVIDER_ANTIGRAVITY, ProviderConfig
 from app.config import get_settings
 from app.crypto import decrypt, encrypt
 from app.models import CryptoExchange, Setting
@@ -20,6 +20,7 @@ from app.strategies import registry as strategy_registry
 from app.wyckoff.config import WyckoffConfig
 
 KEY_API = "anthropic_api_key"
+KEY_GEMINI_API = "gemini_api_key"
 
 DEFAULTS: dict[str, str] = {
     "language": "vi",  # "vi" | "en" -- controls both UI text and AI narrative language
@@ -27,6 +28,8 @@ DEFAULTS: dict[str, str] = {
     "narrative_provider": PROVIDER_ANTHROPIC,
     "anthropic_model": "claude-sonnet-4-5",
     "ollama_model": "",
+    "antigravity_model": "gemini-3.5-flash",
+    "gemini_api_key": "",
     "daily_lookback_days": "730",
     "half_session_lookback_days": "60",
     "scheduler_enabled": "true",
@@ -121,6 +124,7 @@ def get_public(session: Session) -> dict:
     stored = _stored(session)
     out = {key: _typed(key, stored.get(key, default)) for key, default in DEFAULTS.items()}
     out["has_anthropic_key"] = bool(stored.get(KEY_API))
+    out["has_gemini_key"] = bool(stored.get(KEY_GEMINI_API))
     return out
 
 
@@ -136,14 +140,14 @@ def _set(session: Session, key: str, value: str) -> None:
 def update(session: Session, partial: dict) -> None:
     before = _stored(session)
     for key, value in partial.items():
-        if key == KEY_API:
+        if key in (KEY_API, KEY_GEMINI_API):
             # Empty string clears the key; otherwise store encrypted. Never
             # log the real (encrypted) value -- only whether it's set.
             new_raw = encrypt(str(value)) if value else ""
-            old_present = "(đã đặt)" if before.get(KEY_API) else "(trống)"
+            old_present = "(đã đặt)" if before.get(key) else "(trống)"
             new_present = "(đã đặt)" if new_raw else "(trống)"
             activity_log.log_config_change(session, key, old_present, new_present)
-            _set(session, KEY_API, new_raw)
+            _set(session, key, new_raw)
         elif key in _LIST_KEYS:
             new_raw = ",".join(value) if isinstance(value, list) else str(value)
             activity_log.log_config_change(session, key, before.get(key, DEFAULTS.get(key, "")), new_raw)
@@ -182,6 +186,10 @@ def get_narrative_config(session: Session) -> ProviderConfig:
     language = get_language(session)
     if provider == PROVIDER_OLLAMA:
         return ProviderConfig(provider=PROVIDER_OLLAMA, model=stored.get("ollama_model", ""), language=language)
+    if provider == PROVIDER_ANTIGRAVITY:
+        model = stored.get("antigravity_model") or DEFAULTS["antigravity_model"]
+        api_key = decrypt(stored.get(KEY_GEMINI_API, "")) or get_settings().gemini_api_key
+        return ProviderConfig(provider=PROVIDER_ANTIGRAVITY, model=model, api_key=api_key, language=language)
     api_key = decrypt(stored.get(KEY_API, "")) or get_settings().anthropic_api_key
     model = stored.get("anthropic_model") or get_settings().anthropic_model
     return ProviderConfig(provider=PROVIDER_ANTHROPIC, model=model, api_key=api_key, language=language)

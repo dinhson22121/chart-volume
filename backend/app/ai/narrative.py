@@ -33,13 +33,14 @@ _NARRATIVE_MARKER_EN = "ASSESSMENT:"
 
 PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_OLLAMA = "ollama"
+PROVIDER_ANTIGRAVITY = "antigravity"
 
 _OLLAMA_TIMEOUT = 120.0  # local inference on modest hardware can be slow
 
 
 @dataclass(frozen=True)
 class ProviderConfig:
-    provider: str  # PROVIDER_ANTHROPIC | PROVIDER_OLLAMA
+    provider: str  # PROVIDER_ANTHROPIC | PROVIDER_OLLAMA | PROVIDER_ANTIGRAVITY
     model: str
     api_key: str = ""  # anthropic only
     base_url: str = "http://localhost:11434"  # ollama only
@@ -49,6 +50,8 @@ class ProviderConfig:
 def is_available(cfg: ProviderConfig) -> bool:
     if cfg.provider == PROVIDER_OLLAMA:
         return bool(cfg.model)
+    if cfg.provider == PROVIDER_ANTIGRAVITY:
+        return True
     return bool(cfg.api_key)
 
 
@@ -154,6 +157,108 @@ def _call_ollama(prompt: str, model: str, base_url: str) -> str:
     return resp.json().get("response", "")
 
 
+def _call_antigravity(prompt: str, model: str, api_key: str) -> tuple[str, str]:
+    import asyncio
+    import json
+    from google.antigravity import Agent, LocalAgentConfig
+
+    async def _async_call():
+        config_architect = LocalAgentConfig(
+            model="gemini-2.5-flash",
+            api_key=api_key,
+            system_instruction=(
+                "Bạn là AgyArchitect, chuyên gia phân tích kỹ thuật chứng khoán và crypto. "
+                "Hãy phân tích các dữ liệu nến, chỉ báo và sự kiện Wyckoff/SMC/Sonic R được cung cấp. "
+                "Đưa ra một phân tích kỹ thuật khách quan, chi tiết về xu hướng, các mức cản hỗ trợ/kháng cự quan trọng."
+            )
+        )
+
+        config_analyst = LocalAgentConfig(
+            model="gemini-2.5-flash",
+            api_key=api_key,
+            system_instruction=(
+                "Bạn là AgyAnalyst, chuyên gia tư vấn đầu tư. Dựa trên bản phân tích kỹ thuật được cung cấp, "
+                "hãy viết Lời khuyên đầu tư hành động ngắn gọn, dễ hiểu cho nhà đầu tư cá nhân "
+                "(ví dụ: điểm mua, bán, cắt lỗ, quản lý rủi ro)."
+            )
+        )
+
+        config_leader = LocalAgentConfig(
+            model=model or "gemini-3.5-pro",
+            api_key=api_key,
+            system_instruction=(
+                "Bạn là AgyLeader, trưởng nhóm phân tích đầu tư AI. Tổng hợp bản phân tích từ AgyArchitect và AgyAnalyst "
+                "để trả về báo cáo cuối cùng. Bắt buộc báo cáo phải chứa tiêu đề '[NHẬN ĐỊNH]' trước phần nhận định kỹ thuật "
+                "và '[LỜI KHUYÊN]' trước phần lời khuyên hành động đầu tư."
+            )
+        )
+
+        sub_agents = []
+
+        # 1. Spawning AgyArchitect
+        sub_agents.append({
+            "name": "AgyArchitect",
+            "role": "Technical Chart Analyst",
+            "model": "gemini-2.5-flash",
+            "status": "RUNNING"
+        })
+        async with Agent(config_architect) as architect:
+            resp_architect = await architect.chat(f"Hãy phân tích dữ liệu sau đây:\n{prompt}")
+            analysis_text = await resp_architect.text()
+            sub_agents[0]["status"] = "COMPLETED"
+            sub_agents[0]["output_length"] = len(analysis_text)
+
+        # 2. Spawning AgyAnalyst
+        sub_agents.append({
+            "name": "AgyAnalyst",
+            "role": "Investment Advisor",
+            "model": "gemini-2.5-flash",
+            "status": "RUNNING"
+        })
+        async with Agent(config_analyst) as analyst:
+            resp_analyst = await analyst.chat(f"Hãy đưa ra lời khuyên hành động dựa trên phân tích kỹ thuật sau:\n{analysis_text}")
+            advice_text = await resp_analyst.text()
+            sub_agents[1]["status"] = "COMPLETED"
+            sub_agents[1]["output_length"] = len(advice_text)
+
+        # 3. Spawning AgyLeader
+        sub_agents.append({
+            "name": "AgyLeader",
+            "role": "Team Lead Orchestrator",
+            "model": model or "gemini-3.5-pro",
+            "status": "RUNNING"
+        })
+        async with Agent(config_leader) as leader:
+            leader_prompt = (
+                "Dưới đây là báo cáo từ nhóm của bạn:\n"
+                f"### PHÂN TÍCH KỸ THUẬT (từ AgyArchitect):\n{analysis_text}\n\n"
+                f"### LỜI KHUYÊN (từ AgyAnalyst):\n{advice_text}\n\n"
+                "Hãy kết hợp và định dạng lại báo cáo đầy đủ của cả 2 phần, giữ nguyên cấu trúc tiêu đề '[NHẬN ĐỊNH]' và '[LỜI KHUYÊN]'."
+            )
+            resp_leader = await leader.chat(leader_prompt)
+            final_text = await resp_leader.text()
+            sub_agents[2]["status"] = "COMPLETED"
+            sub_agents[2]["output_length"] = len(final_text)
+
+        return final_text, json.dumps(sub_agents, ensure_ascii=False)
+
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    if loop.is_running():
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(lambda: asyncio.run(_async_call()))
+            final_text, sub_agents_json = future.result()
+    else:
+        final_text, sub_agents_json = asyncio.run(_async_call())
+
+    return final_text, sub_agents_json
+
+
 def _parse(raw: str, language: str = "vi") -> tuple[str, str]:
     advice_marker = _ADVICE_MARKER_EN if language == "en" else _ADVICE_MARKER
     narrative_marker = _NARRATIVE_MARKER_EN if language == "en" else _NARRATIVE_MARKER
@@ -171,10 +276,17 @@ def _parse(raw: str, language: str = "vi") -> tuple[str, str]:
 
 def generate(
     ticker: str, timeframe: str, result: AnalysisResult, recent, cfg: ProviderConfig, strategy_label: str = "Wyckoff"
-) -> tuple[str, str]:
+) -> tuple[str, str, str | None]:
     prompt = build_prompt(ticker, timeframe, result, recent, cfg.language, strategy_label)
     if cfg.provider == PROVIDER_OLLAMA:
         raw = _call_ollama(prompt, cfg.model, cfg.base_url)
+        narrative, advice = _parse(raw, cfg.language)
+        return narrative, advice, None
+    elif cfg.provider == PROVIDER_ANTIGRAVITY:
+        raw, sub_agents = _call_antigravity(prompt, cfg.model, cfg.api_key)
+        narrative, advice = _parse(raw, cfg.language)
+        return narrative, advice, sub_agents
     else:
         raw = _call_claude(prompt, cfg.api_key, cfg.model)
-    return _parse(raw, cfg.language)
+        narrative, advice = _parse(raw, cfg.language)
+        return narrative, advice, None

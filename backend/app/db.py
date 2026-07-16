@@ -33,6 +33,9 @@ _COLUMN_MIGRATIONS = {
     "signaloutcome": {
         "aligned": "aligned BOOLEAN",
     },
+    "analysis": {
+        "sub_agents_json": "sub_agents_json TEXT",
+    },
 }
 
 

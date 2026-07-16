@@ -18,12 +18,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macos-13 is GitHub's last Intel (x64) macOS runner image;
-          # macos-14 is Apple Silicon (arm64). Pinned explicitly rather than
+          # Intel (x64) macOS build dropped: GitHub's macos-13 runner queue
+          # became effectively unbounded (multiple tagged builds sat
+          # "queued" for hours with zero progress) -- a systemic runner
+          # availability issue on GitHub's side, not something fixable from
+          # this repo. Apple has not sold an Intel Mac in years and GitHub
+          # is winding the image down, so Apple Silicon-only is an
+          # acceptable tradeoff. Pinned macos-14 explicitly rather than
           # "macos-latest" since GitHub has changed what -latest maps to before.
-          - os: macos-13
-            platform: mac
-            arch: x64
           - os: macos-14
             platform: mac
             arch: arm64

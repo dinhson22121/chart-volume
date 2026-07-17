@@ -11,7 +11,12 @@ def _coin(coin_id: str, symbol: str, name: str = "") -> dict:
     return {"id": coin_id, "symbol": symbol, "name": name or coin_id.title()}
 
 
+def _mock_no_stablecoins(mocker):
+    return mocker.patch.object(coingecko_client, "fetch_stablecoin_ids", return_value=set())
+
+
 def test_seed_creates_symbols_ranked_by_market_cap_order(session, mocker):
+    _mock_no_stablecoins(mocker)
     mocker.patch.object(
         coingecko_client, "fetch_markets_page",
         return_value=[_coin("bitcoin", "btc"), _coin("ethereum", "eth"), _coin("tether", "usdt")],
@@ -30,6 +35,7 @@ def test_seed_creates_symbols_ranked_by_market_cap_order(session, mocker):
 
 
 def test_seed_takes_at_most_top_n_coins(session, mocker):
+    _mock_no_stablecoins(mocker)
     coins = [_coin(f"coin-{i}", f"c{i}") for i in range(150)]
     mocker.patch.object(coingecko_client, "fetch_markets_page", return_value=coins)
 
@@ -41,6 +47,7 @@ def test_seed_takes_at_most_top_n_coins(session, mocker):
 
 
 def test_reseed_clears_flag_on_coins_that_dropped_out(session, mocker):
+    _mock_no_stablecoins(mocker)
     fetch = mocker.patch.object(
         coingecko_client, "fetch_markets_page",
         return_value=[_coin("bitcoin", "btc"), _coin("dropped-coin", "drp")],
@@ -62,6 +69,7 @@ def test_seed_preserves_watchlist_flag_on_existing_symbol(session, mocker):
         Symbol(ticker="BITCOIN", display_symbol="BTC", asset_class=AssetClass.CRYPTO, is_watchlist=True)
     )
     session.commit()
+    _mock_no_stablecoins(mocker)
     mocker.patch.object(coingecko_client, "fetch_markets_page", return_value=[_coin("bitcoin", "btc")])
 
     top100.seed_top100(session)
@@ -72,6 +80,7 @@ def test_seed_preserves_watchlist_flag_on_existing_symbol(session, mocker):
 
 
 def test_seed_skips_coins_with_invalid_id_or_symbol(session, mocker):
+    _mock_no_stablecoins(mocker)
     mocker.patch.object(
         coingecko_client, "fetch_markets_page",
         return_value=[
@@ -89,6 +98,7 @@ def test_seed_skips_coins_with_invalid_id_or_symbol(session, mocker):
 
 
 def test_seed_writes_activity_log_with_trigger(session, mocker):
+    _mock_no_stablecoins(mocker)
     mocker.patch.object(coingecko_client, "fetch_markets_page", return_value=[_coin("bitcoin", "btc")])
 
     top100.seed_top100(session, trigger="scheduled")
@@ -112,3 +122,50 @@ def test_seed_logs_error_and_reraises_on_crawl_failure(session, mocker):
     entry = session.exec(select(SystemActionLog)).one()
     assert entry.status == "error"
     assert "rate limited" in entry.detail
+
+
+def test_seed_excludes_stablecoins(session, mocker):
+    mocker.patch.object(
+        coingecko_client, "fetch_markets_page",
+        return_value=[_coin("bitcoin", "btc"), _coin("tether", "usdt"), _coin("usd-coin", "usdc")],
+    )
+    mocker.patch.object(coingecko_client, "fetch_stablecoin_ids", return_value={"tether", "usd-coin"})
+
+    result = top100.seed_top100(session)
+
+    assert result == {"count": 1}
+    assert session.get(Symbol, "BITCOIN") is not None
+    assert session.get(Symbol, "TETHER") is None
+    assert session.get(Symbol, "USD-COIN") is None
+
+
+def test_seed_excludes_stablecoins_before_slicing_to_top_n(session, mocker):
+    # A stablecoin sitting inside the raw top-100 window must not push a real
+    # rank-100 asset out -- filter, then slice, not the other way around.
+    coins = [_coin("tether", "usdt")] + [_coin(f"coin-{i}", f"c{i}") for i in range(150)]
+    mocker.patch.object(coingecko_client, "fetch_markets_page", return_value=coins)
+    mocker.patch.object(coingecko_client, "fetch_stablecoin_ids", return_value={"tether"})
+
+    result = top100.seed_top100(session)
+
+    assert result == {"count": 100}
+    assert session.get(Symbol, "TETHER") is None
+    assert session.get(Symbol, "COIN-99") is not None  # still makes the cut
+
+
+def test_seed_degrades_gracefully_when_stablecoin_lookup_fails(session, mocker):
+    mocker.patch.object(
+        coingecko_client, "fetch_markets_page",
+        return_value=[_coin("bitcoin", "btc"), _coin("tether", "usdt")],
+    )
+    mocker.patch.object(
+        coingecko_client, "fetch_stablecoin_ids",
+        side_effect=coingecko_client.CrawlError("rate limited"),
+    )
+
+    result = top100.seed_top100(session)
+
+    # Filter lookup failed -- the refresh still completes rather than
+    # aborting, just without filtering this run.
+    assert result == {"count": 2}
+    assert session.get(Symbol, "TETHER") is not None

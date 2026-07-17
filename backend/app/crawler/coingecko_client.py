@@ -56,6 +56,25 @@ def fetch_markets_page(page: int, order: str = "market_cap_desc") -> list[dict]:
     return data or []
 
 
+def fetch_stablecoin_ids() -> set[str]:
+    """CoinGecko's own "stablecoins" category (fiat-pegged tokens like
+    USDT/USDC/DAI) -- used to exclude them from the Top 100 crypto list,
+    since they have no meaningful price trend for Wyckoff-style signal
+    detection. Deliberately using CoinGecko's own categorization rather than
+    a hand-maintained denylist, which would drift out of date; this leaves
+    gold-backed tokens (XAUT, PAXG) and tokenized treasury/RWA funds (BUIDL,
+    USTB, JTRSY...) untouched -- CoinGecko itself doesn't classify those as
+    stablecoins, and neither should we."""
+    data = _get(
+        "/coins/markets",
+        {
+            "vs_currency": "usd", "category": "stablecoins", "order": "market_cap_desc",
+            "per_page": PER_PAGE, "page": 1, "sparkline": "false",
+        },
+    )
+    return {coin["id"] for coin in (data or []) if coin.get("id")}
+
+
 def fetch_coin_platforms(coin_id: str) -> dict[str, str]:
     """Contract address per chain (CoinGecko's own platform ids, e.g.
     "ethereum", "binance-smart-chain") for a coin -- used to resolve a

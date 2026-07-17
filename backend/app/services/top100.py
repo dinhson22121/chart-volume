@@ -29,10 +29,23 @@ def seed_top100(session: Session, trigger: str = "manual") -> dict:
     is_top100 flag, mirroring how VN30 members are never deleted."""
     log_id = activity_log.log_action_start(session, "top100_seed", trigger)
     try:
-        coins = coingecko_client.fetch_markets_page(1)[:TOP_N]
+        # Fetched from the full (unfiltered) market list so stablecoins don't
+        # push a real rank-100 coin out of the window -- filter after slicing
+        # would silently shrink the tracked list to <100 real assets.
+        raw_coins = coingecko_client.fetch_markets_page(1)
     except coingecko_client.CrawlError as exc:
         activity_log.log_action_finish(session, log_id, "error", str(exc))
         raise
+
+    try:
+        stablecoin_ids = coingecko_client.fetch_stablecoin_ids()
+    except coingecko_client.CrawlError as exc:
+        # Degrade gracefully: a failed category lookup shouldn't block the
+        # whole refresh, it just means stablecoins slip through this run.
+        logger.warning("could not fetch stablecoin category, skipping the filter this run: %s", exc)
+        stablecoin_ids = set()
+
+    coins = [c for c in raw_coins if (c.get("id") or "").strip() not in stablecoin_ids][:TOP_N]
 
     seeded_keys: set[str] = set()
     for rank, coin in enumerate(coins, start=1):

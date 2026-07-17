@@ -35,11 +35,19 @@ export interface Signal {
   ts: string | null;
   price: number;
   note: string;
+  // Wyckoff-only (see app.wyckoff.volume_profile on the backend) -- null for
+  // SMC/SonicR events and for Wyckoff event types the engine doesn't check.
+  volume_confirmed?: boolean | null;
 }
 
 export interface Levels {
   support: number;
   resistance: number;
+  // Wyckoff-only Volume Profile fields -- null for SMC/SonicR or when there
+  // isn't enough history yet to compute a profile.
+  poc?: number | null;
+  value_area_high?: number | null;
+  value_area_low?: number | null;
 }
 
 export interface TradeScenario {
@@ -68,6 +76,7 @@ export interface Analysis {
   sub_agents?: Array<{ name: string; role: string; model: string; status: string; output_length?: number }> | null;
   daily_trend: "bullish" | "bearish" | "neutral" | null;
   mtf_alignment: "aligned" | "conflicting" | null;
+  vp_alignment?: "confirmed" | "unconfirmed" | null;
   created_at: string;
   scenario: TradeScenario | null;
 }

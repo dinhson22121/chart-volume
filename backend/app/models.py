@@ -126,6 +126,7 @@ class Analysis(SQLModel, table=True):
     daily_trend: Optional[str] = None  # multi-timeframe context used, half_session only
     mtf_alignment: Optional[str] = None  # "aligned" | "conflicting" | None
     sub_agents_json: Optional[str] = None  # JSON of spawned subagents details
+    vp_alignment: Optional[str] = None  # "confirmed" | "unconfirmed" | None (Wyckoff Volume Profile only)
     created_at: datetime = Field(default_factory=_utcnow)
 
 

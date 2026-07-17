@@ -55,6 +55,9 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "chart.scenarioEntry": "Vào lệnh",
     "chart.scenarioSl": "Cắt lỗ",
     "chart.scenarioTp": "Chốt lời",
+    "chart.poc": "POC",
+    "chart.valueAreaHigh": "Đỉnh vùng giá trị",
+    "chart.valueAreaLow": "Đáy vùng giá trị",
 
     // --- Analysis panel ---
     "analysis.loading": "Đang phân tích…",
@@ -438,6 +441,9 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "chart.scenarioEntry": "Entry",
     "chart.scenarioSl": "Stop-Loss",
     "chart.scenarioTp": "Take-Profit",
+    "chart.poc": "POC",
+    "chart.valueAreaHigh": "Value Area High",
+    "chart.valueAreaLow": "Value Area Low",
 
     // --- Analysis panel ---
     "analysis.loading": "Analyzing…",

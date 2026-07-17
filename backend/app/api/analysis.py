@@ -71,6 +71,7 @@ def _analysis_out(a: Analysis, session: Session) -> dict:
         "sub_agents": json.loads(a.sub_agents_json) if a.sub_agents_json else None,
         "daily_trend": a.daily_trend,
         "mtf_alignment": a.mtf_alignment,
+        "vp_alignment": a.vp_alignment,
         "created_at": a.created_at,
         "scenario": _scenario_out(scenario),
     }

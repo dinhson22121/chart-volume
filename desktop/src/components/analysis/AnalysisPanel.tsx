@@ -107,7 +107,14 @@ export function AnalysisPanel({ analysis, loading, error }: Props) {
             <ul className="ap-signals">
               {analysis.signals.slice(-8).reverse().map((s, i) => (
                 <li key={i} className="ap-signal">
-                  <span className="ap-signal__type mono">{signalLabel(s.type, language)}</span>
+                  <span className="ap-signal__type mono">
+                    {signalLabel(s.type, language)}
+                    {s.volume_confirmed && (
+                      <span className="ap-signal__vp-badge" title={t("chart.poc")}>
+                        {" "}VP✓
+                      </span>
+                    )}
+                  </span>
                   <span className="ap-signal__note faint">{s.note}</span>
                 </li>
               ))}

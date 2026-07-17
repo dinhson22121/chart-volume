@@ -47,7 +47,10 @@ def test_analyze_events_are_compatible_with_events_as_dicts():
 
     assert len(dicts) == len(result.events)
     for d in dicts:
-        assert set(d.keys()) == {"type", "ts", "price", "note"}
+        # volume_confirmed is Wyckoff-only (see app.wyckoff.volume_profile) --
+        # always None here since SonicEvent has no such attribute.
+        assert set(d.keys()) == {"type", "ts", "price", "note", "volume_confirmed"}
+        assert d["volume_confirmed"] is None
 
 
 def test_bullish_and_bearish_event_sets_are_disjoint_and_reference_real_types():

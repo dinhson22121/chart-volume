@@ -33,6 +33,8 @@ const COLORS = {
   t3Fast: "#4fc3f7",
   t3Slow: "#ffb74d",
   entry: "#4fc3f7",
+  poc: "#ce93d8",
+  valueArea: "#78909c",
 };
 
 function toTime(iso: string): UTCTimestamp {
@@ -218,12 +220,16 @@ export function CandleChart({ candles, analysis, onBarClick }: Props) {
       .map((s) => {
         const bull = signalIsBullish(s.type);
         const entry = signalIsEntry(s.type);
+        // Volume Profile confirmation (Wyckoff only, see chart.poc/VAH/VAL
+        // lines above) -- append a checkmark so a confirmed breakout/reversal
+        // stands out from an unconfirmed one of the same type.
+        const vpSuffix = s.volume_confirmed ? " ✓" : "";
         return {
           time: toTime(s.ts as string),
           position: bull ? "belowBar" : "aboveBar",
           color: bull ? COLORS.bull : COLORS.bear,
           shape: entry ? "circle" : bull ? "arrowUp" : "arrowDown",
-          text: entry ? `${s.type} ●` : s.type,
+          text: (entry ? `${s.type} ●` : s.type) + vpSuffix,
         } as SeriesMarker<Time>;
       })
       .sort((a, b) => (a.time as number) - (b.time as number));
@@ -249,6 +255,37 @@ export function CandleChart({ candles, analysis, onBarClick }: Props) {
           title: t("chart.resistance"),
         }),
       );
+
+      // Volume Profile (Wyckoff only) -- POC + Value Area, when computed.
+      const { poc, value_area_high, value_area_low } = analysis.levels;
+      if (poc != null && value_area_high != null && value_area_low != null) {
+        priceLinesRef.current.push(
+          candleSeries.createPriceLine({
+            price: poc,
+            color: COLORS.poc,
+            lineStyle: LineStyle.Solid,
+            lineWidth: 1,
+            axisLabelVisible: true,
+            title: t("chart.poc"),
+          }),
+          candleSeries.createPriceLine({
+            price: value_area_high,
+            color: COLORS.valueArea,
+            lineStyle: LineStyle.Dotted,
+            lineWidth: 1,
+            axisLabelVisible: true,
+            title: t("chart.valueAreaHigh"),
+          }),
+          candleSeries.createPriceLine({
+            price: value_area_low,
+            color: COLORS.valueArea,
+            lineStyle: LineStyle.Dotted,
+            lineWidth: 1,
+            axisLabelVisible: true,
+            title: t("chart.valueAreaLow"),
+          }),
+        );
+      }
     }
 
     // Entry / SL / TP lines for the active (or last) trade scenario.

@@ -65,7 +65,14 @@ def _get_daily_trend(session: Session, ticker: str, strategy: str, strategy_modu
 def _serialize(result: AnalysisResult) -> tuple[str, str]:
     signals_json = json.dumps(result.events_as_dicts(), ensure_ascii=False)
     levels_json = json.dumps(
-        {"support": result.levels.support, "resistance": result.levels.resistance},
+        {
+            "support": result.levels.support,
+            "resistance": result.levels.resistance,
+            # Wyckoff-only (see app.wyckoff.volume_profile) -- None for SMC/SonicR.
+            "poc": result.poc,
+            "value_area_high": result.value_area_high,
+            "value_area_low": result.value_area_low,
+        },
         ensure_ascii=False,
     )
     return signals_json, levels_json
@@ -156,6 +163,7 @@ def run_analysis(
         existing.sub_agents_json = sub_agents_json
         existing.daily_trend = result.daily_trend
         existing.mtf_alignment = result.mtf_alignment
+        existing.vp_alignment = result.vp_alignment
         session.add(existing)
         session.commit()
         session.refresh(existing)
@@ -175,6 +183,7 @@ def run_analysis(
         sub_agents_json=sub_agents_json,
         daily_trend=result.daily_trend,
         mtf_alignment=result.mtf_alignment,
+        vp_alignment=result.vp_alignment,
     )
     session.add(analysis)
     session.commit()

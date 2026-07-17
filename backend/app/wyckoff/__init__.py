@@ -16,6 +16,7 @@ from app.wyckoff.config import DEFAULT_CONFIG, WyckoffConfig
 from app.wyckoff.events import WyckoffEvent, detect_events
 from app.wyckoff.indicators import compute_features, latest_levels
 from app.wyckoff.phase import BEARISH_EVENTS, BULLISH_EVENTS, RANGING_PHASES, classify_phase, phase_trend
+from app.wyckoff.volume_profile import annotate_volume_confirmation, compute_volume_profile
 
 __all__ = [
     "AnalysisResult",
@@ -48,6 +49,12 @@ class AnalysisResult:
     drivers: list[str] = field(default_factory=list)
     daily_trend: str | None = None
     mtf_alignment: str | None = None
+    # Volume Profile fields -- Wyckoff-only (see app.wyckoff.volume_profile).
+    # SMC/SonicR never set these, so they stay None for those strategies.
+    poc: float | None = None
+    value_area_high: float | None = None
+    value_area_low: float | None = None
+    vp_alignment: str | None = None
 
     def events_as_dicts(self) -> list[dict]:
         return [
@@ -56,6 +63,10 @@ class AnalysisResult:
                 "ts": e.ts.isoformat() if e.ts else None,
                 "price": e.price,
                 "note": e.note,
+                # getattr, not e.volume_confirmed -- SMC/SonicR events don't
+                # have this attribute (their own dataclasses), and this method
+                # is shared across all 3 strategies.
+                "volume_confirmed": getattr(e, "volume_confirmed", None),
             }
             for e in self.events
         ]
@@ -96,7 +107,9 @@ def analyze(
     feat = compute_features(df)
     events = detect_events(feat, config, language)
     support, resistance = latest_levels(feat)
-    phase, confidence, drivers, mtf_alignment = classify_phase(feat, events, daily_trend)
+    vp = compute_volume_profile(feat, config)
+    events = annotate_volume_confirmation(feat, events, vp)
+    phase, confidence, drivers, mtf_alignment, vp_alignment = classify_phase(feat, events, daily_trend)
 
     return AnalysisResult(
         phase=phase,
@@ -107,4 +120,8 @@ def analyze(
         drivers=drivers,
         daily_trend=daily_trend,
         mtf_alignment=mtf_alignment,
+        poc=vp.poc if vp else None,
+        value_area_high=vp.value_area_high if vp else None,
+        value_area_low=vp.value_area_low if vp else None,
+        vp_alignment=vp_alignment,
     )

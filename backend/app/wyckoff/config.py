@@ -13,6 +13,9 @@ class WyckoffConfig:
     low_vol_mult: float = 0.7  # volume <= x * average -> low volume
     sos_vol_mult: float = 1.5  # breakout volume threshold for SOS/SOW
     lps_lookback_bars: int = 10  # bars to wait after SOS/SOW for a pullback (LPS/LPSY)
+    vp_lookback_bars: int = 50  # bars spanning the volume profile window
+    vp_bins: int = 24  # number of equal-width price bins across that window
+    vp_value_area_pct: float = 0.7  # fraction of window volume the value area must cover
 
 
 DEFAULT_CONFIG = WyckoffConfig()

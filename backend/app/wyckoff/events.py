@@ -38,6 +38,10 @@ class WyckoffEvent:
     ts: datetime
     price: float
     note: str = ""
+    # None = not evaluated (either not a Volume-Profile-checkable type, or no
+    # profile could be computed yet) -- distinct from False (evaluated, not
+    # confirmed). See app.wyckoff.volume_profile.
+    volume_confirmed: bool | None = None
 
 
 @dataclass

@@ -7,6 +7,7 @@ bar itself.
 """
 
 import types
+from dataclasses import replace
 
 import pandas as pd
 
@@ -39,6 +40,8 @@ from app.wyckoff.phase import (
     PHASE_RANGING,
     TREND_BEARISH,
     TREND_BULLISH,
+    VP_CONFIRMED,
+    VP_UNCONFIRMED,
     classify_phase,
 )
 
@@ -239,7 +242,7 @@ def test_bearish_daily_trend_suppresses_bullish_driven_phase():
     events = detect_events(feat)
 
     without_context, *_ = classify_phase(feat, events)
-    with_bearish_context, _, _, alignment = classify_phase(feat, events, daily_trend=TREND_BEARISH)
+    with_bearish_context, _, _, alignment, _ = classify_phase(feat, events, daily_trend=TREND_BEARISH)
 
     assert without_context == PHASE_ACCUMULATION  # baseline: Spring alone drives Accumulation
     assert with_bearish_context == PHASE_RANGING  # suppressed: no bullish driver left
@@ -251,8 +254,8 @@ def test_aligned_daily_trend_boosts_confidence():
     feat = compute_features(df)
     events = detect_events(feat)
 
-    _, base_conf, _, _ = classify_phase(feat, events)
-    phase, boosted_conf, _, alignment = classify_phase(feat, events, daily_trend=TREND_BULLISH)
+    _, base_conf, _, _, _ = classify_phase(feat, events)
+    phase, boosted_conf, _, alignment, _ = classify_phase(feat, events, daily_trend=TREND_BULLISH)
 
     assert phase == PHASE_MARKUP
     assert alignment == MTF_ALIGNED
@@ -264,12 +267,43 @@ def test_conflicting_daily_trend_penalizes_confidence():
     feat = compute_features(df)
     events = detect_events(feat)
 
-    _, base_conf, _, _ = classify_phase(feat, events)
-    phase, penalized_conf, _, alignment = classify_phase(feat, events, daily_trend=TREND_BEARISH)
+    _, base_conf, _, _, _ = classify_phase(feat, events)
+    phase, penalized_conf, _, alignment, _ = classify_phase(feat, events, daily_trend=TREND_BEARISH)
 
     assert phase == PHASE_MARKUP
     assert alignment == MTF_CONFLICTING
     assert penalized_conf < base_conf
+
+
+# --- Volume Profile confirmation feeds confidence like MTF alignment does ---
+
+def test_volume_confirmed_driver_boosts_confidence():
+    df = _to_df(base_bars() + [SOS_BAR])
+    feat = compute_features(df)
+    events = detect_events(feat)
+    confirmed = [replace(e, volume_confirmed=True) if e.type == SOS else e for e in events]
+    unconfirmed = [replace(e, volume_confirmed=False) if e.type == SOS else e for e in events]
+
+    _, base_conf, _, _, base_vp_alignment = classify_phase(feat, unconfirmed)
+    phase, boosted_conf, _, _, vp_alignment = classify_phase(feat, confirmed)
+
+    assert phase == PHASE_MARKUP
+    assert base_vp_alignment == VP_UNCONFIRMED
+    assert vp_alignment == VP_CONFIRMED
+    assert boosted_conf > base_conf
+
+
+def test_no_vp_checkable_driver_leaves_vp_alignment_none():
+    # NoSupply alone drives Accumulation -- not a VP-checkable type (only
+    # SOS/SOW/Spring/Upthrust are), so there's nothing to confirm or penalize.
+    df = _to_df(base_bars() + [NOSUPPLY_BAR])
+    feat = compute_features(df)
+    events = detect_events(feat)
+
+    phase, _, _, _, vp_alignment = classify_phase(feat, events)
+
+    assert phase == PHASE_ACCUMULATION
+    assert vp_alignment is None
 
 
 # --- LPS/LPSY: the entry-confirmation pullback after a confirmed SOS/SOW breakout ---
@@ -339,3 +373,25 @@ def test_analyze_without_daily_trend_has_no_alignment():
     result = analyze(_to_candles(base_bars() + [SOS_BAR]))
     assert result.daily_trend is None
     assert result.mtf_alignment is None
+
+
+def test_analyze_computes_volume_profile_and_confirms_breakout():
+    # 49 flat bars (99-101, high volume) + 1 SOS breakout bar -> 50 bars total,
+    # meeting the default vp_lookback_bars floor. Nearly all volume sits in the
+    # 99-101 zone, so the value area shouldn't stretch out to SOS_BAR's close.
+    result = analyze(_to_candles(base_bars(49) + [SOS_BAR]))
+
+    assert result.poc is not None
+    assert result.value_area_low <= result.poc <= result.value_area_high
+    assert result.value_area_high < SOS_BAR["close"]
+    assert result.vp_alignment == VP_CONFIRMED
+    sos_event = next(e for e in result.events if e.type == SOS)
+    assert sos_event.volume_confirmed is True
+
+
+def test_analyze_leaves_volume_profile_none_with_too_little_history():
+    result = analyze(_to_candles(base_bars() + [SOS_BAR]))  # 26 bars, below vp_lookback_bars
+    assert result.poc is None
+    assert result.value_area_high is None
+    assert result.value_area_low is None
+    assert result.vp_alignment is None

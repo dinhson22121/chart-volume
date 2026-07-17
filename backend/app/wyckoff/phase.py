@@ -37,6 +37,11 @@ _MAX_CONFIDENCE = 0.9
 _MIN_CONFIDENCE = 0.1
 _MTF_BONUS = 0.1
 _MTF_PENALTY = 0.15
+_VP_BONUS = 0.1
+_VP_PENALTY = 0.15
+
+VP_CONFIRMED = "confirmed"
+VP_UNCONFIRMED = "unconfirmed"
 
 PHASE_ACCUMULATION = "Accumulation"
 PHASE_MARKUP = "Markup"
@@ -62,9 +67,13 @@ _DISTRIBUTION_SIGNALS = {UPTHRUST, BUYING_CLIMAX, NO_DEMAND}
 BULLISH_EVENTS = _ACCUMULATION_SIGNALS | {SOS, LPS}
 BEARISH_EVENTS = _DISTRIBUTION_SIGNALS | {SOW, LPSY}
 
+# Event types app.wyckoff.volume_profile.annotate_volume_confirmation actually
+# scores (see that module for why the rest are left unconfirmed in v1).
+_VP_CHECKABLE = {SOS, SOW, SPRING, UPTHRUST}
+
 # Phases where a "measured move" (trading-range height) is a coherent concept
 # -- a genuine range being built or broken out of. Markup/Markdown are already
-# trending, so there is no range left to measure a breakout against. Used by
+# trending, so there's no range left to measure a breakout against. Used by
 # app.services.trade_scenario to gate scenario creation on the phase as of
 # just before the triggering event (not the phase after it, which the event
 # itself often just flipped to Markup/Markdown).
@@ -87,11 +96,14 @@ def classify_phase(
     df: pd.DataFrame,
     events: list[WyckoffEvent],
     daily_trend: str | None = None,
-) -> tuple[str, float, list[str], str | None]:
-    """Returns (phase, confidence, drivers, mtf_alignment).
+) -> tuple[str, float, list[str], str | None, str | None]:
+    """Returns (phase, confidence, drivers, mtf_alignment, vp_alignment).
 
     ``mtf_alignment`` is None when no daily_trend context was supplied or the
     resulting phase is Ranging/Insufficient (nothing directional to compare).
+    ``vp_alignment`` is None when none of the driving events are a Volume
+    Profile-checkable type (see app.wyckoff.volume_profile) -- there's nothing
+    to confirm or penalize against.
     """
     n = len(df)
     recent = [e for e in events if e.index >= n - RECENT_WINDOW]
@@ -129,7 +141,7 @@ def classify_phase(
         drivers = acc_hits
         phase, count = PHASE_ACCUMULATION, len(acc_hits)
     else:
-        return PHASE_RANGING, _BASE_CONFIDENCE, [], None
+        return PHASE_RANGING, _BASE_CONFIDENCE, [], None, None
 
     confidence = _BASE_CONFIDENCE + _PER_SIGNAL * count
 
@@ -143,5 +155,23 @@ def classify_phase(
             confidence -= _MTF_PENALTY
             mtf_alignment = MTF_CONFLICTING
 
+    # Volume Profile confirmation, same bonus/penalty shape as MTF above: only
+    # applies when at least one of the events that actually drove this phase
+    # call is a VP-checkable type (see app.wyckoff.volume_profile) -- with none
+    # present there's nothing to confirm or penalize.
+    driver_types = set(drivers)
+    vp_checkable_drivers = [
+        e for e in recent
+        if e.type in driver_types and e.type in _VP_CHECKABLE and e.volume_confirmed is not None
+    ]
+    vp_alignment: str | None = None
+    if vp_checkable_drivers:
+        if any(e.volume_confirmed for e in vp_checkable_drivers):
+            confidence += _VP_BONUS
+            vp_alignment = VP_CONFIRMED
+        else:
+            confidence -= _VP_PENALTY
+            vp_alignment = VP_UNCONFIRMED
+
     confidence = max(_MIN_CONFIDENCE, min(_MAX_CONFIDENCE, confidence))
-    return phase, round(confidence, 2), drivers, mtf_alignment
+    return phase, round(confidence, 2), drivers, mtf_alignment, vp_alignment

@@ -38,6 +38,7 @@ _COLUMN_MIGRATIONS = {
     },
     "analysis": {
         "sub_agents_json": "sub_agents_json TEXT",
+        "vp_alignment": "vp_alignment TEXT",
     },
 }
 

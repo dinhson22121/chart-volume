@@ -75,11 +75,17 @@ export const api = {
   getIndicators: (ticker: string, timeframe: Timeframe) =>
     req<IndicatorSeries>(`/analysis/${ticker}/indicators?timeframe=${timeframe}`),
   getDashboard: () => req<DashboardRow[]>("/analysis/dashboard"),
-  getSignalStats: (ticker?: string, timeframe?: Timeframe, alignedOnly?: boolean) => {
+  getSignalStats: (
+    ticker?: string,
+    timeframe?: Timeframe,
+    alignedOnly?: boolean,
+    assetClass?: AssetClass,
+  ) => {
     const params = new URLSearchParams();
     if (ticker) params.set("ticker", ticker);
     if (timeframe) params.set("timeframe", timeframe);
     if (alignedOnly) params.set("aligned_only", "true");
+    if (assetClass) params.set("asset_class", assetClass);
     const qs = params.toString();
     return req<SignalStat[]>(`/signals/stats${qs ? `?${qs}` : ""}`);
   },
@@ -136,18 +142,20 @@ export const api = {
   getTradeHistory: (
     page: number,
     pageSize: number,
-    filters: { ticker?: string; status?: string; strategy?: string } = {},
+    filters: { ticker?: string; status?: string; strategy?: string; assetClass?: AssetClass } = {},
   ) => {
     const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
     if (filters.ticker) params.set("ticker", filters.ticker);
     if (filters.status) params.set("status", filters.status);
     if (filters.strategy) params.set("strategy", filters.strategy);
+    if (filters.assetClass) params.set("asset_class", filters.assetClass);
     return req<TradeHistoryPage>(`/trade-history?${params.toString()}`);
   },
-  getTradeHistoryStats: (filters: { ticker?: string; strategy?: string } = {}) => {
+  getTradeHistoryStats: (filters: { ticker?: string; strategy?: string; assetClass?: AssetClass } = {}) => {
     const params = new URLSearchParams();
     if (filters.ticker) params.set("ticker", filters.ticker);
     if (filters.strategy) params.set("strategy", filters.strategy);
+    if (filters.assetClass) params.set("asset_class", filters.assetClass);
     const qs = params.toString();
     return req<TradeHistoryStats>(`/trade-history/stats${qs ? `?${qs}` : ""}`);
   },

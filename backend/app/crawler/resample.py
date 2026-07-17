@@ -48,3 +48,35 @@ def resample_half_session(df: pd.DataFrame) -> pd.DataFrame:
     grouped["bucket_start"] = grouped["date"] + pd.to_timedelta(hour_offset, unit="h")
 
     return grouped[cols].sort_values("bucket_start").reset_index(drop=True)
+
+
+def resample_weekly(df: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate already-stored daily candles into calendar weeks (Monday
+    start). Deliberately not ``pd.DataFrame.resample("W-...")`` -- pandas'
+    week anchors label bins by their END day, which reads backwards from the
+    Monday-start convention used everywhere else in this codebase; computing
+    the week start explicitly avoids that confusion.
+
+    Return columns: bucket_start, open, high, low, close, volume. Empty input
+    yields an empty frame with the expected columns.
+    """
+    cols = ["bucket_start", "open", "high", "low", "close", "volume"]
+    if df is None or df.empty:
+        return pd.DataFrame(columns=cols)
+
+    work = df.copy()
+    work["bucket_start"] = pd.to_datetime(work["bucket_start"])
+    work = work.sort_values("bucket_start")
+    work["week_start"] = (
+        work["bucket_start"] - pd.to_timedelta(work["bucket_start"].dt.weekday, unit="D")
+    ).dt.normalize()
+
+    grouped = work.groupby("week_start", sort=True).agg(
+        open=("open", "first"),
+        high=("high", "max"),
+        low=("low", "min"),
+        close=("close", "last"),
+        volume=("volume", "sum"),
+    ).reset_index().rename(columns={"week_start": "bucket_start"})
+
+    return grouped[cols].sort_values("bucket_start").reset_index(drop=True)

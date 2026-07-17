@@ -18,7 +18,10 @@ def get_signal_stats(
     timeframe: str | None = Query(default=None),
     strategy: str | None = Query(default=None, description="Defaults to the currently active strategy"),
     aligned_only: bool = Query(default=False, description="Only signals aligned with the engine's trend"),
+    asset_class: str | None = Query(default=None, description="Filter to 'stock' or 'crypto'"),
     session: Session = Depends(get_session),
 ) -> list[dict]:
     active_strategy = strategy or settings_service.get_strategy(session)
-    return signal_outcomes.get_stats(session, ticker, timeframe, active_strategy, aligned_only=aligned_only)
+    return signal_outcomes.get_stats(
+        session, ticker, timeframe, active_strategy, aligned_only=aligned_only, asset_class=asset_class
+    )

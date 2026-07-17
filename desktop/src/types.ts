@@ -1,4 +1,4 @@
-export type Timeframe = "daily" | "half_session" | "1h" | "4h";
+export type Timeframe = "daily" | "half_session" | "1h" | "4h" | "1w";
 export type AssetClass = "stock" | "crypto";
 
 export interface SymbolItem {
@@ -107,12 +107,21 @@ export interface SignalStat {
   n_5: number;
   avg_return_5: number | null;
   win_rate_5: number | null;
+  win_rate_5_ci: [number, number] | null;
+  baseline_win_rate_5: number | null;
+  edge_5: number | null;
   n_10: number;
   avg_return_10: number | null;
   win_rate_10: number | null;
+  win_rate_10_ci: [number, number] | null;
+  baseline_win_rate_10: number | null;
+  edge_10: number | null;
   n_20: number;
   avg_return_20: number | null;
   win_rate_20: number | null;
+  win_rate_20_ci: [number, number] | null;
+  baseline_win_rate_20: number | null;
+  edge_20: number | null;
 }
 
 export type NarrativeProvider = "anthropic" | "ollama" | "antigravity" | "codex";
@@ -167,6 +176,12 @@ export interface Settings {
   ai_narrative_vn30: boolean;
   ai_narrative_watchlist: boolean;
   ai_narrative_top100: boolean;
+  notional_capital: number;
+  risk_pct_per_trade: number;
+  slippage_pct_stock: number;
+  slippage_pct_crypto: number;
+  max_concurrent_scenarios: number;
+  max_concurrent_scenarios_crypto: number;
   has_anthropic_key: boolean;
   has_gemini_key: boolean;
   has_openai_key: boolean;
@@ -272,6 +287,10 @@ export interface TradeHistoryStats {
   loss_count: number;
   win_rate: number | null;
   avg_pnl_pct: number | null;
+  pnl_sample_count: number;
+  expectancy_r: number | null;
+  risk_amount_per_trade: number;
+  total_pnl_amount: number | null;
 }
 
 export interface ConfigChangeLogEntry {

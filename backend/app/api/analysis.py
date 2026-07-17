@@ -18,8 +18,8 @@ from app.validation import is_valid_ticker
 
 router = APIRouter(prefix="/analysis", tags=["analysis"], dependencies=[Depends(require_token)])
 
-_STOCK_TIMEFRAMES = {Timeframe.DAILY, Timeframe.HALF_SESSION}
-_CRYPTO_TIMEFRAMES = {Timeframe.DAILY, Timeframe.HOUR_1, Timeframe.HOUR_4}
+_STOCK_TIMEFRAMES = {Timeframe.DAILY, Timeframe.HALF_SESSION, Timeframe.WEEK}
+_CRYPTO_TIMEFRAMES = {Timeframe.DAILY, Timeframe.HOUR_1, Timeframe.HOUR_4, Timeframe.WEEK}
 _VALID_TIMEFRAMES = _STOCK_TIMEFRAMES | _CRYPTO_TIMEFRAMES
 _TIMEFRAMES_BY_ASSET_CLASS = {AssetClass.STOCK: _STOCK_TIMEFRAMES, AssetClass.CRYPTO: _CRYPTO_TIMEFRAMES}
 _TRACE_SUPPORTED_STRATEGIES = {"wyckoff"}
@@ -270,7 +270,11 @@ def refresh_analysis(
         )
 
     exchanges: tuple[str, ...] | None = None
-    if symbol.asset_class == AssetClass.CRYPTO:
+    if timeframe == Timeframe.WEEK:
+        # Resampled from already-ingested daily candles -- never crawled,
+        # regardless of asset class (see app.services.ingest.ingest_weekly).
+        ingest.ingest_weekly(session, ticker)
+    elif symbol.asset_class == AssetClass.CRYPTO:
         exchanges = settings_service.get_crypto_exchanges(session)
         ingest.ingest_crypto(
             session, ticker, timeframe, exchange_symbol=symbol.display_symbol, exchanges=exchanges, symbol=symbol

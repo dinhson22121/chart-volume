@@ -87,6 +87,17 @@ DEFAULTS: dict[str, str] = {
     # 10-ticker batch across the whole tracked universe) -- off by default.
     "potential_screen_auto_enabled": "false",
     "potential_screen_time": "06:30",
+    # Risk management (Trade Scenario sizing/portfolio caps): notional_capital
+    # is unitless (interpreted in whatever currency the user tracks -- VND for
+    # stocks, USD for crypto), used only to turn a scenario's R-multiple into
+    # a display $ amount at read time (see app.services.trade_scenario). None
+    # of this affects TP/SL trigger levels, which stay purely price-based.
+    "notional_capital": "100000000",
+    "risk_pct_per_trade": "1.0",
+    "slippage_pct_stock": "0.05",
+    "slippage_pct_crypto": "0.3",
+    "max_concurrent_scenarios": "10",
+    "max_concurrent_scenarios_crypto": "5",
 }
 
 # Allowed values for settings that are a fixed choice rather than a free number.
@@ -98,12 +109,14 @@ CRYPTO_ANALYSIS_INTERVAL_CHOICES = SCREENER_INTERVAL_CHOICES
 _FLOAT_KEYS = {
     "climax_vol_mult", "wide_spread_mult", "narrow_spread_mult", "low_vol_mult", "sos_vol_mult",
     "screener_mcap_max", "screener_min_volume_change_pct", "sonicr_t3_vfactor", "smc_fvg_min_gap_mult",
+    "notional_capital", "risk_pct_per_trade", "slippage_pct_stock", "slippage_pct_crypto",
 }
 _INT_KEYS = {
     "daily_lookback_days", "half_session_lookback_days", "lps_lookback_bars",
     "sonicr_dragon_period", "sonicr_t3_fast_period", "sonicr_t3_slow_period",
     "sonicr_cci_fast_period", "sonicr_cci_slow_period", "sonicr_pullback_lookback_bars",
     "smc_swing_lookback", "smc_ob_lookback_bars",
+    "max_concurrent_scenarios", "max_concurrent_scenarios_crypto",
 }
 _BOOL_KEYS = {
     "scheduler_enabled", "screener_enabled", "screener_require_volume_rising", "crypto_analysis_enabled",
@@ -267,6 +280,22 @@ def get_smc_config(session: Session) -> SMCConfig:
         ob_lookback_bars=int(val("smc_ob_lookback_bars")),
         fvg_min_gap_mult=val("smc_fvg_min_gap_mult"),
     )
+
+
+def get_risk_config(session: Session) -> dict:
+    stored = _stored(session)
+
+    def val(key: str) -> float:
+        return float(stored.get(key, DEFAULTS[key]))
+
+    return {
+        "notional_capital": val("notional_capital"),
+        "risk_pct_per_trade": val("risk_pct_per_trade"),
+        "slippage_pct_stock": val("slippage_pct_stock"),
+        "slippage_pct_crypto": val("slippage_pct_crypto"),
+        "max_concurrent_scenarios": int(val("max_concurrent_scenarios")),
+        "max_concurrent_scenarios_crypto": int(val("max_concurrent_scenarios_crypto")),
+    }
 
 
 def get_scheduler_config(session: Session) -> dict:

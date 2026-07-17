@@ -19,6 +19,7 @@ class Timeframe:
     HALF_SESSION = "half_session"  # stocks only (VN market session halves)
     HOUR_1 = "1h"  # crypto only
     HOUR_4 = "4h"  # crypto only
+    WEEK = "1w"  # both stock and crypto -- resampled from daily, never crawled directly
 
 
 class SessionPart:
@@ -209,6 +210,12 @@ class TradeScenario(SQLModel, table=True):
     closed_at: Optional[datetime] = None
     closed_bar_ts: Optional[datetime] = None
     close_reason: Optional[str] = None
+    # Set once, at close time, for all 3 close paths (hit_tp -> take_profit,
+    # hit_sl -> stop_loss, expired -> last known close) -- see
+    # app.services.trade_scenario._update_active_scenarios. Lets
+    # get_scenario_stats compute R-multiple/P&L uniformly across every closed
+    # status instead of excluding "expired" for lack of an exit price.
+    exit_price: Optional[float] = None
     updated_at: datetime = Field(default_factory=_utcnow)
 
 

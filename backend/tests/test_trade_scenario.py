@@ -4,10 +4,10 @@ import pandas as pd
 import pytest
 
 from app.ai.narrative import PROVIDER_ANTHROPIC, ProviderConfig
-from app.models import TradeScenario, Timeframe
-from app.services import trade_scenario
+from app.models import AssetClass, Symbol, TradeScenario, Timeframe
+from app.services import settings_service, trade_scenario
 from app.wyckoff import BEARISH_EVENTS, BULLISH_EVENTS, RANGING_PHASES, Levels
-from app.wyckoff.events import SOW, SPRING, WyckoffEvent
+from app.wyckoff.events import NO_DEMAND, NO_SUPPLY, SELLING_CLIMAX, SOW, SPRING, WyckoffEvent
 from app.wyckoff.phase import PHASE_RANGING
 
 STRATEGY = "wyckoff"
@@ -22,8 +22,14 @@ def _candle(day: int, *, low: float, high: float, close: float):
     )
 
 
-def _event(event_type: str, index: int, candle) -> WyckoffEvent:
-    return WyckoffEvent(type=event_type, index=index, ts=candle.bucket_start, price=candle.close)
+def _event(event_type: str, index: int, candle, volume_confirmed: bool | None = True) -> WyckoffEvent:
+    # Defaults to True so pre-existing tests (about entry/SL/TP formulas,
+    # lifecycle, idempotency -- not about Volume Profile gating) keep
+    # creating scenarios as before; tests exercising the VP gate itself pass
+    # False/None explicitly.
+    return WyckoffEvent(
+        type=event_type, index=index, ts=candle.bucket_start, price=candle.close, volume_confirmed=volume_confirmed
+    )
 
 
 def _select_scenario():
@@ -39,13 +45,13 @@ def _fake_strategy_module(phase: str = PHASE_RANGING):
     return types.SimpleNamespace(analyze=lambda *a, **k: types.SimpleNamespace(phase=phase))
 
 
-def _sync(session, ticker, candles, events, language="vi", phase=PHASE_RANGING):
+def _sync(session, ticker, candles, events, language="vi", phase=PHASE_RANGING, daily_trend=None):
     # api_key="" -> is_available() is False -> explanation always falls back
     # to the deterministic template, so these tests never make a real AI call.
     provider_cfg = ProviderConfig(provider=PROVIDER_ANTHROPIC, model="claude-sonnet-4-5", api_key="", language=language)
     trade_scenario.sync_scenarios(
         session, ticker, Timeframe.DAILY, STRATEGY, candles, events, BULLISH_EVENTS, BEARISH_EVENTS, LEVELS,
-        provider_cfg, _fake_strategy_module(phase), None, None, RANGING_PHASES,
+        provider_cfg, _fake_strategy_module(phase), None, daily_trend, RANGING_PHASES,
     )
 
 
@@ -158,6 +164,66 @@ def test_creates_bearish_scenario_with_mirrored_formulas(session):
     assert row.take_profit == pytest.approx(100.0 - 20.0)
 
 
+def test_no_supply_never_creates_a_scenario(session):
+    # NoDemand/NoSupply are continuation signals that fire inside an existing
+    # trend, not a range breakout -- there's no coherent prior range to
+    # measure a move from, and they're the two weakest event types by win
+    # rate (signal_outcomes stats). They're excluded from scenario creation
+    # entirely; signal_outcomes still records them separately.
+    candles = [_candle(i, low=99.0, high=101.0, close=100.0) for i in range(20)]
+    candles.append(_candle(20, low=99.0, high=105.0, close=105.0))  # NoSupply event bar
+    event = _event(NO_SUPPLY, 20, candles[20])
+
+    _sync(session, "FPT", candles, [event])
+
+    assert session.exec(_select_scenario()).first() is None
+
+
+def test_no_demand_never_creates_a_scenario(session):
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    event = _event(NO_DEMAND, 5, candles[5])
+
+    _sync(session, "FPT", candles, [event])
+
+    assert session.exec(_select_scenario()).first() is None
+
+
+def test_scenario_blocked_when_event_conflicts_with_daily_trend(session):
+    # mtf_alignment used to be informational only -- a bullish Spring against
+    # a bearish daily trend still spawned a trade plan. It's a hard gate now.
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    event = _event(SPRING, 5, candles[5])  # bullish
+
+    _sync(session, "FPT", candles, [event], daily_trend="bearish")
+
+    assert session.exec(_select_scenario()).first() is None
+
+
+def test_scenario_created_when_event_aligns_with_daily_trend(session):
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    event = _event(SPRING, 5, candles[5])  # bullish
+
+    _sync(session, "FPT", candles, [event], daily_trend="bullish")
+
+    assert session.exec(_select_scenario()).one() is not None
+
+
+def test_scenario_not_gated_by_daily_trend_when_unknown(session):
+    # daily_trend=None (the daily timeframe itself, or no daily analysis yet)
+    # must not block anything -- this is the default _sync already exercises
+    # in every other test in this file, asserted explicitly here.
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    event = _event(SPRING, 5, candles[5])
+
+    _sync(session, "FPT", candles, [event], daily_trend=None)
+
+    assert session.exec(_select_scenario()).one() is not None
+
+
 def test_first_ever_run_against_a_long_history_picks_the_latest_event_not_the_oldest(session):
     # Regression: on the very first run for a ticker with years of candle
     # history, `events` contains every qualifying event ever detected. A
@@ -241,6 +307,58 @@ def test_no_scenario_when_phase_before_event_was_already_trending(session):
     _sync(session, "FPT", candles, [event], phase="Markup")
 
     assert session.exec(_select_scenario()).all() == []
+
+
+def test_no_scenario_when_volume_profile_does_not_confirm_a_gated_event_type(session):
+    # SOS/SOW/Spring/Upthrust are the only event types Volume Profile has a
+    # confirmation rule for -- explicitly unconfirmed (volume_confirmed=False)
+    # must block scenario creation now that VP is part of the entry gate.
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    event = _event(SPRING, 5, candles[5], volume_confirmed=False)
+
+    _sync(session, "FPT", candles, [event])
+
+    assert session.exec(_select_scenario()).all() == []
+
+
+def test_no_scenario_when_volume_profile_confirmation_was_never_evaluated(session):
+    # volume_confirmed=None means "not enough history for a profile yet", not
+    # "confirmed" -- treating None as a free pass would let a gated event
+    # type through before VP could ever weigh in. Must block the same as an
+    # explicit False.
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    event = _event(SPRING, 5, candles[5], volume_confirmed=None)
+
+    _sync(session, "FPT", candles, [event])
+
+    assert session.exec(_select_scenario()).all() == []
+
+
+def test_scenario_created_when_volume_profile_confirms_a_gated_event_type(session):
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    event = _event(SPRING, 5, candles[5], volume_confirmed=True)
+
+    _sync(session, "FPT", candles, [event])
+
+    assert session.exec(_select_scenario()).one() is not None
+
+
+def test_ungated_event_type_ignores_missing_volume_confirmation(session):
+    # Climaxes/LPS/LPSY have no VP confirmation rule at all (see
+    # _VP_GATED_EVENT_TYPES) -- their volume_confirmed is always None in
+    # production, and that must NOT block them the way it blocks a gated
+    # type. (NoDemand/NoSupply are also ungated here, but they're excluded
+    # from scenario creation entirely -- see test_no_supply_never_creates_a_scenario.)
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    event = _event(SELLING_CLIMAX, 5, candles[5], volume_confirmed=None)
+
+    _sync(session, "FPT", candles, [event])
+
+    assert session.exec(_select_scenario()).one() is not None
 
 
 def test_sync_is_idempotent_for_the_same_event(session):
@@ -372,11 +490,13 @@ def test_get_scenario_returns_none_when_nothing_tracked(session):
 def _make_scenario(
     session, *, ticker="FPT", timeframe=Timeframe.DAILY, strategy=STRATEGY, event_type="SOS",
     day=0, is_bullish=True, entry=100.0, stop_loss=95.0, take_profit=110.0, status="active",
+    exit_price=None,
 ):
     row = TradeScenario(
         ticker=ticker, timeframe=timeframe, strategy=strategy, event_type=event_type,
         event_ts=pd.Timestamp("2025-01-01") + pd.Timedelta(days=day), is_bullish=is_bullish,
         entry=entry, stop_loss=stop_loss, take_profit=take_profit, max_bars=10, status=status,
+        exit_price=exit_price,
     )
     session.add(row)
     session.commit()
@@ -482,3 +602,185 @@ def test_scenario_stats_respects_ticker_and_strategy_filters(session):
     smc_stats = trade_scenario.get_scenario_stats(session, strategy="smc")
     assert smc_stats["decided_count"] == 1
     assert smc_stats["loss_count"] == 1
+
+
+# --- M4: exit_price capture, portfolio caps, R-multiple/expectancy/$ P&L ---
+
+def test_exit_price_set_on_hit_sl(session):
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    event = _event(SPRING, 5, candles[5])
+    _sync(session, "FPT", candles, [event])
+    stop_loss = session.exec(_select_scenario()).one().stop_loss
+
+    candles.append(_candle(6, low=stop_loss - 1, high=stop_loss - 1, close=stop_loss - 1))
+    _sync(session, "FPT", candles, [event])
+
+    row = session.exec(_select_scenario()).one()
+    assert row.status == "hit_sl"
+    assert row.exit_price == pytest.approx(stop_loss)
+
+
+def test_exit_price_set_on_hit_tp(session):
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    event = _event(SPRING, 5, candles[5])
+    _sync(session, "FPT", candles, [event])
+    take_profit = session.exec(_select_scenario()).one().take_profit
+
+    candles.append(_candle(6, low=take_profit, high=take_profit + 1, close=take_profit))
+    _sync(session, "FPT", candles, [event])
+
+    row = session.exec(_select_scenario()).one()
+    assert row.status == "hit_tp"
+    assert row.exit_price == pytest.approx(take_profit)
+
+
+def test_exit_price_set_on_expiry_to_last_close(session):
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    event = _event(SPRING, 5, candles[5])
+    _sync(session, "FPT", candles, [event])
+
+    for i in range(6, 6 + trade_scenario.DEFAULT_MAX_BARS):
+        candles.append(_candle(i, low=99.0, high=101.0, close=100.0))
+    _sync(session, "FPT", candles, [event])
+
+    row = session.exec(_select_scenario()).one()
+    assert row.status == "expired"
+    assert row.exit_price == pytest.approx(candles[-1].close)
+
+
+def test_portfolio_cap_blocks_new_scenario_when_at_global_limit(session):
+    settings_service.update(session, {"max_concurrent_scenarios": "1"})
+    _make_scenario(session, ticker="HPG", status="active")  # already at the cap of 1
+
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    event = _event(SPRING, 5, candles[5])
+    _sync(session, "FPT", candles, [event])
+
+    assert session.exec(_select_scenario().where(TradeScenario.ticker == "FPT")).first() is None
+
+
+def test_portfolio_cap_crypto_sub_limit_blocks_only_crypto(session):
+    session.add(Symbol(ticker="BITCOIN", asset_class=AssetClass.CRYPTO))
+    session.add(Symbol(ticker="ETHEREUM", asset_class=AssetClass.CRYPTO))
+    session.add(Symbol(ticker="FPT", asset_class=AssetClass.STOCK))
+    session.commit()
+    settings_service.update(session, {"max_concurrent_scenarios_crypto": "1"})
+    _make_scenario(session, ticker="ETHEREUM", status="active")  # crypto already at its sub-cap
+
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    event = _event(SPRING, 5, candles[5])
+
+    _sync(session, "BITCOIN", candles, [event])
+    assert session.exec(_select_scenario().where(TradeScenario.ticker == "BITCOIN")).first() is None
+
+    _sync(session, "FPT", candles, [event])  # stock isn't subject to the crypto sub-cap
+    assert session.exec(_select_scenario().where(TradeScenario.ticker == "FPT")).first() is not None
+
+
+def test_scenario_stats_expectancy_r_and_pnl_amount(session):
+    settings_service.update(session, {"notional_capital": "100000", "risk_pct_per_trade": "1.0"})
+    # Bullish, risk distance 5 (entry 100 -> stop 95). Hits TP at 110 ->
+    # raw R = (110-100)/5 = +2.0R. Zero slippage configured for stock.
+    settings_service.update(session, {"slippage_pct_stock": "0.0", "slippage_pct_crypto": "0.0"})
+    _make_scenario(
+        session, is_bullish=True, entry=100.0, stop_loss=95.0, take_profit=110.0,
+        status="hit_tp", exit_price=110.0,
+    )
+    # Bullish, same risk distance, hits SL at 95 -> raw R = (95-100)/5 = -1.0R.
+    _make_scenario(
+        session, is_bullish=True, entry=100.0, stop_loss=95.0, take_profit=110.0,
+        status="hit_sl", exit_price=95.0, day=1,
+    )
+
+    stats = trade_scenario.get_scenario_stats(session)
+
+    assert stats["pnl_sample_count"] == 2
+    assert stats["expectancy_r"] == pytest.approx((2.0 + (-1.0)) / 2)
+    risk_amount = 100000 * 1.0 / 100  # 1000
+    assert stats["risk_amount_per_trade"] == pytest.approx(risk_amount)
+    assert stats["total_pnl_amount"] == pytest.approx(risk_amount * (2.0 + (-1.0)))
+
+
+def test_scenario_stats_includes_expired_in_expectancy_but_not_win_rate(session):
+    # Expired-but-favorable: drifted to 105 without ever touching TP(110)/SL(95).
+    # Contributes positive R to expectancy, but win_count/win_rate stay
+    # defined only over hit_tp/hit_sl (unchanged, narrower meaning).
+    settings_service.update(session, {"slippage_pct_stock": "0.0"})
+    _make_scenario(
+        session, is_bullish=True, entry=100.0, stop_loss=95.0, take_profit=110.0,
+        status="expired", exit_price=105.0,
+    )
+
+    stats = trade_scenario.get_scenario_stats(session)
+
+    assert stats["decided_count"] == 0  # no hit_tp/hit_sl rows
+    assert stats["win_rate"] is None
+    assert stats["pnl_sample_count"] == 1
+    assert stats["expectancy_r"] == pytest.approx((105.0 - 100.0) / 5.0)  # +1.0R
+
+
+def test_scenario_stats_slippage_worsens_bullish_exit(session):
+    settings_service.update(session, {"slippage_pct_stock": "1.0"})  # 1% of entry
+    _make_scenario(
+        session, ticker="FPT", is_bullish=True, entry=100.0, stop_loss=95.0, take_profit=110.0,
+        status="hit_tp", exit_price=110.0,
+    )
+
+    stats = trade_scenario.get_scenario_stats(session)
+
+    # Slippage worsens a bullish exit downward: adjusted_exit = 110 - 1 (1% of
+    # entry 100) = 109 -> R = (109-100)/5 = 1.8, less than the naive 2.0.
+    assert stats["expectancy_r"] == pytest.approx(1.8)
+
+
+# --- M5: filter by asset_class (VN30 stocks vs crypto) ---
+
+def test_list_scenarios_filters_by_asset_class(session):
+    session.add(Symbol(ticker="FPT", asset_class=AssetClass.STOCK))
+    session.add(Symbol(ticker="BITCOIN", asset_class=AssetClass.CRYPTO))
+    session.commit()
+    _make_scenario(session, ticker="FPT")
+    _make_scenario(session, ticker="BITCOIN", day=1)
+
+    stock_items, stock_total = trade_scenario.list_scenarios(
+        session, page=1, page_size=50, asset_class=AssetClass.STOCK
+    )
+    crypto_items, crypto_total = trade_scenario.list_scenarios(
+        session, page=1, page_size=50, asset_class=AssetClass.CRYPTO
+    )
+
+    assert stock_total == 1
+    assert {i.ticker for i in stock_items} == {"FPT"}
+    assert crypto_total == 1
+    assert {i.ticker for i in crypto_items} == {"BITCOIN"}
+
+
+def test_list_scenarios_unfiltered_ignores_asset_class(session):
+    # A scenario for a ticker with no Symbol row at all (e.g. seeded directly
+    # in a test, or a ticker not yet promoted) must still show up when no
+    # asset_class filter is applied -- the join only kicks in when requested.
+    _make_scenario(session, ticker="UNKNOWN")
+
+    items, total = trade_scenario.list_scenarios(session, page=1, page_size=50)
+    assert total == 1
+
+
+def test_scenario_stats_filters_by_asset_class(session):
+    session.add(Symbol(ticker="FPT", asset_class=AssetClass.STOCK))
+    session.add(Symbol(ticker="BITCOIN", asset_class=AssetClass.CRYPTO))
+    session.commit()
+    _make_scenario(session, ticker="FPT", status="hit_tp")
+    _make_scenario(session, ticker="BITCOIN", status="hit_sl", day=1)
+
+    stock_stats = trade_scenario.get_scenario_stats(session, asset_class=AssetClass.STOCK)
+    crypto_stats = trade_scenario.get_scenario_stats(session, asset_class=AssetClass.CRYPTO)
+
+    assert stock_stats["decided_count"] == 1
+    assert stock_stats["win_count"] == 1
+    assert crypto_stats["decided_count"] == 1
+    assert crypto_stats["loss_count"] == 1

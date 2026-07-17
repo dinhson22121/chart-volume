@@ -43,9 +43,10 @@ def get_trade_history(
     ticker: str | None = None,
     status: str | None = None,
     strategy: str | None = None,
+    asset_class: str | None = Query(default=None, description="Filter to 'stock' or 'crypto'"),
     session: Session = Depends(get_session),
 ) -> dict:
-    items, total = trade_scenario.list_scenarios(session, page, page_size, ticker, status, strategy)
+    items, total = trade_scenario.list_scenarios(session, page, page_size, ticker, status, strategy, asset_class)
     return {
         "items": [_scenario_out(s) for s in items],
         "total": total,
@@ -58,6 +59,7 @@ def get_trade_history(
 def get_trade_history_stats(
     ticker: str | None = None,
     strategy: str | None = None,
+    asset_class: str | None = Query(default=None, description="Filter to 'stock' or 'crypto'"),
     session: Session = Depends(get_session),
 ) -> dict:
-    return trade_scenario.get_scenario_stats(session, ticker, strategy)
+    return trade_scenario.get_scenario_stats(session, ticker, strategy, asset_class)

@@ -249,3 +249,54 @@ def test_ingest_crypto_skips_geckoterminal_when_disabled(session, mocker):
 
     assert count == 0
     gt_ohlcv.assert_not_called()
+
+
+def _seed_daily_candles(session, ticker: str, rows: list[dict]):
+    for row in rows:
+        session.add(Candle(ticker=ticker, timeframe=Timeframe.DAILY, **row))
+    session.commit()
+
+
+def test_ingest_weekly_resamples_from_stored_daily_candles(session, mocker):
+    # No crawler client should ever be touched -- weekly is a pure resample
+    # of daily candles already in the DB.
+    daily_spy = mocker.patch.object(ingest.vnstock_client, "fetch_daily")
+    _seed_daily_candles(session, "FPT", [
+        dict(bucket_start=pd.Timestamp("2025-06-30").to_pydatetime(), open=100, high=101, low=99, close=100.5, volume=1000),
+        dict(bucket_start=pd.Timestamp("2025-07-01").to_pydatetime(), open=100.5, high=103, low=100, close=102, volume=1500),
+    ])
+
+    count = ingest.ingest_weekly(session, "fpt")
+
+    assert count == 1
+    daily_spy.assert_not_called()
+    row = session.exec(select(Candle).where(Candle.timeframe == Timeframe.WEEK)).one()
+    assert row.ticker == "FPT"
+    assert row.bucket_start == pd.Timestamp("2025-06-30").to_pydatetime()
+    assert row.open == 100 and row.close == 102 and row.high == 103 and row.volume == 2500
+
+
+def test_ingest_weekly_is_idempotent_and_updates(session):
+    _seed_daily_candles(session, "FPT", [
+        dict(bucket_start=pd.Timestamp("2025-06-30").to_pydatetime(), open=100, high=101, low=99, close=100.5, volume=1000),
+    ])
+    ingest.ingest_weekly(session, "FPT")
+
+    # A new daily bar lands in the same week -- re-running must update the
+    # existing weekly row in place, not duplicate it.
+    session.add(Candle(
+        ticker="FPT", timeframe=Timeframe.DAILY,
+        bucket_start=pd.Timestamp("2025-07-01").to_pydatetime(), open=100.5, high=105, low=100, close=104, volume=800,
+    ))
+    session.commit()
+    ingest.ingest_weekly(session, "FPT")
+
+    rows = session.exec(select(Candle).where(Candle.timeframe == Timeframe.WEEK)).all()
+    assert len(rows) == 1
+    assert rows[0].close == 104
+    assert rows[0].high == 105
+    assert rows[0].volume == 1800
+
+
+def test_ingest_weekly_returns_zero_without_daily_history(session):
+    assert ingest.ingest_weekly(session, "NOPE") == 0

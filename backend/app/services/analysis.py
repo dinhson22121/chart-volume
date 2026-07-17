@@ -84,14 +84,19 @@ def run_analysis(
     timeframe: str,
     use_ai: bool = True,
     force: bool = False,
+    strategy: str | None = None,
 ) -> Analysis | None:
+    """``strategy`` defaults to the user's globally active strategy (Settings)
+    when omitted -- callers pass it explicitly to analyse under a *different*
+    strategy than the active one (see ``run_shadow_strategies``), without
+    touching the active-strategy setting itself."""
     ticker = ticker.upper()
     candles = _load_candles(session, ticker, timeframe)
     if not candles:
         logger.info("no candles for %s/%s, skipping analysis", ticker, timeframe)
         return None
 
-    strategy = settings_service.get_strategy(session)
+    strategy = strategy or settings_service.get_strategy(session)
     strategy_module = strategy_registry.get_strategy(strategy)
     strategy_cfg = settings_service.get_strategy_config(session, strategy)
     daily_trend = (
@@ -189,3 +194,19 @@ def run_analysis(
     session.commit()
     session.refresh(analysis)
     return analysis
+
+
+def run_shadow_strategies(session: Session, ticker: str, timeframe: str, active_strategy: str) -> None:
+    """Analyse ``ticker``/``timeframe`` under every strategy OTHER than the
+    user's active one, so signal_outcomes/trade_scenario data accumulates for
+    all strategies (not just whichever one is currently shown in the UI) --
+    without ever calling the LLM or touching the active-strategy setting.
+    Callers isolate their own failures per strategy the same way scheduler
+    batch functions isolate per-ticker failures."""
+    for key in strategy_registry.REGISTRY:
+        if key == active_strategy:
+            continue
+        try:
+            run_analysis(session, ticker, timeframe, use_ai=False, strategy=key)
+        except Exception as exc:  # noqa: BLE001 - one strategy's failure must not block the others
+            logger.warning("shadow analysis failed for %s/%s/%s: %s", ticker, timeframe, key, exc)

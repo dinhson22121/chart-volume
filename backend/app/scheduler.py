@@ -27,7 +27,7 @@ from app.config import TIMEZONE
 from app.db import get_engine
 from app.models import AssetClass, Symbol, Timeframe
 from app.services import activity_log, crypto_screener, ingest, potential_screener, settings_service, top100
-from app.services.analysis import run_analysis
+from app.services.analysis import run_analysis, run_shadow_strategies
 
 logger = logging.getLogger("chart_volume.scheduler")
 
@@ -112,7 +112,15 @@ def _run_stock_symbol(engine, ticker: str, timeframe: str, use_ai: bool) -> bool
                 ingest.ingest_daily(session, ticker)
             else:
                 ingest.ingest_half_session(session, ticker)
-            run_analysis(session, ticker, timeframe, use_ai=use_ai)
+            active_strategy = settings_service.get_strategy(session)
+            run_analysis(session, ticker, timeframe, use_ai=use_ai, strategy=active_strategy)
+            run_shadow_strategies(session, ticker, timeframe, active_strategy)
+            if timeframe == Timeframe.DAILY:
+                # Weekly rides the daily close -- it's a resample of daily
+                # candles already just ingested above, not a separate crawl.
+                ingest.ingest_weekly(session, ticker)
+                run_analysis(session, ticker, Timeframe.WEEK, use_ai=use_ai, strategy=active_strategy)
+                run_shadow_strategies(session, ticker, Timeframe.WEEK, active_strategy)
         return True
     except Exception as exc:  # noqa: BLE001 - isolate per-ticker failures
         logger.warning("batch %s failed for %s: %s", timeframe, ticker, exc)
@@ -152,7 +160,15 @@ def _run_crypto_symbol_timeframe(engine, ticker: str, timeframe: str, exchanges,
                 exchange_symbol=symbol.display_symbol if symbol else None,
                 exchanges=exchanges, symbol=symbol,
             )
-            run_analysis(session, ticker, timeframe, use_ai=use_ai)
+            active_strategy = settings_service.get_strategy(session)
+            run_analysis(session, ticker, timeframe, use_ai=use_ai, strategy=active_strategy)
+            run_shadow_strategies(session, ticker, timeframe, active_strategy)
+            if timeframe == Timeframe.DAILY:
+                # Weekly rides the daily leg -- resampled from daily candles
+                # already just ingested above, not a separate exchange call.
+                ingest.ingest_weekly(session, ticker)
+                run_analysis(session, ticker, Timeframe.WEEK, use_ai=use_ai, strategy=active_strategy)
+                run_shadow_strategies(session, ticker, Timeframe.WEEK, active_strategy)
         return True
     except Exception as exc:  # noqa: BLE001 - isolate per-ticker/timeframe failures
         logger.warning("crypto batch %s/%s failed: %s", ticker, timeframe, exc)

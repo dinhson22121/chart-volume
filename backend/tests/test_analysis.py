@@ -51,10 +51,12 @@ def test_run_analysis_caches_and_skips_llm(session, mocker):
     analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY)
     analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY)  # same as_of -> cached
 
-    # 2 calls from the first run only: 1 narrative + 1 trade_scenario
-    # explanation for the new Spring event -- the second (cached) run makes
-    # neither call again (narrative cache hit, scenario already exists).
-    assert spy.call_count == 2
+    # 1 call from the first run: narrative only. The Spring event doesn't
+    # spawn a scenario (and thus no explanation call) here -- Volume Profile
+    # can't be computed from only 26 bars (needs vp_lookback_bars=50), so
+    # volume_confirmed stays None, which the VP entry gate treats as
+    # unconfirmed. The second (cached) run makes no call at all.
+    assert spy.call_count == 1
     assert len(session.exec(select(Analysis)).all()) == 1
 
 
@@ -65,10 +67,11 @@ def test_force_reruns_llm(session, mocker):
     analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY)
     analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY, force=True)
 
-    # First run: narrative (1) + scenario explanation for the new event (1).
-    # Forced second run: narrative regenerates (+1); the scenario for the
-    # same event already exists, so no second explanation call.
-    assert spy.call_count == 3
+    # First run: narrative (1). No scenario explanation -- Volume Profile
+    # can't be computed from only 26 bars (needs vp_lookback_bars=50), so the
+    # Spring event's volume_confirmed stays None and the VP entry gate blocks
+    # it. Forced second run: narrative regenerates (+1) -> 2 total.
+    assert spy.call_count == 2
 
 
 def test_use_ai_false_stores_without_narrative(session, mocker):
@@ -219,3 +222,47 @@ def test_switching_strategy_creates_a_separate_analysis_row(session, mocker):
     assert {r.strategy for r in rows} == {"wyckoff", "fake-strategy"}
     wyckoff_row = next(r for r in rows if r.strategy == "wyckoff")
     assert wyckoff_row.phase == "Accumulation"  # untouched by the fake-strategy run
+
+
+# --- Shadow strategies: background data collection for strategies not currently active ---
+
+def test_run_shadow_strategies_analyses_every_other_strategy(session, mocker):
+    mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
+    _seed_candles(session, [dict(BASE) for _ in range(25)] + [SPRING_BAR])
+
+    active = settings_service.get_strategy(session)  # "wyckoff" by default
+    analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY, strategy=active)
+    analysis_svc.run_shadow_strategies(session, "FPT", Timeframe.DAILY, active)
+
+    rows = session.exec(
+        select(Analysis).where(Analysis.ticker == "FPT", Analysis.timeframe == Timeframe.DAILY)
+    ).all()
+    assert {r.strategy for r in rows} == set(strategy_registry.REGISTRY)
+    # Shadow runs never touch the LLM -- only the initial active-strategy run did.
+    for row in rows:
+        if row.strategy != active:
+            assert row.narrative is None
+
+
+def test_run_shadow_strategies_isolates_a_failing_strategy(session, mocker, caplog):
+    mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
+    _seed_candles(session, [dict(BASE) for _ in range(25)] + [SPRING_BAR])
+
+    def _broken_analyze(candles, cfg, daily_trend=None, language="vi"):
+        raise RuntimeError("boom")
+
+    broken_strategy = types.SimpleNamespace(
+        analyze=_broken_analyze, BULLISH_EVENTS=set(), BEARISH_EVENTS=set(), RANGING_PHASES=set(),
+        phase_trend=lambda _phase: "neutral",
+    )
+    mocker.patch.dict(strategy_registry.REGISTRY, {"broken-strategy": broken_strategy})
+
+    with caplog.at_level(logging.WARNING, logger="chart_volume.analysis"):
+        analysis_svc.run_shadow_strategies(session, "FPT", Timeframe.DAILY, "wyckoff")
+
+    assert "broken-strategy" in caplog.text
+    # The other (working) shadow strategies still ran despite the failure.
+    rows = session.exec(
+        select(Analysis).where(Analysis.ticker == "FPT", Analysis.timeframe == Timeframe.DAILY)
+    ).all()
+    assert {r.strategy for r in rows} == {"sonicr", "smc"}

@@ -93,6 +93,12 @@ interface FormState {
   aiNarrativeVn30: boolean;
   aiNarrativeWatchlist: boolean;
   aiNarrativeTop100: boolean;
+  notionalCapital: string;
+  riskPctPerTrade: string;
+  slippagePctStock: string;
+  slippagePctCrypto: string;
+  maxConcurrentScenarios: string;
+  maxConcurrentScenariosCrypto: string;
 }
 
 function toForm(s: Settings): FormState {
@@ -142,6 +148,12 @@ function toForm(s: Settings): FormState {
     aiNarrativeVn30: s.ai_narrative_vn30,
     aiNarrativeWatchlist: s.ai_narrative_watchlist,
     aiNarrativeTop100: s.ai_narrative_top100,
+    notionalCapital: String(s.notional_capital),
+    riskPctPerTrade: String(s.risk_pct_per_trade),
+    slippagePctStock: String(s.slippage_pct_stock),
+    slippagePctCrypto: String(s.slippage_pct_crypto),
+    maxConcurrentScenarios: String(s.max_concurrent_scenarios),
+    maxConcurrentScenariosCrypto: String(s.max_concurrent_scenarios_crypto),
   };
 }
 
@@ -189,6 +201,12 @@ function toUpdate(f: FormState): SettingsUpdate {
     ai_narrative_vn30: f.aiNarrativeVn30,
     ai_narrative_watchlist: f.aiNarrativeWatchlist,
     ai_narrative_top100: f.aiNarrativeTop100,
+    notional_capital: Number(f.notionalCapital),
+    risk_pct_per_trade: Number(f.riskPctPerTrade),
+    slippage_pct_stock: Number(f.slippagePctStock),
+    slippage_pct_crypto: Number(f.slippagePctCrypto),
+    max_concurrent_scenarios: Number(f.maxConcurrentScenarios),
+    max_concurrent_scenarios_crypto: Number(f.maxConcurrentScenariosCrypto),
   };
   if (f.anthropicApiKey.trim()) {
     update.anthropic_api_key = f.anthropicApiKey.trim();
@@ -819,6 +837,74 @@ export function SettingsModal({ onClose, strategy, onLicenseCleared }: Props) {
                 />
                 <span className="settings-hint faint">{t("settings.autoUpdate.potentialScreenHint")}</span>
               </label>
+            </section>
+
+            <section className="settings-section">
+              <h3>{t("settings.section.risk")}</h3>
+              <p className="settings-hint faint">{t("settings.risk.hint")}</p>
+              <div className="settings-grid">
+                <label className="settings-field">
+                  <span>{t("settings.risk.notionalCapital")}</span>
+                  <input
+                    type="number"
+                    step="1000000"
+                    min={0}
+                    value={form.notionalCapital}
+                    onChange={(e) => set("notionalCapital", e.target.value)}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>{t("settings.risk.riskPctPerTrade")}</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min={0.1}
+                    max={100}
+                    value={form.riskPctPerTrade}
+                    onChange={(e) => set("riskPctPerTrade", e.target.value)}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>{t("settings.risk.slippageStock")}</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    value={form.slippagePctStock}
+                    onChange={(e) => set("slippagePctStock", e.target.value)}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>{t("settings.risk.slippageCrypto")}</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    value={form.slippagePctCrypto}
+                    onChange={(e) => set("slippagePctCrypto", e.target.value)}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>{t("settings.risk.maxConcurrent")}</span>
+                  <input
+                    type="number"
+                    step="1"
+                    min={1}
+                    value={form.maxConcurrentScenarios}
+                    onChange={(e) => set("maxConcurrentScenarios", e.target.value)}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>{t("settings.risk.maxConcurrentCrypto")}</span>
+                  <input
+                    type="number"
+                    step="1"
+                    min={1}
+                    value={form.maxConcurrentScenariosCrypto}
+                    onChange={(e) => set("maxConcurrentScenariosCrypto", e.target.value)}
+                  />
+                </label>
+              </div>
             </section>
 
             {form.strategy === "wyckoff" && (

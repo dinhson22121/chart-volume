@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
-import type { StrategyOption, TradeHistoryEntry, TradeHistoryStats } from "../../types";
+import type { AssetClass, StrategyOption, TradeHistoryEntry, TradeHistoryStats } from "../../types";
 import { formatDateTimeMedium } from "../../lib/datetime";
 import { formatPrice } from "../../lib/price";
 import { useI18n } from "../../i18n/I18nContext";
@@ -44,6 +44,7 @@ export function TradeHistoryModal({ onClose }: Props) {
   const [tickerFilter, setTickerFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [strategyFilter, setStrategyFilter] = useState("");
+  const [assetClassFilter, setAssetClassFilter] = useState<AssetClass | "">("");
   const [strategies, setStrategies] = useState<StrategyOption[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,27 +54,32 @@ export function TradeHistoryModal({ onClose }: Props) {
 
   useEffect(() => {
     setPage(1);
-  }, [tickerFilter, statusFilter, strategyFilter]);
+  }, [tickerFilter, statusFilter, strategyFilter, assetClassFilter]);
 
   useEffect(() => {
     setError(null);
     api
-      .getTradeHistory(page, PAGE_SIZE, { ticker: tickerFilter, status: statusFilter, strategy: strategyFilter })
+      .getTradeHistory(page, PAGE_SIZE, {
+        ticker: tickerFilter,
+        status: statusFilter,
+        strategy: strategyFilter,
+        assetClass: assetClassFilter || undefined,
+      })
       .then((res) => {
         setItems(res.items);
         setTotal(res.total);
       })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : t("tradeHistory.error")));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, tickerFilter, statusFilter, strategyFilter]);
+  }, [page, tickerFilter, statusFilter, strategyFilter, assetClassFilter]);
 
   useEffect(() => {
     api
-      .getTradeHistoryStats({ ticker: tickerFilter, strategy: strategyFilter })
+      .getTradeHistoryStats({ ticker: tickerFilter, strategy: strategyFilter, assetClass: assetClassFilter || undefined })
       .then(setStats)
       .catch(() => setStats(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tickerFilter, strategyFilter]);
+  }, [tickerFilter, strategyFilter, assetClassFilter]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -143,7 +149,18 @@ export function TradeHistoryModal({ onClose }: Props) {
                 ))}
               </select>
             </div>
-            {(tickerFilter || statusFilter || strategyFilter) && (
+            <div className="th-select">
+              <select
+                className={assetClassFilter ? "is-set" : ""}
+                value={assetClassFilter}
+                onChange={(e) => setAssetClassFilter(e.target.value as AssetClass | "")}
+              >
+                <option value="">{t("dashboard.filter.all")}</option>
+                <option value="stock">{t("dashboard.filter.stock")}</option>
+                <option value="crypto">{t("dashboard.filter.crypto")}</option>
+              </select>
+            </div>
+            {(tickerFilter || statusFilter || strategyFilter || assetClassFilter) && (
               <button
                 type="button"
                 className="th-clear-filters"
@@ -151,6 +168,7 @@ export function TradeHistoryModal({ onClose }: Props) {
                   setTickerFilter("");
                   setStatusFilter("");
                   setStrategyFilter("");
+                  setAssetClassFilter("");
                 }}
               >
                 {t("tradeHistory.filter.clear")} ×
@@ -167,6 +185,31 @@ export function TradeHistoryModal({ onClose }: Props) {
               <span>{t("tradeHistory.stats.winRate", { rate: pct(stats.win_rate) })}</span>
               <span>{t("tradeHistory.stats.avgPnl", { pnl: pnl(stats.avg_pnl_pct) })}</span>
               <span title={t("tradeHistory.stats.excludesExpiredHint")}>ⓘ</span>
+              {stats.pnl_sample_count > 0 && (
+                <>
+                  <span
+                    style={{
+                      fontWeight: 700,
+                      color:
+                        stats.expectancy_r === null
+                          ? undefined
+                          : stats.expectancy_r >= 0
+                            ? "var(--bull)"
+                            : "var(--bear)",
+                    }}
+                  >
+                    {t("tradeHistory.stats.expectancy", { r: stats.expectancy_r?.toFixed(2) ?? "—" })}
+                  </span>
+                  <span title={t("tradeHistory.stats.expectancyHint")}>ⓘ</span>
+                  {stats.total_pnl_amount !== null && (
+                    <span>
+                      {t("tradeHistory.stats.totalPnl", {
+                        amount: stats.total_pnl_amount.toLocaleString(),
+                      })}
+                    </span>
+                  )}
+                </>
+              )}
             </div>
           )}
 

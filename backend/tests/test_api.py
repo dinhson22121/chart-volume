@@ -193,6 +193,40 @@ def test_refresh_crypto_ticker_uses_binance_not_vnstock(session, client, auth_he
     vnstock_spy.assert_not_called()
 
 
+def test_refresh_weekly_resamples_from_daily_without_crawling_again(client, auth_header, mocker):
+    daily_spy = mocker.patch.object(ingest.vnstock_client, "fetch_daily", return_value=_daily_df())
+    mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
+
+    daily_resp = client.post("/analysis/FPT/refresh?timeframe=daily", headers=auth_header)
+    assert daily_resp.status_code == 200
+    daily_spy.assert_called_once()
+
+    weekly_resp = client.post("/analysis/FPT/refresh?timeframe=1w", headers=auth_header)
+    assert weekly_resp.status_code == 200
+    daily_spy.assert_called_once()  # weekly never re-crawled -- resampled from the daily candles above
+
+    weekly_candles = client.get("/candles/FPT?timeframe=1w", headers=auth_header).json()
+    assert len(weekly_candles) >= 2  # 26 daily bars span more than one calendar week
+
+
+def test_refresh_weekly_for_crypto_does_not_call_exchange(session, client, auth_header, mocker):
+    from app.crawler import binance_client
+    from app.models import AssetClass, Symbol
+
+    session.add(Symbol(ticker="BTC", asset_class=AssetClass.CRYPTO, is_watchlist=True))
+    session.commit()
+    binance_spy = mocker.patch.object(binance_client, "fetch_klines", return_value=_crypto_klines_df())
+    mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
+
+    daily_resp = client.post("/analysis/BTC/refresh?timeframe=daily", headers=auth_header)
+    assert daily_resp.status_code == 200
+    binance_spy.assert_called_once()
+
+    weekly_resp = client.post("/analysis/BTC/refresh?timeframe=1w", headers=auth_header)
+    assert weekly_resp.status_code == 200
+    binance_spy.assert_called_once()  # weekly resampled from stored daily, no second exchange call
+
+
 def test_refresh_rejects_timeframe_not_valid_for_asset_class(session, client, auth_header):
     from app.models import AssetClass, Symbol
 

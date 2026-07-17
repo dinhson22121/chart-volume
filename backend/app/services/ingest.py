@@ -9,7 +9,7 @@ import pandas as pd
 from sqlmodel import Session, select
 
 from app.crawler import binance_client, coingecko_client, geckoterminal_client, kucoin_client, mexc_client, vnstock_client
-from app.crawler.resample import resample_half_session
+from app.crawler.resample import resample_half_session, resample_weekly
 from app.models import Candle, CryptoExchange, Symbol, Timeframe
 from app.services import settings_service
 
@@ -110,6 +110,34 @@ def ingest_half_session(
         )
     session.commit()
     logger.info("ingested %d half-session candles for %s", len(resampled), ticker)
+    return len(resampled)
+
+
+def ingest_weekly(session: Session, ticker: str) -> int:
+    """Resampled from already-ingested daily candles -- a week is just an
+    aggregation of days already in the DB, so this never crawls an external
+    source (works identically for stock and crypto tickers)."""
+    ticker = ticker.upper()
+    daily = session.exec(
+        select(Candle)
+        .where(Candle.ticker == ticker, Candle.timeframe == Timeframe.DAILY)
+        .order_by(Candle.bucket_start)
+    ).all()
+    if not daily:
+        return 0
+    df = pd.DataFrame(
+        [
+            dict(bucket_start=c.bucket_start, open=c.open, high=c.high, low=c.low, close=c.close, volume=c.volume)
+            for c in daily
+        ]
+    )
+    resampled = resample_weekly(df)
+    if resampled.empty:
+        return 0
+    for _, row in resampled.iterrows():
+        _upsert_candle(session, ticker, Timeframe.WEEK, row["bucket_start"].to_pydatetime(), row, None)
+    session.commit()
+    logger.info("ingested %d weekly candles for %s", len(resampled), ticker)
     return len(resampled)
 
 

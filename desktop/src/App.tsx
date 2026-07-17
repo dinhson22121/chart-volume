@@ -17,12 +17,14 @@ import logoIcon from "./assets/logo-icon.png";
 const STOCK_TIMEFRAME_KEYS: { key: Timeframe; labelKey: string }[] = [
   { key: "daily", labelKey: "app.timeframe.daily" },
   { key: "half_session", labelKey: "app.timeframe.halfSession" },
+  { key: "1w", labelKey: "app.timeframe.1w" },
 ];
 
 const CRYPTO_TIMEFRAME_KEYS: { key: Timeframe; labelKey: string }[] = [
   { key: "1h", labelKey: "app.timeframe.1h" },
   { key: "4h", labelKey: "app.timeframe.4h" },
   { key: "daily", labelKey: "app.timeframe.dailyCrypto" },
+  { key: "1w", labelKey: "app.timeframe.1w" },
 ];
 
 interface Props {

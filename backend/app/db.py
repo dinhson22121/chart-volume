@@ -40,6 +40,9 @@ _COLUMN_MIGRATIONS = {
         "sub_agents_json": "sub_agents_json TEXT",
         "vp_alignment": "vp_alignment TEXT",
     },
+    "tradescenario": {
+        "exit_price": "exit_price FLOAT",
+    },
 }
 
 

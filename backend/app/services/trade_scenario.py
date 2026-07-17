@@ -15,9 +15,10 @@ from sqlmodel import Session, func, select
 
 from app.ai import narrative as narrative_mod
 from app.ai.narrative import ProviderConfig
-from app.models import Candle, TradeScenario
+from app.models import AssetClass, Candle, Symbol, TradeScenario
+from app.services import settings_service
 from app.wyckoff import Levels
-from app.wyckoff.events import WyckoffEvent
+from app.wyckoff.events import SOS, SOW, SPRING, UPTHRUST, WyckoffEvent
 
 logger = logging.getLogger("chart_volume.trade_scenario")
 
@@ -47,6 +48,30 @@ DEFAULT_MAX_BARS = 10
 ATR_PERIOD = 14
 MIN_MAX_BARS = 5
 MAX_MAX_BARS = 30
+
+# NoDemand/NoSupply (app.wyckoff.events) are "supporting" signals that fire
+# *inside* an already-established trend (an absorption bar showing a lack of
+# selling/buying pressure) -- unlike Spring/SOS/SOW/BC/SC/Upthrust they don't
+# mark a breakout out of a trading range, so there's no coherent prior range
+# to project a measured move from. Using _pre_event_range_height for them
+# anyway produced take-profits up to ~18x the stop distance in production data
+# (avg 13.2% reward vs 1.02% risk on scenarios that hit SL) -- distances that
+# are effectively unreachable within max_bars and, in a 155-scenario sample,
+# accounted for 31 of 34 stop-outs. Rather than patch the TP formula, they're
+# excluded from scenario creation entirely (see _create_scenarios) -- they
+# also happen to be the two weakest signal types by win rate (signal_outcomes
+# stats), consistent with treating them as trend confirmation rather than
+# standalone entries. Harmless for other strategies' event vocabularies,
+# whose event.type never matches these.
+_CONTINUATION_EVENT_TYPES = {"NoDemand", "NoSupply"}
+
+# Same set as app.wyckoff.volume_profile._VP_CHECKABLE/phase._VP_CHECKABLE --
+# the only 4 event types Volume Profile actually has a clean confirmation
+# rule for (a genuine breakout/reclaim past the Value Area). Gating scenario
+# creation on it for the other 6 types (NoDemand/NoSupply/climaxes/LPS/LPSY)
+# would be pointless: their volume_confirmed is always None (never
+# evaluated), so they'd never pass and never create a scenario at all.
+_VP_GATED_EVENT_TYPES = {SOS, SOW, SPRING, UPTHRUST}
 
 
 def _utcnow() -> datetime:
@@ -159,6 +184,7 @@ def _update_active_scenarios(
             if hit_sl:
                 scenario.status = "hit_sl"
                 scenario.closed_bar_ts = bar.bucket_start
+                scenario.exit_price = scenario.stop_loss
                 scenario.close_reason = _close_reason(
                     "hit_sl", price=bar.close, level=scenario.stop_loss, bar_ts=bar.bucket_start, language=language
                 )
@@ -167,6 +193,7 @@ def _update_active_scenarios(
             if hit_tp:
                 scenario.status = "hit_tp"
                 scenario.closed_bar_ts = bar.bucket_start
+                scenario.exit_price = scenario.take_profit
                 scenario.close_reason = _close_reason(
                     "hit_tp", level=scenario.take_profit, bar_ts=bar.bucket_start, language=language
                 )
@@ -175,6 +202,7 @@ def _update_active_scenarios(
             if len(subsequent) >= scenario.max_bars:
                 scenario.status = "expired"
                 scenario.closed_bar_ts = subsequent[-1].bucket_start if subsequent else None
+                scenario.exit_price = subsequent[-1].close if subsequent else None
                 scenario.close_reason = _close_reason("expired", max_bars=scenario.max_bars, language=language)
 
         if scenario.status != "active":
@@ -228,6 +256,13 @@ def _compute_max_bars(candles_before_event: list[Candle], tp_distance: float) ->
     return max(MIN_MAX_BARS, min(MAX_MAX_BARS, bars))
 
 
+def _count_active(session: Session, asset_class: str | None = None) -> int:
+    query = select(TradeScenario.id).where(TradeScenario.status == "active")
+    if asset_class:
+        query = query.join(Symbol, Symbol.ticker == TradeScenario.ticker).where(Symbol.asset_class == asset_class)
+    return len(session.exec(query).all())
+
+
 def _create_scenarios(
     session: Session,
     ticker: str,
@@ -245,7 +280,14 @@ def _create_scenarios(
     ranging_phases: set[str],
     use_ai: bool,
 ) -> None:
-    qualifying = [e for e in events if e.type in bullish_events or e.type in bearish_events]
+    # NoDemand/NoSupply (see _CONTINUATION_EVENT_TYPES) never spawn a
+    # scenario on their own -- they're confirmation signals inside an
+    # already-established trend, not entry points. They're still recorded by
+    # signal_outcomes for stats; this only affects trade-plan creation.
+    qualifying = [
+        e for e in events
+        if (e.type in bullish_events or e.type in bearish_events) and e.type not in _CONTINUATION_EVENT_TYPES
+    ]
     if not qualifying:
         return
 
@@ -277,6 +319,16 @@ def _create_scenarios(
     n = len(candles)
     if event.index >= n:
         return  # defensive, mirrors signal_outcomes.record_outcomes
+    is_bullish = event.type in bullish_events
+
+    # Hard gate on multi-timeframe alignment: on an intraday timeframe with a
+    # known daily trend (see app.services.analysis._get_daily_trend),
+    # mtf_alignment used to be informational only -- a bullish signal against
+    # a bearish daily trend still spawned a trade plan. Block it instead;
+    # daily_trend is None on the daily timeframe itself or before any daily
+    # analysis exists, so this never gates those cases.
+    if daily_trend is not None and is_bullish != (daily_trend == "bullish"):
+        return
 
     # Gate on the phase as of just before the event, not the phase this same
     # analysis run just classified -- a breakout event (SOS/BOS/CHoCH-style)
@@ -291,6 +343,15 @@ def _create_scenarios(
     if phase_before_event not in ranging_phases:
         return
 
+    # Gate on Volume Profile confirmation for the 4 event types it can
+    # actually evaluate (see _VP_GATED_EVENT_TYPES). volume_confirmed is
+    # False (evaluated, didn't hold) or None (not enough history for a
+    # profile yet) -- both are treated as "not confirmed" here: an
+    # unevaluated event is a missing condition, not a free pass. Other event
+    # types skip this gate entirely (see _VP_GATED_EVENT_TYPES for why).
+    if event.type in _VP_GATED_EVENT_TYPES and not event.volume_confirmed:
+        return
+
     existing = session.exec(
         select(TradeScenario).where(
             TradeScenario.ticker == ticker,
@@ -303,10 +364,27 @@ def _create_scenarios(
     if existing is not None:
         return
 
+    # Portfolio-level risk caps: v1's has_active check above only prevents a
+    # SECOND scenario on the same (ticker, timeframe, strategy) -- it says
+    # nothing about how many are open across the whole tracked universe at
+    # once. Small-cap crypto in particular tends to move as one correlated
+    # cluster (risk-on/risk-off together), so a tighter sub-cap applies to it
+    # specifically; asset_class is a simple proxy for "correlated cluster"
+    # rather than a real correlation matrix, which is overkill at this scale.
+    risk_cfg = settings_service.get_risk_config(session)
+    if _count_active(session) >= risk_cfg["max_concurrent_scenarios"]:
+        return
+    symbol = session.get(Symbol, ticker)
+    if (
+        symbol is not None
+        and symbol.asset_class == AssetClass.CRYPTO
+        and _count_active(session, asset_class=AssetClass.CRYPTO) >= risk_cfg["max_concurrent_scenarios_crypto"]
+    ):
+        return
+
     entry = event.price
     range_height = min(_pre_event_range_height(candles, event.index, levels), entry * MAX_RANGE_HEIGHT_PCT)
     bar = candles[event.index]
-    is_bullish = event.type in bullish_events
     stop_loss = bar.low * (1 - SL_BUFFER_PCT) if is_bullish else bar.high * (1 + SL_BUFFER_PCT)
     take_profit = entry + range_height if is_bullish else entry - range_height
     max_bars = _compute_max_bars(candles[: event.index], abs(take_profit - entry))
@@ -366,7 +444,9 @@ def sync_scenarios(
     session.commit()
 
 
-def _filtered_scenarios_query(ticker: str | None, status: str | None, strategy: str | None):
+def _filtered_scenarios_query(
+    ticker: str | None, status: str | None, strategy: str | None, asset_class: str | None = None
+):
     query = select(TradeScenario)
     if ticker:
         query = query.where(TradeScenario.ticker == ticker.upper())
@@ -374,6 +454,8 @@ def _filtered_scenarios_query(ticker: str | None, status: str | None, strategy: 
         query = query.where(TradeScenario.status == status)
     if strategy:
         query = query.where(TradeScenario.strategy == strategy)
+    if asset_class:
+        query = query.join(Symbol, Symbol.ticker == TradeScenario.ticker).where(Symbol.asset_class == asset_class)
     return query
 
 
@@ -384,11 +466,12 @@ def list_scenarios(
     ticker: str | None = None,
     status: str | None = None,
     strategy: str | None = None,
+    asset_class: str | None = None,
 ) -> tuple[list[TradeScenario], int]:
     """Every scenario ever created, across all tickers -- for the Trade
     History page (as opposed to ``get_scenario``, which only ever returns one
     row for a single ticker/timeframe/strategy)."""
-    query = _filtered_scenarios_query(ticker, status, strategy)
+    query = _filtered_scenarios_query(ticker, status, strategy, asset_class)
     total = session.exec(select(func.count()).select_from(query.subquery())).one()
     items = session.exec(
         query.order_by(TradeScenario.event_ts.desc()).offset((page - 1) * page_size).limit(page_size)
@@ -397,23 +480,31 @@ def list_scenarios(
 
 
 def get_scenario_stats(
-    session: Session, ticker: str | None = None, strategy: str | None = None
+    session: Session, ticker: str | None = None, strategy: str | None = None, asset_class: str | None = None
 ) -> dict:
-    """Win rate + avg P&L computed only over scenarios closed by clearly
-    hitting TP or SL. ``expired`` scenarios are excluded from the sample --
-    not overlooked, but because the price at expiry isn't stored anywhere
-    (only ``closed_bar_ts``), so there's no reliable exit price to compute a
-    P&L from without an extra Candle lookup."""
+    """``win_count``/``loss_count``/``win_rate``/``avg_pnl_pct`` keep their
+    original, narrower meaning: only scenarios that clearly hit TP or SL.
+
+    ``expectancy_r``/``total_pnl_amount`` cover a wider sample (TP/SL/expired
+    -- every status that now carries an ``exit_price``, see
+    _update_active_scenarios) expressed as an R-multiple: return relative to
+    the scenario's own risk distance (entry-to-stop), the standard way to
+    compare trades with different stop distances. A per-ticker slippage
+    haircut (stock vs crypto, see settings_service.get_risk_config) worsens
+    exit_price in the unfavorable direction first, so the number reflects a
+    realistic fill rather than the exact trigger level. The $ amount applies
+    fixed-fractional position sizing (risk_pct_per_trade of notional_capital
+    per trade) -- both purely for display, computed at read time so tuning
+    either assumption never needs a migration."""
     total_count = session.exec(
-        select(func.count()).select_from(_filtered_scenarios_query(ticker, None, strategy).subquery())
+        select(func.count()).select_from(_filtered_scenarios_query(ticker, None, strategy, asset_class).subquery())
     ).one()
 
     decided = session.exec(
-        _filtered_scenarios_query(ticker, None, strategy).where(
+        _filtered_scenarios_query(ticker, None, strategy, asset_class).where(
             TradeScenario.status.in_(["hit_tp", "hit_sl"])
         )
     ).all()
-
     wins = [s for s in decided if s.status == "hit_tp"]
     losses = [s for s in decided if s.status == "hit_sl"]
 
@@ -423,6 +514,34 @@ def get_scenario_stats(
         return raw if s.is_bullish else -raw
 
     pnls = [_pnl_pct(s) for s in decided]
+
+    closed = session.exec(
+        _filtered_scenarios_query(ticker, None, strategy, asset_class).where(
+            TradeScenario.status.in_(["hit_tp", "hit_sl", "expired"]),
+            TradeScenario.exit_price.is_not(None),
+        )
+    ).all()
+    risk_cfg = settings_service.get_risk_config(session)
+    asset_classes = {
+        row[0]: row[1] for row in session.exec(select(Symbol.ticker, Symbol.asset_class)).all()
+    } if closed else {}
+
+    def _r_multiple(s: TradeScenario) -> float | None:
+        risk_distance = abs(s.entry - s.stop_loss)
+        if not risk_distance or s.exit_price is None:
+            return None
+        slippage_pct = (
+            risk_cfg["slippage_pct_crypto"] if asset_classes.get(s.ticker) == AssetClass.CRYPTO
+            else risk_cfg["slippage_pct_stock"]
+        ) / 100
+        slippage_amount = slippage_pct * s.entry
+        adjusted_exit = s.exit_price - slippage_amount if s.is_bullish else s.exit_price + slippage_amount
+        raw = (adjusted_exit - s.entry) / risk_distance
+        return raw if s.is_bullish else -raw
+
+    r_multiples = [r for s in closed if (r := _r_multiple(s)) is not None]
+    risk_amount = risk_cfg["notional_capital"] * risk_cfg["risk_pct_per_trade"] / 100
+
     return {
         "total_count": total_count,
         "decided_count": len(decided),
@@ -430,6 +549,10 @@ def get_scenario_stats(
         "loss_count": len(losses),
         "win_rate": round(len(wins) / len(decided), 3) if decided else None,
         "avg_pnl_pct": round(sum(pnls) / len(pnls), 4) if pnls else None,
+        "pnl_sample_count": len(r_multiples),
+        "expectancy_r": round(sum(r_multiples) / len(r_multiples), 3) if r_multiples else None,
+        "risk_amount_per_trade": round(risk_amount, 2),
+        "total_pnl_amount": round(risk_amount * sum(r_multiples), 2) if r_multiples else None,
     }
 
 

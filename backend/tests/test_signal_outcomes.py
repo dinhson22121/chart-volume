@@ -3,7 +3,7 @@ import types
 import pandas as pd
 import pytest
 
-from app.models import SignalOutcome, Timeframe
+from app.models import AssetClass, Candle, SignalOutcome, Symbol, Timeframe
 from app.services import signal_outcomes
 from app.wyckoff import BULLISH_EVENTS
 from app.wyckoff.events import SOS, SOW, SPRING, WyckoffEvent
@@ -17,6 +17,27 @@ def _candle(day: int, close: float):
         bucket_start=(t0 + pd.Timedelta(days=day)).to_pydatetime(),
         close=close,
     )
+
+
+def _seed_real_candles(session, ticker: str, n: int, start_close: float = 100.0, step: float = 1.0):
+    """Unlike _candle() above (an in-memory SimpleNamespace passed straight
+    into record_outcomes), this persists real Candle rows -- needed for
+    get_stats' baseline, which reads directly from the Candle table."""
+    t0 = pd.Timestamp("2025-01-01")
+    candles = []
+    for i in range(n):
+        c = Candle(
+            ticker=ticker,
+            timeframe=Timeframe.DAILY,
+            bucket_start=(t0 + pd.Timedelta(days=i)).to_pydatetime(),
+            open=start_close, high=start_close, low=start_close,
+            close=start_close + step * i,
+            volume=1000.0,
+        )
+        session.add(c)
+        candles.append(c)
+    session.commit()
+    return candles
 
 
 def _event(event_type: str, index: int, ts, price: float) -> WyckoffEvent:
@@ -201,3 +222,61 @@ def _select_outcome():
     from sqlmodel import select
 
     return select(SignalOutcome)
+
+
+# --- Baseline/edge: win rate needs a reference point to mean anything ---
+
+def test_get_stats_includes_baseline_and_edge_when_real_candles_exist(session):
+    real_candles = _seed_real_candles(session, "FPT", 30)  # steady +1/day uptrend
+    signal_outcomes.record_outcomes(
+        session, "FPT", Timeframe.DAILY, STRATEGY, real_candles,
+        [_event(SPRING, 3, real_candles[3].bucket_start, real_candles[3].close)], BULLISH_EVENTS,
+    )
+
+    spring_stats = next(s for s in signal_outcomes.get_stats(session) if s["type"] == SPRING)
+
+    # Steady uptrend -> long-side baseline win rate is 1.0, same as the
+    # Spring's own win rate here -> edge is ~0 (the signal doesn't beat just
+    # holding anything in a market that only goes up).
+    assert spring_stats["baseline_win_rate_5"] == 1.0
+    assert spring_stats["edge_5"] == pytest.approx(spring_stats["win_rate_5"] - 1.0)
+    assert spring_stats["win_rate_5_ci"] is not None
+    low, high = spring_stats["win_rate_5_ci"]
+    assert low <= spring_stats["win_rate_5"] <= high
+
+
+def test_get_stats_baseline_is_none_without_matching_candles(session):
+    # record_outcomes was fed in-memory SimpleNamespace candles (never
+    # persisted as real Candle rows) -- baseline has nothing to compute from.
+    candles = [_candle(i, 100.0 + i) for i in range(30)]
+    signal_outcomes.record_outcomes(
+        session, "FPT", Timeframe.DAILY, STRATEGY, candles,
+        [_event(SPRING, 3, candles[3].bucket_start, candles[3].close)], BULLISH_EVENTS,
+    )
+
+    spring_stats = next(s for s in signal_outcomes.get_stats(session) if s["type"] == SPRING)
+    assert spring_stats["baseline_win_rate_5"] is None
+    assert spring_stats["edge_5"] is None
+
+
+def test_get_stats_filters_by_asset_class(session):
+    session.add(Symbol(ticker="FPT", asset_class=AssetClass.STOCK))
+    session.add(Symbol(ticker="BITCOIN", asset_class=AssetClass.CRYPTO))
+    session.commit()
+
+    candles = [_candle(i, 100.0 + i) for i in range(30)]
+    signal_outcomes.record_outcomes(
+        session, "FPT", Timeframe.DAILY, STRATEGY, candles,
+        [_event(SPRING, 3, candles[3].bucket_start, candles[3].close)], BULLISH_EVENTS,
+    )
+    signal_outcomes.record_outcomes(
+        session, "BITCOIN", Timeframe.DAILY, STRATEGY, candles,
+        [_event(SPRING, 3, candles[3].bucket_start, candles[3].close)], BULLISH_EVENTS,
+    )
+
+    stock_count = sum(s["count"] for s in signal_outcomes.get_stats(session, asset_class=AssetClass.STOCK))
+    crypto_count = sum(s["count"] for s in signal_outcomes.get_stats(session, asset_class=AssetClass.CRYPTO))
+    all_count = sum(s["count"] for s in signal_outcomes.get_stats(session))
+    assert stock_count == 1
+    assert crypto_count == 1
+    assert all_count == 2

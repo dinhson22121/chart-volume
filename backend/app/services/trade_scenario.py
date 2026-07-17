@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from app.ai import narrative as narrative_mod
 from app.ai.narrative import ProviderConfig
@@ -364,6 +364,73 @@ def sync_scenarios(
         provider_cfg, strategy_module, strategy_cfg, daily_trend, ranging_phases, use_ai,
     )
     session.commit()
+
+
+def _filtered_scenarios_query(ticker: str | None, status: str | None, strategy: str | None):
+    query = select(TradeScenario)
+    if ticker:
+        query = query.where(TradeScenario.ticker == ticker.upper())
+    if status:
+        query = query.where(TradeScenario.status == status)
+    if strategy:
+        query = query.where(TradeScenario.strategy == strategy)
+    return query
+
+
+def list_scenarios(
+    session: Session,
+    page: int,
+    page_size: int,
+    ticker: str | None = None,
+    status: str | None = None,
+    strategy: str | None = None,
+) -> tuple[list[TradeScenario], int]:
+    """Every scenario ever created, across all tickers -- for the Trade
+    History page (as opposed to ``get_scenario``, which only ever returns one
+    row for a single ticker/timeframe/strategy)."""
+    query = _filtered_scenarios_query(ticker, status, strategy)
+    total = session.exec(select(func.count()).select_from(query.subquery())).one()
+    items = session.exec(
+        query.order_by(TradeScenario.event_ts.desc()).offset((page - 1) * page_size).limit(page_size)
+    ).all()
+    return items, total
+
+
+def get_scenario_stats(
+    session: Session, ticker: str | None = None, strategy: str | None = None
+) -> dict:
+    """Win rate + avg P&L computed only over scenarios closed by clearly
+    hitting TP or SL. ``expired`` scenarios are excluded from the sample --
+    not overlooked, but because the price at expiry isn't stored anywhere
+    (only ``closed_bar_ts``), so there's no reliable exit price to compute a
+    P&L from without an extra Candle lookup."""
+    total_count = session.exec(
+        select(func.count()).select_from(_filtered_scenarios_query(ticker, None, strategy).subquery())
+    ).one()
+
+    decided = session.exec(
+        _filtered_scenarios_query(ticker, None, strategy).where(
+            TradeScenario.status.in_(["hit_tp", "hit_sl"])
+        )
+    ).all()
+
+    wins = [s for s in decided if s.status == "hit_tp"]
+    losses = [s for s in decided if s.status == "hit_sl"]
+
+    def _pnl_pct(s: TradeScenario) -> float:
+        exit_price = s.take_profit if s.status == "hit_tp" else s.stop_loss
+        raw = (exit_price - s.entry) / s.entry
+        return raw if s.is_bullish else -raw
+
+    pnls = [_pnl_pct(s) for s in decided]
+    return {
+        "total_count": total_count,
+        "decided_count": len(decided),
+        "win_count": len(wins),
+        "loss_count": len(losses),
+        "win_rate": round(len(wins) / len(decided), 3) if decided else None,
+        "avg_pnl_pct": round(sum(pnls) / len(pnls), 4) if pnls else None,
+    }
 
 
 def get_scenario(session: Session, ticker: str, timeframe: str, strategy: str) -> TradeScenario | None:

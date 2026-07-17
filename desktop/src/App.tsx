@@ -10,6 +10,7 @@ import { SignalStatsModal } from "./components/stats/SignalStatsModal";
 import { DashboardModal } from "./components/dashboard/DashboardModal";
 import { ActivityLogModal } from "./components/logs/ActivityLogModal";
 import { PotentialScreenModal } from "./components/potential/PotentialScreenModal";
+import { TradeHistoryModal } from "./components/trade-history/TradeHistoryModal";
 import { useI18n } from "./i18n/I18nContext";
 import logoIcon from "./assets/logo-icon.png";
 
@@ -44,6 +45,7 @@ export default function App({ onLicenseCleared }: Props) {
   const [statsOpen, setStatsOpen] = useState(false);
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
+  const [tradeHistoryOpen, setTradeHistoryOpen] = useState(false);
   const [potentialScreenOpen, setPotentialScreenOpen] = useState(false);
   const [traceBarTs, setTraceBarTs] = useState<string | null>(null);
   const [sidebarTab, setSidebarTab] = useState<WatchlistTab>("vn30");
@@ -287,6 +289,14 @@ export default function App({ onLicenseCleared }: Props) {
           </button>
           <button
             className="btn btn--icon"
+            onClick={() => setTradeHistoryOpen(true)}
+            aria-label={t("app.header.tradeHistory")}
+            title={t("app.header.tradeHistory")}
+          >
+            🧾
+          </button>
+          <button
+            className="btn btn--icon"
             onClick={() => setPotentialScreenOpen(true)}
             aria-label={t("app.header.potentialScreen")}
             title={t("app.header.potentialScreen")}
@@ -357,6 +367,7 @@ export default function App({ onLicenseCleared }: Props) {
         <DashboardModal onClose={() => setDashboardOpen(false)} onSelect={setSelected} />
       )}
       {logsOpen && <ActivityLogModal onClose={() => setLogsOpen(false)} />}
+      {tradeHistoryOpen && <TradeHistoryModal onClose={() => setTradeHistoryOpen(false)} />}
       {potentialScreenOpen && (
         <PotentialScreenModal onClose={() => setPotentialScreenOpen(false)} onSelect={setSelected} />
       )}

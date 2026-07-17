@@ -21,6 +21,8 @@ import type {
   SymbolItem,
   SystemLogPage,
   Timeframe,
+  TradeHistoryPage,
+  TradeHistoryStats,
 } from "../types";
 
 // In Electron the preload injects apiBase + token; in a plain browser dev
@@ -131,6 +133,24 @@ export const api = {
   getSystemLogs: (page: number, pageSize: number) =>
     req<SystemLogPage>(`/logs/system?page=${page}&page_size=${pageSize}`),
   exportLogs: () => req<{ content: string; generated_at: string }>("/logs/export"),
+  getTradeHistory: (
+    page: number,
+    pageSize: number,
+    filters: { ticker?: string; status?: string; strategy?: string } = {},
+  ) => {
+    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+    if (filters.ticker) params.set("ticker", filters.ticker);
+    if (filters.status) params.set("status", filters.status);
+    if (filters.strategy) params.set("strategy", filters.strategy);
+    return req<TradeHistoryPage>(`/trade-history?${params.toString()}`);
+  },
+  getTradeHistoryStats: (filters: { ticker?: string; strategy?: string } = {}) => {
+    const params = new URLSearchParams();
+    if (filters.ticker) params.set("ticker", filters.ticker);
+    if (filters.strategy) params.set("strategy", filters.strategy);
+    const qs = params.toString();
+    return req<TradeHistoryStats>(`/trade-history/stats${qs ? `?${qs}` : ""}`);
+  },
   runPotentialScreen: () => req<{ status: string }>("/potential-screen/run", { method: "POST" }),
   getPotentialScreenStatus: () => req<PotentialScreenStatus>("/potential-screen/status"),
   getPotentialScreenResults: () => req<PotentialScreenRow[]>("/potential-screen/results"),

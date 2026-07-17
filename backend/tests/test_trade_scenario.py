@@ -365,3 +365,120 @@ def test_get_scenario_falls_back_to_most_recently_closed(session):
 
 def test_get_scenario_returns_none_when_nothing_tracked(session):
     assert trade_scenario.get_scenario(session, "NOPE", Timeframe.DAILY, STRATEGY) is None
+
+
+# --- list_scenarios / get_scenario_stats: Trade History page ---
+
+def _make_scenario(
+    session, *, ticker="FPT", timeframe=Timeframe.DAILY, strategy=STRATEGY, event_type="SOS",
+    day=0, is_bullish=True, entry=100.0, stop_loss=95.0, take_profit=110.0, status="active",
+):
+    row = TradeScenario(
+        ticker=ticker, timeframe=timeframe, strategy=strategy, event_type=event_type,
+        event_ts=pd.Timestamp("2025-01-01") + pd.Timedelta(days=day), is_bullish=is_bullish,
+        entry=entry, stop_loss=stop_loss, take_profit=take_profit, max_bars=10, status=status,
+    )
+    session.add(row)
+    session.commit()
+    return row
+
+
+def test_list_scenarios_orders_most_recent_event_first(session):
+    _make_scenario(session, day=0, event_type="SOS")
+    _make_scenario(session, day=5, event_type="Spring", ticker="HPG")
+    _make_scenario(session, day=2, event_type="SOW", ticker="ACB")
+
+    items, total = trade_scenario.list_scenarios(session, page=1, page_size=50)
+
+    assert total == 3
+    assert [i.ticker for i in items] == ["HPG", "ACB", "FPT"]
+
+
+def test_list_scenarios_paginates(session):
+    for i in range(5):
+        _make_scenario(session, day=i, ticker=f"T{i}")
+
+    page1, total = trade_scenario.list_scenarios(session, page=1, page_size=2)
+    page2, _ = trade_scenario.list_scenarios(session, page=2, page_size=2)
+
+    assert total == 5
+    assert len(page1) == 2
+    assert len(page2) == 2
+    assert {i.ticker for i in page1} != {i.ticker for i in page2}
+
+
+def test_list_scenarios_filters_by_ticker_status_strategy(session):
+    _make_scenario(session, ticker="FPT", status="active", strategy="wyckoff")
+    _make_scenario(session, ticker="FPT", status="hit_tp", strategy="wyckoff", day=1)
+    _make_scenario(session, ticker="HPG", status="hit_tp", strategy="smc", day=2)
+
+    by_ticker, _ = trade_scenario.list_scenarios(session, page=1, page_size=50, ticker="fpt")
+    assert {i.ticker for i in by_ticker} == {"FPT"}
+
+    by_status, _ = trade_scenario.list_scenarios(session, page=1, page_size=50, status="hit_tp")
+    assert {i.ticker for i in by_status} == {"FPT", "HPG"}
+
+    by_strategy, _ = trade_scenario.list_scenarios(session, page=1, page_size=50, strategy="smc")
+    assert {i.ticker for i in by_strategy} == {"HPG"}
+
+
+def test_scenario_stats_win_rate_and_pnl_bullish(session):
+    # Bullish hit_tp: entry 100 -> tp 110 -> +10% win.
+    _make_scenario(session, is_bullish=True, entry=100.0, take_profit=110.0, stop_loss=95.0, status="hit_tp")
+    # Bullish hit_sl: entry 100 -> sl 95 -> -5% loss.
+    _make_scenario(session, is_bullish=True, entry=100.0, take_profit=110.0, stop_loss=95.0, status="hit_sl", day=1)
+
+    stats = trade_scenario.get_scenario_stats(session)
+
+    assert stats["decided_count"] == 2
+    assert stats["win_count"] == 1
+    assert stats["loss_count"] == 1
+    assert stats["win_rate"] == pytest.approx(0.5)
+    assert stats["avg_pnl_pct"] == pytest.approx((0.10 + (-0.05)) / 2)
+
+
+def test_scenario_stats_pnl_sign_for_bearish(session):
+    # Bearish hit_tp: entry 100 -> tp 90 (below entry) -> a WIN, +10%.
+    _make_scenario(session, is_bullish=False, entry=100.0, take_profit=90.0, stop_loss=105.0, status="hit_tp")
+    # Bearish hit_sl: entry 100 -> sl 105 (above entry) -> a LOSS, -5%.
+    _make_scenario(session, is_bullish=False, entry=100.0, take_profit=90.0, stop_loss=105.0, status="hit_sl", day=1)
+
+    stats = trade_scenario.get_scenario_stats(session)
+
+    assert stats["win_count"] == 1
+    assert stats["loss_count"] == 1
+    assert stats["avg_pnl_pct"] == pytest.approx((0.10 + (-0.05)) / 2)
+
+
+def test_scenario_stats_excludes_expired_and_active_from_decided(session):
+    _make_scenario(session, status="hit_tp")
+    _make_scenario(session, status="expired", day=1)
+    _make_scenario(session, status="active", day=2)
+
+    stats = trade_scenario.get_scenario_stats(session)
+
+    assert stats["total_count"] == 3  # all statuses counted here
+    assert stats["decided_count"] == 1  # only the hit_tp row
+
+
+def test_scenario_stats_returns_none_win_rate_and_pnl_when_no_decided_scenarios(session):
+    _make_scenario(session, status="active")
+
+    stats = trade_scenario.get_scenario_stats(session)
+
+    assert stats["decided_count"] == 0
+    assert stats["win_rate"] is None
+    assert stats["avg_pnl_pct"] is None
+
+
+def test_scenario_stats_respects_ticker_and_strategy_filters(session):
+    _make_scenario(session, ticker="FPT", strategy="wyckoff", status="hit_tp")
+    _make_scenario(session, ticker="HPG", strategy="smc", status="hit_sl", day=1)
+
+    fpt_stats = trade_scenario.get_scenario_stats(session, ticker="FPT")
+    assert fpt_stats["decided_count"] == 1
+    assert fpt_stats["win_count"] == 1
+
+    smc_stats = trade_scenario.get_scenario_stats(session, strategy="smc")
+    assert smc_stats["decided_count"] == 1
+    assert smc_stats["loss_count"] == 1

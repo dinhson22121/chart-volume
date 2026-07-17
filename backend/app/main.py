@@ -22,6 +22,7 @@ from app.api import (
     signals,
     strategies,
     symbols,
+    trade_history,
 )
 from app.config import get_settings, log_file_path
 from app.db import get_engine, init_db
@@ -87,6 +88,7 @@ app.include_router(strategies.router)
 app.include_router(crypto.router)
 app.include_router(logs.router)
 app.include_router(potential_screen.router)
+app.include_router(trade_history.router)
 
 
 @app.get("/health")

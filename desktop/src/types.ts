@@ -241,6 +241,39 @@ export interface ScanStatus {
   hits_so_far: number | null;
 }
 
+export interface TradeHistoryEntry {
+  id: number;
+  ticker: string;
+  timeframe: string;
+  strategy: string;
+  event_type: string;
+  event_ts: string;
+  is_bullish: boolean;
+  entry: number;
+  stop_loss: number;
+  take_profit: number;
+  max_bars: number;
+  status: "active" | "hit_tp" | "hit_sl" | "expired";
+  close_reason: string | null;
+  closed_at: string | null;
+}
+
+export interface TradeHistoryPage {
+  items: TradeHistoryEntry[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface TradeHistoryStats {
+  total_count: number;
+  decided_count: number;
+  win_count: number;
+  loss_count: number;
+  win_rate: number | null;
+  avg_pnl_pct: number | null;
+}
+
 export interface ConfigChangeLogEntry {
   id: number;
   changed_at: string;

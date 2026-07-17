@@ -1,0 +1,108 @@
+.th-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.th-search {
+  position: relative;
+  flex: 1 1 160px;
+  min-width: 130px;
+  max-width: 220px;
+}
+.th-search__icon {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.th-search input {
+  width: 100%;
+  padding: 8px 28px 8px 28px;
+  font-size: var(--text-sm);
+  font-family: var(--font-mono);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  transition: border-color var(--duration), background var(--duration);
+}
+.th-search input:hover {
+  background: var(--surface-hover);
+}
+.th-search input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+.th-search__clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: var(--text-sm);
+  line-height: 1;
+  color: var(--text-faint);
+  padding: 3px 7px;
+  border-radius: var(--radius-sm);
+  transition: color var(--duration), background var(--duration);
+}
+.th-search__clear:hover {
+  color: var(--bear);
+  background: var(--surface-hover);
+}
+
+.th-select {
+  position: relative;
+}
+.th-select select {
+  appearance: none;
+  padding: 8px 26px 8px 12px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color var(--duration), background var(--duration);
+}
+.th-select select:hover {
+  background: var(--surface-hover);
+}
+.th-select select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.th-select select.is-set {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+.th-select::after {
+  content: "▾";
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.6rem;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+.th-clear-filters {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border-strong);
+  transition: color var(--duration), border-color var(--duration), background var(--duration);
+}
+.th-clear-filters:hover {
+  color: var(--bear);
+  border-color: var(--bear);
+  background: oklch(66% 0.2 25 / 0.08);
+}

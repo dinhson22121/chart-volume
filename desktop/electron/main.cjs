@@ -152,6 +152,19 @@ function createWindow() {
   });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
+
+  // Defense-in-depth: the renderer has no known HTML-injection sink today
+  // (no dangerouslySetInnerHTML/innerHTML anywhere), but if one is ever
+  // introduced (e.g. rendering AI narrative text as HTML), these two guards
+  // are what stop it from escalating into a navigation hijack or an
+  // unrestricted new window. Electron already defaults new-window creation
+  // to "deny", but there's no equivalent safe default for will-navigate.
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    const allowed = devUrl ? url.startsWith(devUrl) : url.startsWith("file://");
+    if (!allowed) event.preventDefault();
+  });
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+
   if (devUrl) {
     mainWindow.loadURL(devUrl);
     mainWindow.webContents.openDevTools({ mode: "detach" });

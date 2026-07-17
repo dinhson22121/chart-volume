@@ -217,3 +217,18 @@ def test_put_settings_accepts_potential_screen_settings(client, auth_header):
     body = resp.json()
     assert body["potential_screen_auto_enabled"] is True
     assert body["potential_screen_time"] == "05:00"
+
+
+def test_put_settings_accepts_plain_ollama_model(client, auth_header):
+    resp = client.put("/settings", json={"ollama_model": "qwen2.5:7b"}, headers=auth_header)
+    assert resp.status_code == 200
+    assert resp.json()["ollama_model"] == "qwen2.5:7b"
+
+
+def test_put_settings_rejects_ollama_model_embedding_a_registry_host(client, auth_header):
+    # Same guard as /ollama/pull -- a "/" would let this value redirect the
+    # user's local Ollama daemon to an attacker-chosen host at generation time.
+    resp = client.put(
+        "/settings", json={"ollama_model": "evil-registry.example/library/llama3"}, headers=auth_header
+    )
+    assert resp.status_code == 422

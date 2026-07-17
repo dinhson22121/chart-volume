@@ -14,6 +14,7 @@ from app.models import AssetClass, Analysis, Symbol, Timeframe
 from app.services import ingest, settings_service, signal_outcomes, sonicr_indicators, trace_service, trade_scenario
 from app.strategies import registry as strategy_registry
 from app.services.analysis import run_analysis
+from app.validation import is_valid_ticker
 
 router = APIRouter(prefix="/analysis", tags=["analysis"], dependencies=[Depends(require_token)])
 
@@ -80,6 +81,20 @@ def _analysis_out(a: Analysis, session: Session) -> dict:
 def _validate_tf(timeframe: str) -> None:
     if timeframe not in _VALID_TIMEFRAMES:
         raise HTTPException(status_code=400, detail=f"invalid timeframe: {timeframe}")
+
+
+def _validate_ticker(ticker: str) -> str:
+    """Same charset check as SymbolIn._validate_ticker (app.api.symbols) --
+    this value gets interpolated directly into LLM narrative prompts
+    (app.ai.narrative), so it must be rejected here too, not just on the
+    symbol-creation path that originally motivated the check."""
+    cleaned = ticker.upper()
+    if not is_valid_ticker(cleaned):
+        raise HTTPException(
+            status_code=400,
+            detail="ticker must be 1-64 characters: letters, digits, '_', '-', ':', '.' only",
+        )
+    return cleaned
 
 
 def _latest_signal(signals_json: str) -> dict | None:
@@ -212,11 +227,12 @@ def get_analysis(
     session: Session = Depends(get_session),
 ) -> dict:
     _validate_tf(timeframe)
+    ticker = _validate_ticker(ticker)
     active_strategy = settings_service.get_strategy(session)
     row = session.exec(
         select(Analysis)
         .where(
-            Analysis.ticker == ticker.upper(),
+            Analysis.ticker == ticker,
             Analysis.timeframe == timeframe,
             Analysis.strategy == active_strategy,
         )
@@ -235,7 +251,7 @@ def refresh_analysis(
     session: Session = Depends(get_session),
 ) -> dict:
     _validate_tf(timeframe)
-    ticker = ticker.upper()
+    ticker = _validate_ticker(ticker)
 
     # Ensure the symbol is tracked (as watchlist) so it shows up in the sidebar.
     # A ticker refreshed for the first time without going through the crypto
@@ -287,6 +303,7 @@ def get_indicators(
     """Sonic R's per-bar Dragon/T3 series for chart overlay -- computed fresh
     from stored candles every call (cheap, no persistence needed)."""
     _validate_tf(timeframe)
+    ticker = _validate_ticker(ticker)
     return sonicr_indicators.get_indicator_series(session, ticker, timeframe)
 
 
@@ -298,6 +315,7 @@ def get_trace(
     session: Session = Depends(get_session),
 ) -> dict:
     _validate_tf(timeframe)
+    ticker = _validate_ticker(ticker)
     active_strategy = settings_service.get_strategy(session)
     if active_strategy not in _TRACE_SUPPORTED_STRATEGIES:
         raise HTTPException(
@@ -307,7 +325,7 @@ def get_trace(
     if traces is None:
         raise HTTPException(status_code=404, detail="no candle found at that timestamp")
     return {
-        "ticker": ticker.upper(),
+        "ticker": ticker,
         "timeframe": timeframe,
         "bar_ts": bar_ts,
         "detectors": [

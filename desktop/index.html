@@ -3,6 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Defense-in-depth: no remote content is ever loaded (packaged builds load
+      a local file://, dev mode loads the local Vite server only) and there's
+      no dangerouslySetInnerHTML/innerHTML sink in this codebase today, so
+      none of these directives should ever need to trigger. style-src allows
+      'unsafe-inline' because the app uses React inline `style={{...}}` props
+      extensively; connect-src's ws://localhost:5173 is only exercised by
+      Vite's dev-mode HMR socket, unused in packaged builds.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:8787 ws://localhost:5173; object-src 'none'; base-uri 'self'; frame-src 'none'"
+    />
     <title>Chart-Volume · Wyckoff</title>
   </head>
   <body>

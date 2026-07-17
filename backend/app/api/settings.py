@@ -17,6 +17,7 @@ from app.db import get_session
 from app.scheduler import reschedule
 from app.services import settings_service
 from app.strategies import registry as strategy_registry
+from app.validation import is_valid_ollama_model
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_token)])
 
@@ -122,6 +123,15 @@ class SettingsIn(BaseModel):
             raise ValueError(
                 f"crypto_analysis_interval must be one of {settings_service.CRYPTO_ANALYSIS_INTERVAL_CHOICES}"
             )
+        return value
+
+    @field_validator("ollama_model")
+    @classmethod
+    def _validate_ollama_model(cls, value: str | None) -> str | None:
+        # Same guard as app.api.ollama's PullIn -- this value is also
+        # interpolated into an Ollama API request (narrative generation).
+        if value is not None and not is_valid_ollama_model(value):
+            raise ValueError("ollama_model must be a plain 'name' or 'name:tag' (letters/digits/._- only, no '/')")
         return value
 
 

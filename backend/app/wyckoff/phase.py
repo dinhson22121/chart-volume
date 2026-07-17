@@ -62,6 +62,14 @@ _DISTRIBUTION_SIGNALS = {UPTHRUST, BUYING_CLIMAX, NO_DEMAND}
 BULLISH_EVENTS = _ACCUMULATION_SIGNALS | {SOS, LPS}
 BEARISH_EVENTS = _DISTRIBUTION_SIGNALS | {SOW, LPSY}
 
+# Phases where a "measured move" (trading-range height) is a coherent concept
+# -- a genuine range being built or broken out of. Markup/Markdown are already
+# trending, so there is no range left to measure a breakout against. Used by
+# app.services.trade_scenario to gate scenario creation on the phase as of
+# just before the triggering event (not the phase after it, which the event
+# itself often just flipped to Markup/Markdown).
+RANGING_PHASES = {PHASE_ACCUMULATION, PHASE_DISTRIBUTION, PHASE_RANGING}
+
 _PHASE_TREND = {
     PHASE_ACCUMULATION: TREND_BULLISH,
     PHASE_MARKUP: TREND_BULLISH,

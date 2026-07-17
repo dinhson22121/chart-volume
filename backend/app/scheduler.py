@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from functools import partial
 from zoneinfo import ZoneInfo
@@ -55,6 +56,11 @@ _crypto_batch_lock = threading.Lock()
 # timeframes on its own interval, unlike stocks (one job per timeframe/time).
 _CRYPTO_TIMEFRAMES = (Timeframe.HOUR_1, Timeframe.HOUR_4, Timeframe.DAILY)
 
+# Bounded concurrency for batch ingest+analysis, so a large watchlist/Top100
+# doesn't run fully sequentially -- capped low to avoid tripping rate limits
+# on vnstock/exchange APIs.
+_MAX_WORKERS = 5
+
 # scan_interval/crypto_analysis_interval setting -> timedelta() kwargs, used
 # by _reschedule_after_run to compute each job's next fixed-delay run date.
 _INTERVAL_TRIGGER_KWARGS = {
@@ -92,27 +98,70 @@ def _symbol_gets_ai(symbol: Symbol, ai_groups: dict) -> bool:
     )
 
 
-def run_batch(session: Session, timeframe: str, use_ai: bool = True) -> int:
-    """Ingest + analyse every tracked STOCK ticker. Returns how many succeeded."""
-    ai_groups = settings_service.get_ai_narrative_groups(session)
-    ok = 0
-    for symbol in _tracked_symbols(session, AssetClass.STOCK):
-        ticker = symbol.ticker
-        try:
+def _run_stock_symbol(engine, ticker: str, timeframe: str, use_ai: bool) -> bool:
+    """Runs on its own DB session bound to the SAME engine as the caller's
+    session (SQLite is opened with check_same_thread=False precisely so each
+    worker thread can do this) so ingest+analysis for one ticker never blocks
+    or shares state with another running concurrently. Takes the engine
+    rather than the caller's live Session/ORM objects because a SQLAlchemy
+    session (and objects attached to it) isn't safe to hand to another
+    thread's session."""
+    try:
+        with Session(engine) as session:
             if timeframe == Timeframe.DAILY:
                 ingest.ingest_daily(session, ticker)
             else:
                 ingest.ingest_half_session(session, ticker)
-            run_analysis(session, ticker, timeframe, use_ai=use_ai and _symbol_gets_ai(symbol, ai_groups))
-            ok += 1
-        except Exception as exc:  # noqa: BLE001 - isolate per-ticker failures
-            logger.warning("batch %s failed for %s: %s", timeframe, ticker, exc)
+            run_analysis(session, ticker, timeframe, use_ai=use_ai)
+        return True
+    except Exception as exc:  # noqa: BLE001 - isolate per-ticker failures
+        logger.warning("batch %s failed for %s: %s", timeframe, ticker, exc)
+        return False
+
+
+def run_batch(session: Session, timeframe: str, use_ai: bool = True) -> int:
+    """Ingest + analyse every tracked STOCK ticker, up to _MAX_WORKERS at once.
+    Returns how many succeeded."""
+    ai_groups = settings_service.get_ai_narrative_groups(session)
+    symbols = _tracked_symbols(session, AssetClass.STOCK)
+    engine = session.get_bind()
+    ok = 0
+    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
+        futures = [
+            executor.submit(
+                _run_stock_symbol, engine, symbol.ticker, timeframe, use_ai and _symbol_gets_ai(symbol, ai_groups)
+            )
+            for symbol in symbols
+        ]
+        for future in as_completed(futures):
+            if future.result():
+                ok += 1
     logger.info("batch %s complete: %d ok", timeframe, ok)
     return ok
 
 
+def _run_crypto_symbol_timeframe(engine, ticker: str, timeframe: str, exchanges, use_ai: bool) -> bool:
+    try:
+        with Session(engine) as session:
+            # Re-fetched in this worker's own session rather than passed in
+            # from the caller's -- an ORM object attached to one Session
+            # can't safely be added/committed via another (see _run_stock_symbol).
+            symbol = session.exec(select(Symbol).where(Symbol.ticker == ticker)).first()
+            ingest.ingest_crypto(
+                session, ticker, timeframe,
+                exchange_symbol=symbol.display_symbol if symbol else None,
+                exchanges=exchanges, symbol=symbol,
+            )
+            run_analysis(session, ticker, timeframe, use_ai=use_ai)
+        return True
+    except Exception as exc:  # noqa: BLE001 - isolate per-ticker/timeframe failures
+        logger.warning("crypto batch %s/%s failed: %s", ticker, timeframe, exc)
+        return False
+
+
 def run_crypto_batch(session: Session, use_ai: bool = True) -> int:
-    """Ingest + analyse every tracked CRYPTO ticker across all 3 timeframes.
+    """Ingest + analyse every tracked CRYPTO ticker across all 3 timeframes,
+    up to _MAX_WORKERS tasks at once.
 
     Previously crypto tickers fell through run_batch() (which only knows how
     to ingest stocks), so a promoted coin never got re-analysed unless the
@@ -121,24 +170,28 @@ def run_crypto_batch(session: Session, use_ai: bool = True) -> int:
     """
     exchanges = settings_service.get_crypto_exchanges(session)
     ai_groups = settings_service.get_ai_narrative_groups(session)
+    symbols = _tracked_symbols(session, AssetClass.CRYPTO)
+    engine = session.get_bind()
     ok = 0
-    for symbol in _tracked_symbols(session, AssetClass.CRYPTO):
-        # Per-group AI narrative toggles (Settings): a symbol still gets the
-        # quantitative analysis (phase/confidence/signals feed the dashboard
-        # ranking) either way -- the toggle only controls the LLM call.
-        # Top100 defaults off: ~100 coins x 3 timeframes per cycle of
-        # narratives nobody opens is a token burn.
-        symbol_use_ai = use_ai and _symbol_gets_ai(symbol, ai_groups)
-        for timeframe in _CRYPTO_TIMEFRAMES:
-            try:
-                ingest.ingest_crypto(
-                    session, symbol.ticker, timeframe,
-                    exchange_symbol=symbol.display_symbol, exchanges=exchanges, symbol=symbol,
-                )
-                run_analysis(session, symbol.ticker, timeframe, use_ai=symbol_use_ai)
+    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
+        futures = [
+            executor.submit(
+                _run_crypto_symbol_timeframe,
+                engine, symbol.ticker, timeframe, exchanges,
+                # Per-group AI narrative toggles (Settings): a symbol still
+                # gets the quantitative analysis (phase/confidence/signals
+                # feed the dashboard ranking) either way -- the toggle only
+                # controls the LLM call. Top100 defaults off: ~100 coins x 3
+                # timeframes per cycle of narratives nobody opens is a token
+                # burn.
+                use_ai and _symbol_gets_ai(symbol, ai_groups),
+            )
+            for symbol in symbols
+            for timeframe in _CRYPTO_TIMEFRAMES
+        ]
+        for future in as_completed(futures):
+            if future.result():
                 ok += 1
-            except Exception as exc:  # noqa: BLE001 - isolate per-ticker/timeframe failures
-                logger.warning("crypto batch %s/%s failed: %s", symbol.ticker, timeframe, exc)
     logger.info("crypto batch complete: %d ok", ok)
     return ok
 

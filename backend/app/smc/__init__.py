@@ -13,7 +13,7 @@ from __future__ import annotations
 from app.smc.config import DEFAULT_CONFIG, SMCConfig
 from app.smc.events import SMCEvent, detect_events
 from app.smc.indicators import compute_features
-from app.smc.phase import BEARISH_EVENTS, BULLISH_EVENTS, classify_structure, phase_trend
+from app.smc.phase import BEARISH_EVENTS, BULLISH_EVENTS, RANGING_PHASES, classify_structure, phase_trend
 from app.wyckoff import MIN_BARS, AnalysisResult, Levels, candles_to_dataframe
 
 __all__ = [
@@ -21,6 +21,7 @@ __all__ = [
     "SMCEvent",
     "BULLISH_EVENTS",
     "BEARISH_EVENTS",
+    "RANGING_PHASES",
     "phase_trend",
     "analyze",
 ]

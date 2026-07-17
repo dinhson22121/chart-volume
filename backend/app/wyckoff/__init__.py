@@ -15,7 +15,7 @@ import pandas as pd
 from app.wyckoff.config import DEFAULT_CONFIG, WyckoffConfig
 from app.wyckoff.events import WyckoffEvent, detect_events
 from app.wyckoff.indicators import compute_features, latest_levels
-from app.wyckoff.phase import BEARISH_EVENTS, BULLISH_EVENTS, classify_phase, phase_trend
+from app.wyckoff.phase import BEARISH_EVENTS, BULLISH_EVENTS, RANGING_PHASES, classify_phase, phase_trend
 
 __all__ = [
     "AnalysisResult",
@@ -23,6 +23,7 @@ __all__ = [
     "MIN_BARS",
     "BULLISH_EVENTS",
     "BEARISH_EVENTS",
+    "RANGING_PHASES",
     "phase_trend",
     "analyze",
     "candles_to_dataframe",

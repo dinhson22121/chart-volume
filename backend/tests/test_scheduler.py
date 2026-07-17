@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 import pandas as pd
+import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -28,6 +29,25 @@ def _daily_df():
     t0 = pd.Timestamp("2025-01-01")
     bars = [dict(BASE) for _ in range(25)] + [SPRING]
     return pd.DataFrame([{"time": t0 + pd.Timedelta(days=i), **b} for i, b in enumerate(bars)])
+
+
+@pytest.fixture
+def batch_session(tmp_path):
+    """File-backed SQLite session (SQLAlchemy's default QueuePool -- one
+    connection per checkout) for run_batch/run_crypto_batch tests. Unlike the
+    shared in-memory `session` fixture (forced onto a single StaticPool
+    connection so state persists across separate Session() calls), a
+    file-backed engine lets each of run_batch's worker threads open its own
+    real connection -- required now that run_batch/run_crypto_batch use a
+    ThreadPoolExecutor and genuinely run concurrently. Mirrors how
+    app.db's real engine is configured (file path + check_same_thread=False)."""
+    db_path = tmp_path / "batch_test.db"
+    engine = create_engine(
+        f"sqlite:///{db_path}", connect_args={"check_same_thread": False, "timeout": 30}
+    )
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as sess:
+        yield sess
 
 
 def _fresh_engine():
@@ -294,48 +314,48 @@ def test_top100_job_swallows_crawl_errors(mocker):
     assert entry.status == "error"
 
 
-def test_run_batch_processes_all_tracked(session, mocker):
-    session.add(Symbol(ticker="FPT", is_vn30=True))
-    session.add(Symbol(ticker="HPG", is_watchlist=True))
-    session.add(Symbol(ticker="XXX", is_watchlist=False, is_vn30=False))  # not tracked
-    session.commit()
+def test_run_batch_processes_all_tracked(batch_session, mocker):
+    batch_session.add(Symbol(ticker="FPT", is_vn30=True))
+    batch_session.add(Symbol(ticker="HPG", is_watchlist=True))
+    batch_session.add(Symbol(ticker="XXX", is_watchlist=False, is_vn30=False))  # not tracked
+    batch_session.commit()
 
     mocker.patch.object(ingest.vnstock_client, "fetch_daily", return_value=_daily_df())
     mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
 
-    ok = run_batch(session, Timeframe.DAILY)
+    ok = run_batch(batch_session, Timeframe.DAILY)
 
     assert ok == 2  # FPT + HPG, not XXX
 
 
-def test_run_batch_excludes_crypto_tickers(session, mocker):
+def test_run_batch_excludes_crypto_tickers(batch_session, mocker):
     # Previously crypto tickers silently fell through run_batch (it always
     # called the stock ingest functions on them, which is wrong) -- now they
     # must be filtered out entirely and handled by run_crypto_batch instead.
-    session.add(Symbol(ticker="FPT", is_vn30=True, asset_class=AssetClass.STOCK))
-    session.add(Symbol(ticker="PEPE", is_watchlist=True, asset_class=AssetClass.CRYPTO))
-    session.commit()
+    batch_session.add(Symbol(ticker="FPT", is_vn30=True, asset_class=AssetClass.STOCK))
+    batch_session.add(Symbol(ticker="PEPE", is_watchlist=True, asset_class=AssetClass.CRYPTO))
+    batch_session.commit()
 
     fetch_daily = mocker.patch.object(ingest.vnstock_client, "fetch_daily", return_value=_daily_df())
     mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
 
-    ok = run_batch(session, Timeframe.DAILY)
+    ok = run_batch(batch_session, Timeframe.DAILY)
 
     assert ok == 1  # only FPT
     fetch_daily.assert_called_once_with("FPT", mocker.ANY, mocker.ANY)
 
 
-def test_run_crypto_batch_ingests_all_three_timeframes(session, mocker):
-    session.add(Symbol(ticker="PEPE", is_watchlist=True, asset_class=AssetClass.CRYPTO))
-    session.add(Symbol(ticker="FPT", is_vn30=True, asset_class=AssetClass.STOCK))  # excluded
-    session.commit()
+def test_run_crypto_batch_ingests_all_three_timeframes(batch_session, mocker):
+    batch_session.add(Symbol(ticker="PEPE", is_watchlist=True, asset_class=AssetClass.CRYPTO))
+    batch_session.add(Symbol(ticker="FPT", is_vn30=True, asset_class=AssetClass.STOCK))  # excluded
+    batch_session.commit()
 
     # No candles get written (ingest_crypto is stubbed out), so run_analysis
     # naturally no-ops (returns None, doesn't raise) -- ok just tracks that no
     # exception was raised, not that an Analysis row was actually produced.
     ingest_spy = mocker.patch.object(ingest, "ingest_crypto", return_value=1)
 
-    ok = run_crypto_batch(session)
+    ok = run_crypto_batch(batch_session)
 
     assert ok == 3  # 1h + 4h + daily for PEPE only
     timeframes_called = {call.args[2] for call in ingest_spy.call_args_list}
@@ -344,79 +364,104 @@ def test_run_crypto_batch_ingests_all_three_timeframes(session, mocker):
     assert tickers_called == {"PEPE"}
 
 
-def test_run_crypto_batch_includes_top100_symbols(session, mocker):
+def test_run_crypto_batch_includes_top100_symbols(batch_session, mocker):
     # Top100 coins aren't vn30/watchlist -- must still get auto-analyzed so
     # the dashboard's bullish ranking has real data for them.
-    session.add(
+    batch_session.add(
         Symbol(
             ticker="BITCOIN", display_symbol="BTC", asset_class=AssetClass.CRYPTO,
             is_top100=True, top100_rank=1, is_watchlist=False, is_vn30=False,
         )
     )
-    session.commit()
+    batch_session.commit()
 
     ingest_spy = mocker.patch.object(ingest, "ingest_crypto", return_value=1)
 
-    ok = run_crypto_batch(session)
+    ok = run_crypto_batch(batch_session)
 
     assert ok == 3  # 1h + 4h + daily
     tickers_called = {call.args[1] for call in ingest_spy.call_args_list}
     assert tickers_called == {"BITCOIN"}
 
 
-def test_run_crypto_batch_skips_ai_narrative_for_top100_only_symbols_by_default(session, mocker):
+def test_run_crypto_batch_skips_ai_narrative_for_top100_only_symbols_by_default(batch_session, mocker):
     # Default per-group AI toggles: vn30=on, watchlist=on, top100=OFF -- a
     # top100-only coin gets the quantitative analysis (feeds the dashboard
     # ranking) but must NOT trigger LLM narrative generation; watchlisted
     # coins keep AI narratives.
-    session.add(
+    batch_session.add(
         Symbol(
             ticker="BITCOIN", display_symbol="BTC", asset_class=AssetClass.CRYPTO,
             is_top100=True, is_watchlist=False,
         )
     )
-    session.add(
+    batch_session.add(
         Symbol(ticker="PEPE", display_symbol="PEPE", asset_class=AssetClass.CRYPTO, is_watchlist=True)
     )
-    session.commit()
+    batch_session.commit()
 
     mocker.patch.object(ingest, "ingest_crypto", return_value=1)
     analysis_spy = mocker.patch("app.scheduler.run_analysis", return_value=None)
 
-    run_crypto_batch(session)
+    run_crypto_batch(batch_session)
 
     use_ai_by_ticker = {call.args[1]: call.kwargs["use_ai"] for call in analysis_spy.call_args_list}
     assert use_ai_by_ticker == {"BITCOIN": False, "PEPE": True}
 
 
-def test_run_crypto_batch_ai_group_toggles_are_configurable(session, mocker):
+def test_run_crypto_batch_ai_group_toggles_are_configurable(batch_session, mocker):
     # Flipping the per-group Settings toggles inverts the default behavior.
-    session.add(
+    batch_session.add(
         Symbol(
             ticker="BITCOIN", display_symbol="BTC", asset_class=AssetClass.CRYPTO,
             is_top100=True, is_watchlist=False,
         )
     )
-    session.add(
+    batch_session.add(
         Symbol(ticker="PEPE", display_symbol="PEPE", asset_class=AssetClass.CRYPTO, is_watchlist=True)
     )
-    session.commit()
+    batch_session.commit()
     settings_service.update(
-        session, {"ai_narrative_top100": "true", "ai_narrative_watchlist": "false"}
+        batch_session, {"ai_narrative_top100": "true", "ai_narrative_watchlist": "false"}
     )
 
     mocker.patch.object(ingest, "ingest_crypto", return_value=1)
     analysis_spy = mocker.patch("app.scheduler.run_analysis", return_value=None)
 
-    run_crypto_batch(session)
+    run_crypto_batch(batch_session)
 
     use_ai_by_ticker = {call.args[1]: call.kwargs["use_ai"] for call in analysis_spy.call_args_list}
     assert use_ai_by_ticker == {"BITCOIN": True, "PEPE": False}
 
 
-def test_run_crypto_batch_isolates_timeframe_failures(session, mocker):
-    session.add(Symbol(ticker="PEPE", is_watchlist=True, asset_class=AssetClass.CRYPTO))
-    session.commit()
+def test_run_crypto_batch_actually_runs_tasks_concurrently(batch_session, mocker):
+    # Same regression as test_run_batch_actually_runs_tickers_concurrently,
+    # for the crypto batch's (ticker, timeframe) task list.
+    import threading
+
+    batch_session.add(Symbol(ticker="PEPE", is_watchlist=True, asset_class=AssetClass.CRYPTO))
+    batch_session.commit()
+
+    # 3 tasks total (1h/4h/daily for the one symbol), all expected to run at
+    # once under max_workers=5 -- a 3-party barrier only releases if all 3
+    # are in flight together.
+    barrier = threading.Barrier(3, timeout=5)
+
+    def fake_ingest(sess, ticker, timeframe, **kwargs):
+        barrier.wait()
+        return 1
+
+    mocker.patch.object(ingest, "ingest_crypto", side_effect=fake_ingest)
+    mocker.patch("app.scheduler.run_analysis", return_value=None)
+
+    ok = run_crypto_batch(batch_session)
+
+    assert ok == 3  # 1h + 4h + daily
+
+
+def test_run_crypto_batch_isolates_timeframe_failures(batch_session, mocker):
+    batch_session.add(Symbol(ticker="PEPE", is_watchlist=True, asset_class=AssetClass.CRYPTO))
+    batch_session.commit()
 
     def fake_ingest(sess, ticker, timeframe, **kwargs):
         if timeframe == Timeframe.HOUR_4:
@@ -425,15 +470,41 @@ def test_run_crypto_batch_isolates_timeframe_failures(session, mocker):
 
     mocker.patch.object(ingest, "ingest_crypto", side_effect=fake_ingest)
 
-    ok = run_crypto_batch(session)
+    ok = run_crypto_batch(batch_session)
 
     assert ok == 2  # 1h + daily succeeded, 4h failed but didn't abort the batch
 
 
-def test_run_batch_isolates_ticker_failures(session, mocker):
-    session.add(Symbol(ticker="GOOD", is_vn30=True))
-    session.add(Symbol(ticker="BAD", is_vn30=True))
-    session.commit()
+def test_run_batch_actually_runs_tickers_concurrently(batch_session, mocker):
+    # Regression: confirms run_batch uses real concurrency, not just a thread
+    # pool that happens to run everything sequentially. A 2-party barrier
+    # inside the (mocked) ingest call only releases once both tickers have
+    # reached it at the same time -- if run_batch processed them one at a
+    # time, the first call would block until the barrier's short timeout and
+    # raise BrokenBarrierError.
+    import threading
+
+    batch_session.add(Symbol(ticker="FPT", is_vn30=True))
+    batch_session.add(Symbol(ticker="HPG", is_watchlist=True))
+    batch_session.commit()
+
+    barrier = threading.Barrier(2, timeout=5)
+
+    def fake_ingest(sess, ticker):
+        barrier.wait()
+
+    mocker.patch.object(ingest, "ingest_daily", side_effect=fake_ingest)
+    mocker.patch("app.scheduler.run_analysis", return_value=None)
+
+    ok = run_batch(batch_session, Timeframe.DAILY)
+
+    assert ok == 2
+
+
+def test_run_batch_isolates_ticker_failures(batch_session, mocker):
+    batch_session.add(Symbol(ticker="GOOD", is_vn30=True))
+    batch_session.add(Symbol(ticker="BAD", is_vn30=True))
+    batch_session.commit()
 
     from app.models import Candle
 
@@ -451,7 +522,7 @@ def test_run_batch_isolates_ticker_failures(session, mocker):
     mocker.patch.object(ingest, "ingest_daily", side_effect=fake_ingest)
     mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
 
-    ok = run_batch(session, Timeframe.DAILY)
+    ok = run_batch(batch_session, Timeframe.DAILY)
 
     assert ok == 1  # GOOD succeeded, BAD failed but didn't abort the batch
 

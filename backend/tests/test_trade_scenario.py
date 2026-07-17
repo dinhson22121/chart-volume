@@ -6,8 +6,9 @@ import pytest
 from app.ai.narrative import PROVIDER_ANTHROPIC, ProviderConfig
 from app.models import TradeScenario, Timeframe
 from app.services import trade_scenario
-from app.wyckoff import BEARISH_EVENTS, BULLISH_EVENTS, Levels
+from app.wyckoff import BEARISH_EVENTS, BULLISH_EVENTS, RANGING_PHASES, Levels
 from app.wyckoff.events import SOW, SPRING, WyckoffEvent
+from app.wyckoff.phase import PHASE_RANGING
 
 STRATEGY = "wyckoff"
 LEVELS = Levels(support=90.0, resistance=110.0)  # range height = 20
@@ -31,13 +32,20 @@ def _select_scenario():
     return select(TradeScenario)
 
 
-def _sync(session, ticker, candles, events, language="vi"):
+def _fake_strategy_module(phase: str = PHASE_RANGING):
+    # Default phase is Ranging so pre-existing entry/SL/TP/lifecycle tests --
+    # which don't care about the phase gate -- keep creating scenarios as
+    # before. Tests that specifically exercise the gate pass a trending phase.
+    return types.SimpleNamespace(analyze=lambda *a, **k: types.SimpleNamespace(phase=phase))
+
+
+def _sync(session, ticker, candles, events, language="vi", phase=PHASE_RANGING):
     # api_key="" -> is_available() is False -> explanation always falls back
     # to the deterministic template, so these tests never make a real AI call.
     provider_cfg = ProviderConfig(provider=PROVIDER_ANTHROPIC, model="claude-sonnet-4-5", api_key="", language=language)
     trade_scenario.sync_scenarios(
         session, ticker, Timeframe.DAILY, STRATEGY, candles, events, BULLISH_EVENTS, BEARISH_EVENTS, LEVELS,
-        provider_cfg,
+        provider_cfg, _fake_strategy_module(phase), None, None, RANGING_PHASES,
     )
 
 
@@ -166,6 +174,73 @@ def test_first_ever_run_against_a_long_history_picks_the_latest_event_not_the_ol
 
     row = session.exec(_select_scenario()).one()
     assert row.event_ts == candles[55].bucket_start
+
+
+def test_atr_returns_none_when_history_shorter_than_period_plus_one(session):
+    candles = [_candle(i, low=95.0, high=105.0, close=100.0) for i in range(trade_scenario.ATR_PERIOD)]
+    assert trade_scenario._atr(candles) is None
+
+
+def test_atr_averages_true_range_over_the_period(session):
+    period = trade_scenario.ATR_PERIOD
+    candles = [_candle(i, low=95.0, high=105.0, close=100.0) for i in range(period + 1)]
+    # Every bar: high-low=10, |high-prev_close|=5, |low-prev_close|=5 -> TR=10.
+    assert trade_scenario._atr(candles) == pytest.approx(10.0)
+
+
+def test_compute_max_bars_clamps_to_max_when_tp_distance_dwarfs_atr(session):
+    period = trade_scenario.ATR_PERIOD
+    candles = [_candle(i, low=95.0, high=105.0, close=100.0) for i in range(period + 1)]  # ATR = 10
+    assert trade_scenario._compute_max_bars(candles, tp_distance=1000.0) == trade_scenario.MAX_MAX_BARS
+
+
+def test_compute_max_bars_clamps_to_min_when_tp_distance_is_tiny(session):
+    period = trade_scenario.ATR_PERIOD
+    candles = [_candle(i, low=95.0, high=105.0, close=100.0) for i in range(period + 1)]  # ATR = 10
+    assert trade_scenario._compute_max_bars(candles, tp_distance=1.0) == trade_scenario.MIN_MAX_BARS
+
+
+def test_compute_max_bars_falls_back_to_default_when_atr_is_zero(session):
+    period = trade_scenario.ATR_PERIOD
+    candles = [_candle(i, low=100.0, high=100.0, close=100.0) for i in range(period + 1)]  # zero true range
+    assert trade_scenario._compute_max_bars(candles, tp_distance=20.0) == trade_scenario.DEFAULT_MAX_BARS
+
+
+def test_compute_max_bars_falls_back_to_default_when_history_too_short(session):
+    candles = [_candle(i, low=95.0, high=105.0, close=100.0) for i in range(5)]
+    assert trade_scenario._compute_max_bars(candles, tp_distance=20.0) == trade_scenario.DEFAULT_MAX_BARS
+
+
+def test_scenario_max_bars_is_atr_driven_when_enough_pre_event_history(session):
+    # 16 flat bars before the event (ATR window needs 15) + 1 event bar. ATR
+    # over the flat 90/110/100 bars is 20 (high-low=20 each); the bullish
+    # event's range height is also 20 (support/resistance 90/110 from the
+    # pre-event window) -> tp_distance=20 -> round(20/20)=1, clamped up to
+    # MIN_MAX_BARS=5.
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(16)]
+    candles[15] = _candle(15, low=95.0, high=101.0, close=100.0)
+    event = _event(SPRING, 15, candles[15])
+
+    _sync(session, "FPT", candles, [event])
+
+    row = session.exec(_select_scenario()).one()
+    assert row.max_bars == trade_scenario.MIN_MAX_BARS
+
+
+def test_no_scenario_when_phase_before_event_was_already_trending(session):
+    # A breakout event's own bar routinely flips the phase to Markup/Markdown
+    # in the SAME analysis run -- gating on that post-event phase would pass
+    # trivially every time. Gating on the phase as of just before the event
+    # (what strategy_module.analyze(candles[:event.index], ...) returns)
+    # correctly skips an event that fired once already trending, since there's
+    # no real range left to measure a breakout against.
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    event = _event(SPRING, 5, candles[5])
+
+    _sync(session, "FPT", candles, [event], phase="Markup")
+
+    assert session.exec(_select_scenario()).all() == []
 
 
 def test_sync_is_idempotent_for_the_same_event(session):

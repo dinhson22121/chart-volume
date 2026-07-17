@@ -14,7 +14,10 @@ from app import models  # noqa: F401
 _settings = get_settings()
 _engine = create_engine(
     f"sqlite:///{_settings.db_path}",
-    connect_args={"check_same_thread": False},
+    # timeout=30: safety margin for "database is locked" under concurrent
+    # writes from the scheduler's thread-pooled batch jobs (default is
+    # sqlite3's 5s, too tight once several workers write around the same time).
+    connect_args={"check_same_thread": False, "timeout": 30},
 )
 
 

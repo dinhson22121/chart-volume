@@ -13,7 +13,7 @@ from __future__ import annotations
 from app.sonicr.config import DEFAULT_CONFIG, SonicRConfig
 from app.sonicr.events import SonicEvent, detect_events
 from app.sonicr.indicators import compute_features
-from app.sonicr.phase import BEARISH_EVENTS, BULLISH_EVENTS, classify_regime, phase_trend
+from app.sonicr.phase import BEARISH_EVENTS, BULLISH_EVENTS, RANGING_PHASES, classify_regime, phase_trend
 from app.wyckoff import MIN_BARS, AnalysisResult, Levels, candles_to_dataframe
 
 __all__ = [
@@ -21,6 +21,7 @@ __all__ = [
     "SonicEvent",
     "BULLISH_EVENTS",
     "BEARISH_EVENTS",
+    "RANGING_PHASES",
     "phase_trend",
     "analyze",
 ]

@@ -107,7 +107,8 @@ def run_analysis(
     trade_scenario.sync_scenarios(
         session, ticker, timeframe, strategy, candles, result.events,
         strategy_module.BULLISH_EVENTS, strategy_module.BEARISH_EVENTS, result.levels,
-        provider_cfg, use_ai=use_ai,
+        provider_cfg, strategy_module, strategy_cfg, daily_trend, strategy_module.RANGING_PHASES,
+        use_ai=use_ai,
     )
 
     existing = session.exec(

@@ -47,6 +47,11 @@ _BEARISH_SUPPORT = {BOS_BEAR, BEARISH_OB, BEARISH_FVG}
 BULLISH_EVENTS = _BULLISH_SUPPORT | {CHOCH_BULL}
 BEARISH_EVENTS = _BEARISH_SUPPORT | {CHOCH_BEAR}
 
+# See app.wyckoff.phase.RANGING_PHASES for why this exists: a "measured move"
+# only makes sense as a range breakout, not once structure is already
+# trending (Bullish/Bearish Structure).
+RANGING_PHASES = {PHASE_RANGING}
+
 _PHASE_TREND = {
     PHASE_BULLISH: TREND_BULLISH,
     PHASE_BEARISH: TREND_BEARISH,

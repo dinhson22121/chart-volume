@@ -46,6 +46,11 @@ MTF_CONFLICTING = "conflicting"
 BULLISH_EVENTS = {DRAGON_CROSS_UP, SONIC_CROSS_UP, SONIC_ENTRY_LONG}
 BEARISH_EVENTS = {DRAGON_CROSS_DOWN, SONIC_CROSS_DOWN, SONIC_ENTRY_SHORT}
 
+# See app.wyckoff.phase.RANGING_PHASES for why this exists: a "measured move"
+# only makes sense as a range breakout, not once regime is already trending
+# (Uptrend/Downtrend).
+RANGING_PHASES = {PHASE_RANGING}
+
 _PHASE_TREND = {
     PHASE_UPTREND: TREND_BULLISH,
     PHASE_DOWNTREND: TREND_BEARISH,

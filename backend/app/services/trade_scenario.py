@@ -40,10 +40,13 @@ LEVELS_LOOKBACK = 20
 # plausible range regardless of what a single outlier bar did.
 MAX_RANGE_HEIGHT_PCT = 0.5
 
-# Nothing in the codebase tracks "how many bars did the range that produced
-# this event take to build", so a data-driven duration formula isn't
-# available -- this stays a flat default rather than a fabricated formula.
+# Fallback duration when ATR can't be computed (too little pre-event history)
+# or comes out zero (dead-flat candles).
 DEFAULT_MAX_BARS = 10
+
+ATR_PERIOD = 14
+MIN_MAX_BARS = 5
+MAX_MAX_BARS = 30
 
 
 def _utcnow() -> datetime:
@@ -195,6 +198,36 @@ def _pre_event_range_height(candles: list[Candle], event_index: int, levels: Lev
     return max(c.high for c in window) - min(c.low for c in window)
 
 
+def _atr(candles: list[Candle], period: int = ATR_PERIOD) -> float | None:
+    """Average True Range over the `period` bars ending at the last candle in
+    `candles` (callers pass the pre-event window). None if there isn't enough
+    history to compute one full period."""
+    if len(candles) < period + 1:
+        return None
+    trs = []
+    for i in range(len(candles) - period, len(candles)):
+        prev_close = candles[i - 1].close
+        tr = max(
+            candles[i].high - candles[i].low,
+            abs(candles[i].high - prev_close),
+            abs(candles[i].low - prev_close),
+        )
+        trs.append(tr)
+    return sum(trs) / len(trs)
+
+
+def _compute_max_bars(candles_before_event: list[Candle], tp_distance: float) -> int:
+    """How many bars the scenario gets before it's declared expired, scaled to
+    how volatile the asset actually is: a TP that's a small multiple of ATR
+    should resolve quickly, a distant TP against a calm ATR needs more bars.
+    Falls back to DEFAULT_MAX_BARS when ATR isn't available."""
+    atr = _atr(candles_before_event)
+    if not atr or atr <= 0:
+        return DEFAULT_MAX_BARS
+    bars = round(tp_distance / atr)
+    return max(MIN_MAX_BARS, min(MAX_MAX_BARS, bars))
+
+
 def _create_scenarios(
     session: Session,
     ticker: str,
@@ -206,6 +239,10 @@ def _create_scenarios(
     bearish_events: set[str],
     levels: Levels,
     provider_cfg: ProviderConfig,
+    strategy_module,
+    strategy_cfg,
+    daily_trend: str | None,
+    ranging_phases: set[str],
     use_ai: bool,
 ) -> None:
     qualifying = [e for e in events if e.type in bullish_events or e.type in bearish_events]
@@ -241,6 +278,19 @@ def _create_scenarios(
     if event.index >= n:
         return  # defensive, mirrors signal_outcomes.record_outcomes
 
+    # Gate on the phase as of just before the event, not the phase this same
+    # analysis run just classified -- a breakout event (SOS/BOS/CHoCH-style)
+    # inherently coincides with the phase flipping to Markup/Markdown/trending,
+    # so checking the post-event phase would almost always pass trivially.
+    # Re-running analyze() on the truncated pre-event window answers "was this
+    # actually a breakout out of a real range, or did it fire once already
+    # trending" -- the latter has no coherent range height to measure a move
+    # against.
+    truncated = candles[: event.index]
+    phase_before_event = strategy_module.analyze(truncated, strategy_cfg, daily_trend, provider_cfg.language).phase
+    if phase_before_event not in ranging_phases:
+        return
+
     existing = session.exec(
         select(TradeScenario).where(
             TradeScenario.ticker == ticker,
@@ -259,8 +309,9 @@ def _create_scenarios(
     is_bullish = event.type in bullish_events
     stop_loss = bar.low * (1 - SL_BUFFER_PCT) if is_bullish else bar.high * (1 + SL_BUFFER_PCT)
     take_profit = entry + range_height if is_bullish else entry - range_height
+    max_bars = _compute_max_bars(candles[: event.index], abs(take_profit - entry))
     explanation = _generate_explanation(
-        event.type, is_bullish, entry, stop_loss, take_profit, DEFAULT_MAX_BARS, provider_cfg, use_ai
+        event.type, is_bullish, entry, stop_loss, take_profit, max_bars, provider_cfg, use_ai
     )
 
     session.add(
@@ -274,7 +325,7 @@ def _create_scenarios(
             entry=entry,
             stop_loss=stop_loss,
             take_profit=take_profit,
-            max_bars=DEFAULT_MAX_BARS,
+            max_bars=max_bars,
             explanation=explanation,
         )
     )
@@ -291,6 +342,10 @@ def sync_scenarios(
     bearish_events: set[str],
     levels: Levels,
     provider_cfg: ProviderConfig,
+    strategy_module,
+    strategy_cfg,
+    daily_trend: str | None,
+    ranging_phases: set[str],
     use_ai: bool = True,
 ) -> None:
     """Update any already-active scenario against the latest candles first
@@ -298,12 +353,15 @@ def sync_scenarios(
     starting one), then create scenarios for qualifying events not yet
     tracked. ``bullish_events``/``bearish_events`` are the calling strategy's
     own event-type vocabulary (e.g. ``strategy_module.BULLISH_EVENTS``).
-    ``provider_cfg`` supplies both the language for close_reason/explanation
-    text and (when ``use_ai``) the AI provider for a written explanation."""
+    ``strategy_module``/``strategy_cfg``/``daily_trend``/``ranging_phases``
+    let a new scenario be gated on the phase just before the triggering event
+    (see the comment in ``_create_scenarios``). ``provider_cfg`` supplies both
+    the language for close_reason/explanation text and (when ``use_ai``) the
+    AI provider for a written explanation."""
     _update_active_scenarios(session, ticker, timeframe, strategy, candles, provider_cfg.language)
     _create_scenarios(
         session, ticker, timeframe, strategy, candles, events, bullish_events, bearish_events, levels,
-        provider_cfg, use_ai,
+        provider_cfg, strategy_module, strategy_cfg, daily_trend, ranging_phases, use_ai,
     )
     session.commit()
 

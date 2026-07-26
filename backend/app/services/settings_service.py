@@ -96,6 +96,12 @@ DEFAULTS: dict[str, str] = {
     "risk_pct_per_trade": "1.0",
     "slippage_pct_stock": "0.05",
     "slippage_pct_crypto": "0.3",
+    # Round-trip brokerage fee + tax (VN stock: ~0.1-0.15%/side commission +
+    # 0.1% sell tax; crypto: centralized-exchange taker fee, both sides).
+    # Combined into one all-in percentage rather than split buy/sell legs, to
+    # match how slippage is already modeled -- see get_scenario_stats._r_multiple.
+    "fee_pct_stock": "0.25",
+    "fee_pct_crypto": "0.1",
     "max_concurrent_scenarios": "10",
     "max_concurrent_scenarios_crypto": "5",
 }
@@ -110,6 +116,7 @@ _FLOAT_KEYS = {
     "climax_vol_mult", "wide_spread_mult", "narrow_spread_mult", "low_vol_mult", "sos_vol_mult",
     "screener_mcap_max", "screener_min_volume_change_pct", "sonicr_t3_vfactor", "smc_fvg_min_gap_mult",
     "notional_capital", "risk_pct_per_trade", "slippage_pct_stock", "slippage_pct_crypto",
+    "fee_pct_stock", "fee_pct_crypto",
 }
 _INT_KEYS = {
     "daily_lookback_days", "half_session_lookback_days", "lps_lookback_bars",
@@ -293,6 +300,8 @@ def get_risk_config(session: Session) -> dict:
         "risk_pct_per_trade": val("risk_pct_per_trade"),
         "slippage_pct_stock": val("slippage_pct_stock"),
         "slippage_pct_crypto": val("slippage_pct_crypto"),
+        "fee_pct_stock": val("fee_pct_stock"),
+        "fee_pct_crypto": val("fee_pct_crypto"),
         "max_concurrent_scenarios": int(val("max_concurrent_scenarios")),
         "max_concurrent_scenarios_crypto": int(val("max_concurrent_scenarios_crypto")),
     }

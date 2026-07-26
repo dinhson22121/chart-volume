@@ -97,6 +97,8 @@ interface FormState {
   riskPctPerTrade: string;
   slippagePctStock: string;
   slippagePctCrypto: string;
+  feePctStock: string;
+  feePctCrypto: string;
   maxConcurrentScenarios: string;
   maxConcurrentScenariosCrypto: string;
 }
@@ -152,6 +154,8 @@ function toForm(s: Settings): FormState {
     riskPctPerTrade: String(s.risk_pct_per_trade),
     slippagePctStock: String(s.slippage_pct_stock),
     slippagePctCrypto: String(s.slippage_pct_crypto),
+    feePctStock: String(s.fee_pct_stock),
+    feePctCrypto: String(s.fee_pct_crypto),
     maxConcurrentScenarios: String(s.max_concurrent_scenarios),
     maxConcurrentScenariosCrypto: String(s.max_concurrent_scenarios_crypto),
   };
@@ -205,6 +209,8 @@ function toUpdate(f: FormState): SettingsUpdate {
     risk_pct_per_trade: Number(f.riskPctPerTrade),
     slippage_pct_stock: Number(f.slippagePctStock),
     slippage_pct_crypto: Number(f.slippagePctCrypto),
+    fee_pct_stock: Number(f.feePctStock),
+    fee_pct_crypto: Number(f.feePctCrypto),
     max_concurrent_scenarios: Number(f.maxConcurrentScenarios),
     max_concurrent_scenarios_crypto: Number(f.maxConcurrentScenariosCrypto),
   };
@@ -882,6 +888,26 @@ export function SettingsModal({ onClose, strategy, onLicenseCleared }: Props) {
                     min={0}
                     value={form.slippagePctCrypto}
                     onChange={(e) => set("slippagePctCrypto", e.target.value)}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>{t("settings.risk.feeStock")}</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    value={form.feePctStock}
+                    onChange={(e) => set("feePctStock", e.target.value)}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>{t("settings.risk.feeCrypto")}</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    value={form.feePctCrypto}
+                    onChange={(e) => set("feePctCrypto", e.target.value)}
                   />
                 </label>
                 <label className="settings-field">

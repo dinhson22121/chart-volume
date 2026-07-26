@@ -15,7 +15,7 @@ from sqlmodel import Session, func, select
 
 from app.ai import narrative as narrative_mod
 from app.ai.narrative import ProviderConfig
-from app.models import AssetClass, Candle, Symbol, TradeScenario
+from app.models import AssetClass, Candle, Symbol, Timeframe, TradeScenario
 from app.services import settings_service
 from app.wyckoff import Levels
 from app.wyckoff.events import SOS, SOW, SPRING, UPTHRUST, WyckoffEvent
@@ -48,6 +48,17 @@ DEFAULT_MAX_BARS = 10
 ATR_PERIOD = 14
 MIN_MAX_BARS = 5
 MAX_MAX_BARS = 30
+
+# T+2.5 settlement: shares bought today only land in the account (tradeable
+# again) ~2.5 trading days later -- a stock scenario's TP/SL can't realistically
+# trigger before that many bars have elapsed, even if price crosses the level
+# earlier, because there's nothing to sell yet. Not applicable to crypto (T+0,
+# 24/7) or to a timeframe coarser than the lag itself (a weekly bar already
+# spans far more than 2.5 days, so no gate is listed for Timeframe.WEEK).
+SETTLEMENT_BARS_STOCK: dict[str, int] = {
+    Timeframe.DAILY: 3,  # ~T+2.5 trading days, rounded up
+    Timeframe.HALF_SESSION: 5,  # 2 sessions/day -> ~2.5 days = 5 half-sessions
+}
 
 # NoDemand/NoSupply (app.wyckoff.events) are "supporting" signals that fire
 # *inside* an already-established trend (an absorption bar showing a lack of
@@ -175,11 +186,20 @@ def _update_active_scenarios(
     if not active:
         return
 
+    symbol = session.get(Symbol, ticker)
+    min_settlement_bars = (
+        SETTLEMENT_BARS_STOCK.get(timeframe, 0)
+        if symbol is not None and symbol.asset_class == AssetClass.STOCK
+        else 0
+    )
+
     for scenario in active:
         subsequent = sorted(
             (c for c in candles if c.bucket_start > scenario.event_ts), key=lambda c: c.bucket_start
         )
-        for bar in subsequent:
+        for idx, bar in enumerate(subsequent, start=1):
+            if idx <= min_settlement_bars:
+                continue  # T+2.5: shares not settled yet, can't exit regardless of price
             hit_sl = bar.close <= scenario.stop_loss if scenario.is_bullish else bar.close >= scenario.stop_loss
             if hit_sl:
                 scenario.status = "hit_sl"
@@ -271,7 +291,6 @@ def _create_scenarios(
     candles: list[Candle],
     events: list[WyckoffEvent],
     bullish_events: set[str],
-    bearish_events: set[str],
     levels: Levels,
     provider_cfg: ProviderConfig,
     strategy_module,
@@ -280,13 +299,17 @@ def _create_scenarios(
     ranging_phases: set[str],
     use_ai: bool,
 ) -> None:
-    # NoDemand/NoSupply (see _CONTINUATION_EVENT_TYPES) never spawn a
-    # scenario on their own -- they're confirmation signals inside an
-    # already-established trend, not entry points. They're still recorded by
-    # signal_outcomes for stats; this only affects trade-plan creation.
+    # Spot-only: the app never models short-selling/margin, on either stock
+    # (retail can't short VN equities) or crypto (spot buy/sell, no futures).
+    # A bearish event is only ever a directional stat for signal_outcomes or a
+    # cue to exit an existing long -- it never spawns its own trade plan.
+    # NoDemand/NoSupply (see _CONTINUATION_EVENT_TYPES) are excluded for a
+    # separate reason: they're confirmation signals inside an already-
+    # established trend, not entry points, even though they're bullish/bearish
+    # in signal_outcomes' vocabulary. Both are recorded by signal_outcomes for
+    # stats; this only affects trade-plan creation.
     qualifying = [
-        e for e in events
-        if (e.type in bullish_events or e.type in bearish_events) and e.type not in _CONTINUATION_EVENT_TYPES
+        e for e in events if e.type in bullish_events and e.type not in _CONTINUATION_EVENT_TYPES
     ]
     if not qualifying:
         return
@@ -417,7 +440,6 @@ def sync_scenarios(
     candles: list[Candle],
     events: list[WyckoffEvent],
     bullish_events: set[str],
-    bearish_events: set[str],
     levels: Levels,
     provider_cfg: ProviderConfig,
     strategy_module,
@@ -429,8 +451,10 @@ def sync_scenarios(
     """Update any already-active scenario against the latest candles first
     (so a scenario closed in this same run doesn't block a new event from
     starting one), then create scenarios for qualifying events not yet
-    tracked. ``bullish_events``/``bearish_events`` are the calling strategy's
-    own event-type vocabulary (e.g. ``strategy_module.BULLISH_EVENTS``).
+    tracked. ``bullish_events`` is the calling strategy's own event-type
+    vocabulary (e.g. ``strategy_module.BULLISH_EVENTS``) -- there's no
+    ``bearish_events`` counterpart because the app is spot-only (see
+    ``_create_scenarios``): a bearish event never spawns its own trade plan.
     ``strategy_module``/``strategy_cfg``/``daily_trend``/``ranging_phases``
     let a new scenario be gated on the phase just before the triggering event
     (see the comment in ``_create_scenarios``). ``provider_cfg`` supplies both
@@ -438,7 +462,7 @@ def sync_scenarios(
     AI provider for a written explanation."""
     _update_active_scenarios(session, ticker, timeframe, strategy, candles, provider_cfg.language)
     _create_scenarios(
-        session, ticker, timeframe, strategy, candles, events, bullish_events, bearish_events, levels,
+        session, ticker, timeframe, strategy, candles, events, bullish_events, levels,
         provider_cfg, strategy_module, strategy_cfg, daily_trend, ranging_phases, use_ai,
     )
     session.commit()
@@ -489,10 +513,13 @@ def get_scenario_stats(
     -- every status that now carries an ``exit_price``, see
     _update_active_scenarios) expressed as an R-multiple: return relative to
     the scenario's own risk distance (entry-to-stop), the standard way to
-    compare trades with different stop distances. A per-ticker slippage
-    haircut (stock vs crypto, see settings_service.get_risk_config) worsens
-    exit_price in the unfavorable direction first, so the number reflects a
-    realistic fill rather than the exact trigger level. The $ amount applies
+    compare trades with different stop distances. A per-ticker slippage +
+    round-trip fee/tax haircut (stock vs crypto, see
+    settings_service.get_risk_config) worsens exit_price in the unfavorable
+    direction first, so the number reflects a realistic fill rather than the
+    exact trigger level -- without this, expectancy would silently assume
+    free trading, which for VN stocks alone overstates every trade by
+    ~0.2-0.3%. The $ amount applies
     fixed-fractional position sizing (risk_pct_per_trade of notional_capital
     per trade) -- both purely for display, computed at read time so tuning
     either assumption never needs a migration."""
@@ -530,12 +557,11 @@ def get_scenario_stats(
         risk_distance = abs(s.entry - s.stop_loss)
         if not risk_distance or s.exit_price is None:
             return None
-        slippage_pct = (
-            risk_cfg["slippage_pct_crypto"] if asset_classes.get(s.ticker) == AssetClass.CRYPTO
-            else risk_cfg["slippage_pct_stock"]
-        ) / 100
-        slippage_amount = slippage_pct * s.entry
-        adjusted_exit = s.exit_price - slippage_amount if s.is_bullish else s.exit_price + slippage_amount
+        is_crypto = asset_classes.get(s.ticker) == AssetClass.CRYPTO
+        slippage_pct = (risk_cfg["slippage_pct_crypto"] if is_crypto else risk_cfg["slippage_pct_stock"]) / 100
+        fee_pct = (risk_cfg["fee_pct_crypto"] if is_crypto else risk_cfg["fee_pct_stock"]) / 100
+        cost_amount = (slippage_pct + fee_pct) * s.entry
+        adjusted_exit = s.exit_price - cost_amount if s.is_bullish else s.exit_price + cost_amount
         raw = (adjusted_exit - s.entry) / risk_distance
         return raw if s.is_bullish else -raw
 

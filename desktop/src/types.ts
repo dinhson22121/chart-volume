@@ -180,6 +180,8 @@ export interface Settings {
   risk_pct_per_trade: number;
   slippage_pct_stock: number;
   slippage_pct_crypto: number;
+  fee_pct_stock: number;
+  fee_pct_crypto: number;
   max_concurrent_scenarios: number;
   max_concurrent_scenarios_crypto: number;
   has_anthropic_key: boolean;

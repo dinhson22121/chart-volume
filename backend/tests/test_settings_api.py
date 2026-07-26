@@ -225,6 +225,48 @@ def test_put_settings_accepts_plain_ollama_model(client, auth_header):
     assert resp.json()["ollama_model"] == "qwen2.5:7b"
 
 
+def test_put_settings_accepts_risk_settings(client, auth_header):
+    # Regression: these fields were readable via GET (settings_service.DEFAULTS)
+    # but PUT silently dropped them -- SettingsIn never declared them, so
+    # Pydantic ignored them as unknown fields and the Settings modal's Risk
+    # Management section couldn't actually persist a change.
+    resp = client.put(
+        "/settings",
+        json={
+            "notional_capital": 50_000_000,
+            "risk_pct_per_trade": 2.0,
+            "slippage_pct_stock": 0.1,
+            "slippage_pct_crypto": 0.5,
+            "fee_pct_stock": 0.3,
+            "fee_pct_crypto": 0.15,
+            "max_concurrent_scenarios": 15,
+            "max_concurrent_scenarios_crypto": 8,
+        },
+        headers=auth_header,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["notional_capital"] == 50_000_000
+    assert body["risk_pct_per_trade"] == 2.0
+    assert body["slippage_pct_stock"] == 0.1
+    assert body["slippage_pct_crypto"] == 0.5
+    assert body["fee_pct_stock"] == 0.3
+    assert body["fee_pct_crypto"] == 0.15
+    assert body["max_concurrent_scenarios"] == 15
+    assert body["max_concurrent_scenarios_crypto"] == 8
+
+
+def test_get_settings_exposes_fee_defaults(client, auth_header):
+    body = client.get("/settings", headers=auth_header).json()
+    assert body["fee_pct_stock"] == 0.25
+    assert body["fee_pct_crypto"] == 0.1
+
+
+def test_put_settings_rejects_zero_max_concurrent_scenarios(client, auth_header):
+    resp = client.put("/settings", json={"max_concurrent_scenarios": 0}, headers=auth_header)
+    assert resp.status_code == 422
+
+
 def test_put_settings_rejects_ollama_model_embedding_a_registry_host(client, auth_header):
     # Same guard as /ollama/pull -- a "/" would let this value redirect the
     # user's local Ollama daemon to an attacker-chosen host at generation time.

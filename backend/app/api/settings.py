@@ -78,6 +78,14 @@ class SettingsIn(BaseModel):
     ai_narrative_vn30: bool | None = None
     ai_narrative_watchlist: bool | None = None
     ai_narrative_top100: bool | None = None
+    notional_capital: float | None = Field(default=None, gt=0)
+    risk_pct_per_trade: float | None = Field(default=None, gt=0, le=100)
+    slippage_pct_stock: float | None = Field(default=None, ge=0)
+    slippage_pct_crypto: float | None = Field(default=None, ge=0)
+    fee_pct_stock: float | None = Field(default=None, ge=0)
+    fee_pct_crypto: float | None = Field(default=None, ge=0)
+    max_concurrent_scenarios: int | None = Field(default=None, ge=1)
+    max_concurrent_scenarios_crypto: int | None = Field(default=None, ge=1)
 
     @field_validator("strategy")
     @classmethod

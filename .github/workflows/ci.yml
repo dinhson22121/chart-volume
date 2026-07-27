@@ -1,0 +1,43 @@
+name: CI
+
+# Runs on every push/PR (unlike build.yml, which only fires on release tags)
+# so backend/frontend regressions surface before they reach main.
+on:
+  push:
+    branches: ["**"]
+  pull_request: {}
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Run pytest
+        working-directory: backend
+        run: pytest
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Type-check + build renderer
+        working-directory: desktop
+        run: npm run build

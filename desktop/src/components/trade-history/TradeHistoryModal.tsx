@@ -66,6 +66,7 @@ export function TradeHistoryModal({ onClose }: Props) {
   const [strategyFilter, setStrategyFilter] = useState("");
   const [assetClassFilter, setAssetClassFilter] = useState<AssetClass | "">("");
   const [sourceFilter, setSourceFilter] = useState<TradeHistorySource>("live");
+  const [directionFilter, setDirectionFilter] = useState<"" | "long" | "short">("");
   const [strategies, setStrategies] = useState<StrategyOption[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -81,7 +82,7 @@ export function TradeHistoryModal({ onClose }: Props) {
 
   useEffect(() => {
     setPage(1);
-  }, [tickerFilter, statusFilter, strategyFilter, assetClassFilter, sourceFilter]);
+  }, [tickerFilter, statusFilter, strategyFilter, assetClassFilter, sourceFilter, directionFilter]);
 
   useEffect(() => {
     setError(null);
@@ -92,6 +93,7 @@ export function TradeHistoryModal({ onClose }: Props) {
         strategy: strategyFilter,
         assetClass: assetClassFilter || undefined,
         source: sourceFilter,
+        isBullish: directionFilter ? directionFilter === "long" : undefined,
       })
       .then((res) => {
         setItems(res.items);
@@ -99,7 +101,7 @@ export function TradeHistoryModal({ onClose }: Props) {
       })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : t("tradeHistory.error")));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, tickerFilter, statusFilter, strategyFilter, assetClassFilter, sourceFilter]);
+  }, [page, tickerFilter, statusFilter, strategyFilter, assetClassFilter, sourceFilter, directionFilter]);
 
   useEffect(() => {
     api
@@ -108,11 +110,12 @@ export function TradeHistoryModal({ onClose }: Props) {
         strategy: strategyFilter,
         assetClass: assetClassFilter || undefined,
         source: sourceFilter,
+        isBullish: directionFilter ? directionFilter === "long" : undefined,
       })
       .then(setStats)
       .catch(() => setStats(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tickerFilter, strategyFilter, assetClassFilter, sourceFilter]);
+  }, [tickerFilter, strategyFilter, assetClassFilter, sourceFilter, directionFilter]);
 
   const handleRunBacktest = () => {
     const ticker = btTicker.trim().toUpperCase();
@@ -226,7 +229,19 @@ export function TradeHistoryModal({ onClose }: Props) {
               </select>
             </div>
             <span className="th-info has-tooltip" data-tooltip={t("tradeHistory.filter.sourceHint")}>ⓘ</span>
-            {(tickerFilter || statusFilter || strategyFilter || assetClassFilter || sourceFilter !== "live") && (
+            <div className="th-select">
+              <select
+                className={directionFilter ? "is-set" : ""}
+                value={directionFilter}
+                onChange={(e) => setDirectionFilter(e.target.value as "" | "long" | "short")}
+              >
+                <option value="">{t("tradeHistory.filter.directionAll")}</option>
+                <option value="long">{t("tradeHistory.filter.directionLong")}</option>
+                <option value="short">{t("tradeHistory.filter.directionShort")}</option>
+              </select>
+            </div>
+            <span className="th-info has-tooltip" data-tooltip={t("tradeHistory.filter.directionHint")}>ⓘ</span>
+            {(tickerFilter || statusFilter || strategyFilter || assetClassFilter || sourceFilter !== "live" || directionFilter) && (
               <button
                 type="button"
                 className="th-clear-filters"
@@ -236,6 +251,7 @@ export function TradeHistoryModal({ onClose }: Props) {
                   setStrategyFilter("");
                   setAssetClassFilter("");
                   setSourceFilter("live");
+                  setDirectionFilter("");
                 }}
               >
                 {t("tradeHistory.filter.clear")} ×

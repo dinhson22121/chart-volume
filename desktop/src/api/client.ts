@@ -151,6 +151,7 @@ export const api = {
       strategy?: string;
       assetClass?: AssetClass;
       source?: TradeHistorySource;
+      isBullish?: boolean;
     } = {},
   ) => {
     const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
@@ -159,16 +160,24 @@ export const api = {
     if (filters.strategy) params.set("strategy", filters.strategy);
     if (filters.assetClass) params.set("asset_class", filters.assetClass);
     if (filters.source) params.set("source", filters.source);
+    if (filters.isBullish !== undefined) params.set("is_bullish", String(filters.isBullish));
     return req<TradeHistoryPage>(`/trade-history?${params.toString()}`);
   },
   getTradeHistoryStats: (
-    filters: { ticker?: string; strategy?: string; assetClass?: AssetClass; source?: TradeHistorySource } = {},
+    filters: {
+      ticker?: string;
+      strategy?: string;
+      assetClass?: AssetClass;
+      source?: TradeHistorySource;
+      isBullish?: boolean;
+    } = {},
   ) => {
     const params = new URLSearchParams();
     if (filters.ticker) params.set("ticker", filters.ticker);
     if (filters.strategy) params.set("strategy", filters.strategy);
     if (filters.assetClass) params.set("asset_class", filters.assetClass);
     if (filters.source) params.set("source", filters.source);
+    if (filters.isBullish !== undefined) params.set("is_bullish", String(filters.isBullish));
     const qs = params.toString();
     return req<TradeHistoryStats>(`/trade-history/stats${qs ? `?${qs}` : ""}`);
   },

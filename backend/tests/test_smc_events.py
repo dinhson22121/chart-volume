@@ -13,6 +13,8 @@ from app.smc.events import (
     BULLISH_OB,
     CHOCH_BEAR,
     CHOCH_BULL,
+    EQUAL_HIGH,
+    EQUAL_LOW,
     detect_events,
 )
 from app.smc.indicators import compute_features
@@ -153,6 +155,82 @@ def test_bearish_order_block_anchors_to_last_up_candle_before_bos():
     assert ob[0].index < bos[0].index
 
 
+def test_bullish_order_block_skips_a_high_volatility_candle_for_the_anchor():
+    # Two down candles before the impulse: a normal-range one further back,
+    # then an abnormal-range (huge wick) one immediately before the impulse.
+    # LuxAlgo's own volatility filter exists for exactly this -- an OB
+    # anchored to a wick/spike outlier gives a nonsensical, far-too-wide zone.
+    values = [
+        110, 108, 106, 104, 102, 100,
+        102, 104, 106, 108, 110, 112,
+        110, 108, 106, 104, 103,
+        105, 108, 111, 113, 115, 117, 119,  # CHoCH_Bull, new swing high ~119
+        117, 115, 113, 112, 111,  # new swing low ~111
+    ]
+    opens, highs, lows, closes = _zigzag(values)
+    clean_down_index = len(values)
+    # Normal-range down candle (spread ~1.0, matching the zigzag's own spread).
+    opens.append(112.5); closes.append(112.0); highs.append(113.0); lows.append(112.0)  # noqa: E702
+    # Abnormal-range down candle immediately before the impulse (spread ~18 --
+    # far beyond 2x the ~1.0 spread_ma at this point).
+    opens.append(112.0); closes.append(108.0); highs.append(113.0); lows.append(95.0)  # noqa: E702
+    for v in (116, 119, 122, 125):
+        opens.append(v - 0.3); closes.append(v); highs.append(v + 0.5); lows.append(v - 0.5)  # noqa: E702
+
+    feat = compute_features(_df(opens, highs, lows, closes), CFG)
+    events = detect_events(feat, CFG)
+
+    ob = _by_type(events, BULLISH_OB)
+    assert len(ob) == 1
+    assert ob[0].index == clean_down_index  # skipped the closer, high-volatility candle
+
+
+def test_bullish_order_block_is_mitigated_once_price_closes_back_below_its_low():
+    values = [
+        110, 108, 106, 104, 102, 100,
+        102, 104, 106, 108, 110, 112,
+        110, 108, 106, 104, 103,
+        105, 108, 111, 113, 115, 117, 119,
+        117, 115, 113, 112, 111,
+    ]
+    opens, highs, lows, closes = _zigzag(values)
+    opens.append(113.0); closes.append(112.0); highs.append(113.5); lows.append(111.5)  # noqa: E702 -- OB low=111.5
+    for v in (116, 119, 122, 125):
+        opens.append(v - 0.3); closes.append(v); highs.append(v + 0.5); lows.append(v - 0.5)  # noqa: E702
+    # Price later reverses and closes below the OB's own low (111.5) -- the
+    # zone has been revisited and broken, so it's no longer a valid OB.
+    for v in (120, 115, 108, 105):
+        opens.append(v + 0.3); closes.append(v); highs.append(v + 0.5); lows.append(v - 0.5)  # noqa: E702
+
+    feat = compute_features(_df(opens, highs, lows, closes), CFG)
+    events = detect_events(feat, CFG)
+
+    ob = _by_type(events, BULLISH_OB)
+    assert len(ob) == 1
+    assert ob[0].mitigated is True
+
+
+def test_bullish_order_block_stays_unmitigated_while_price_holds_above_its_low():
+    values = [
+        110, 108, 106, 104, 102, 100,
+        102, 104, 106, 108, 110, 112,
+        110, 108, 106, 104, 103,
+        105, 108, 111, 113, 115, 117, 119,
+        117, 115, 113, 112, 111,
+    ]
+    opens, highs, lows, closes = _zigzag(values)
+    opens.append(113.0); closes.append(112.0); highs.append(113.5); lows.append(111.5)  # noqa: E702
+    for v in (116, 119, 122, 125, 128, 131):
+        opens.append(v - 0.3); closes.append(v); highs.append(v + 0.5); lows.append(v - 0.5)  # noqa: E702
+
+    feat = compute_features(_df(opens, highs, lows, closes), CFG)
+    events = detect_events(feat, CFG)
+
+    ob = _by_type(events, BULLISH_OB)
+    assert len(ob) == 1
+    assert ob[0].mitigated is False
+
+
 def test_detects_bullish_fvg_when_gap_exceeds_threshold():
     n_base = 10
     opens = [100.0] * n_base
@@ -214,6 +292,50 @@ def test_detects_bearish_fvg_when_gap_exceeds_threshold():
     fvg = _by_type(events, BEARISH_FVG)
     assert len(fvg) == 1
     assert fvg[0].index == 11
+
+
+# --- Equal Highs / Equal Lows: two consecutive same-type swing pivots
+# --- within a small ATR-scaled (here: spread_ma-scaled) threshold of
+# --- each other -- a liquidity pool resting at (roughly) one price level.
+
+def test_detects_equal_high_when_two_consecutive_swing_highs_are_close():
+    values = [
+        100, 98, 96, 98, 100, 102, 104.00,  # swing high #1 at idx 6, level 104.00
+        102, 100, 98, 96, 98, 100, 102, 104.08,  # swing high #2 at idx 14, level 104.08 (diff 0.08)
+        102, 100, 98,
+    ]
+    feat = compute_features(_df(*_zigzag(values)), CFG)
+    events = detect_events(feat, CFG)
+
+    eqh = _by_type(events, EQUAL_HIGH)
+    assert len(eqh) == 1
+    assert eqh[0].index == 14  # tagged on the second (confirming) pivot
+
+
+def test_detects_equal_low_when_two_consecutive_swing_lows_are_close():
+    values = [
+        104, 106, 108, 106, 104, 102, 100.00,  # swing low #1 at idx 6, level 100.00
+        102, 104, 106, 108, 106, 104, 102, 99.95,  # swing low #2 at idx 14, level 99.95 (diff 0.05)
+        102, 104, 106,
+    ]
+    feat = compute_features(_df(*_zigzag(values)), CFG)
+    events = detect_events(feat, CFG)
+
+    eql = _by_type(events, EQUAL_LOW)
+    assert len(eql) == 1
+    assert eql[0].index == 14
+
+
+def test_no_equal_high_when_consecutive_swing_highs_are_far_apart():
+    values = [
+        100, 98, 96, 98, 100, 102, 104.0,  # swing high #1, level 104.0
+        102, 100, 98, 96, 98, 100, 102, 112.0,  # swing high #2, level 112.0 -- clearly not "equal"
+        102, 100, 98,
+    ]
+    feat = compute_features(_df(*_zigzag(values)), CFG)
+    events = detect_events(feat, CFG)
+
+    assert not _by_type(events, EQUAL_HIGH)
 
 
 def test_language_switches_note_text():

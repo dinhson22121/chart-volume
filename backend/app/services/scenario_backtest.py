@@ -144,7 +144,9 @@ def walk_events(
     qualifying = sorted(
         (
             e for e in events
-            if (e.type in bullish_events or e.type in bearish_events) and e.type not in CONTINUATION_EVENT_TYPES
+            if (e.type in bullish_events or e.type in bearish_events)
+            and e.type not in CONTINUATION_EVENT_TYPES
+            and not getattr(e, "mitigated", False)
         ),
         key=lambda e: e.ts,
     )

@@ -24,6 +24,8 @@ BULLISH_OB = "BullishOB"
 BEARISH_OB = "BearishOB"
 BULLISH_FVG = "BullishFVG"
 BEARISH_FVG = "BearishFVG"
+EQUAL_HIGH = "EqualHigh"
+EQUAL_LOW = "EqualLow"
 
 
 @dataclass
@@ -33,6 +35,11 @@ class SMCEvent:
     ts: datetime
     price: float
     note: str = ""
+    # Order Blocks only (see _detect_order_blocks): True once price has
+    # closed back through the zone after formation -- the zone's premise
+    # (unfilled supply/demand) no longer holds. Always False for every other
+    # event type, which has no equivalent "still valid?" concept.
+    mitigated: bool = False
 
 
 def _ts_at(df: pd.DataFrame, i: int):
@@ -107,17 +114,46 @@ def _detect_structure(df: pd.DataFrame, language: str = "vi") -> list[SMCEvent]:
     return events
 
 
+def _is_high_volatility_bar(df: pd.DataFrame, i: int, cfg: SMCConfig) -> bool:
+    """A wick/spike outlier bar makes a poor OB anchor -- its own range dwarfs
+    the zone a real order block should represent. NaN spread_ma (too early in
+    the series) never disqualifies a candle -- there's nothing to compare
+    against yet, so it degrades to the pre-filter behavior for that bar."""
+    spread_ma = df["spread_ma"].iloc[i]
+    if pd.isna(spread_ma):
+        return False
+    spread = df["high"].iloc[i] - df["low"].iloc[i]
+    return bool(spread >= cfg.ob_volatility_mult * spread_ma)
+
+
 def _find_order_block_index(df: pd.DataFrame, bos_index: int, cfg: SMCConfig, bullish: bool) -> int | None:
     """Last opposite-direction candle before ``bos_index``, within
-    ``cfg.ob_lookback_bars`` -- the classic order-block definition."""
+    ``cfg.ob_lookback_bars`` -- the classic order-block definition. Skips a
+    candidate whose own range is abnormally large (see
+    _is_high_volatility_bar) and keeps searching further back instead."""
     start = max(0, bos_index - cfg.ob_lookback_bars)
     for i in range(bos_index - 1, start - 1, -1):
+        if _is_high_volatility_bar(df, i, cfg):
+            continue
         is_down = df["close"].iloc[i] < df["open"].iloc[i]
         if bullish and is_down:
             return i
         if not bullish and not is_down:
             return i
     return None
+
+
+def _is_mitigated(df: pd.DataFrame, ob_idx: int, low: float, high: float, bullish: bool) -> bool:
+    """True once a later bar closes back through the OB zone -- for a
+    bullish OB (demand zone), a close below its low; for a bearish OB
+    (supply zone), a close above its high. Scans the WHOLE known future here
+    (detect_events sees the full history at once) -- live tracking re-derives
+    this fresh on every call against whatever candles have arrived so far, so
+    it can never see a mitigation before it actually happened."""
+    subsequent_closes = df["close"].iloc[ob_idx + 1 :]
+    if bullish:
+        return bool((subsequent_closes < low).any())
+    return bool((subsequent_closes > high).any())
 
 
 def _detect_order_blocks(
@@ -134,23 +170,29 @@ def _detect_order_blocks(
             if ob_idx is None:
                 continue
             low, high = float(df["low"].iloc[ob_idx]), float(df["high"].iloc[ob_idx])
+            mitigated = _is_mitigated(df, ob_idx, low, high, bullish=True)
             note = (
                 f"Last down candle before the breakout -- zone {low:.2f}-{high:.2f} often gets retested"
                 if en
                 else f"Nến giảm cuối cùng trước cú bứt phá -- vùng {low:.2f}-{high:.2f} hay được test lại"
             )
-            events.append(SMCEvent(BULLISH_OB, ob_idx, _ts_at(df, ob_idx), float(df["close"].iloc[ob_idx]), note))
+            events.append(
+                SMCEvent(BULLISH_OB, ob_idx, _ts_at(df, ob_idx), float(df["close"].iloc[ob_idx]), note, mitigated)
+            )
         elif e.type == BOS_BEAR:
             ob_idx = _find_order_block_index(df, e.index, cfg, bullish=False)
             if ob_idx is None:
                 continue
             low, high = float(df["low"].iloc[ob_idx]), float(df["high"].iloc[ob_idx])
+            mitigated = _is_mitigated(df, ob_idx, low, high, bullish=False)
             note = (
                 f"Last up candle before the breakdown -- zone {low:.2f}-{high:.2f} often gets retested"
                 if en
                 else f"Nến tăng cuối cùng trước cú gãy -- vùng {low:.2f}-{high:.2f} hay được test lại"
             )
-            events.append(SMCEvent(BEARISH_OB, ob_idx, _ts_at(df, ob_idx), float(df["close"].iloc[ob_idx]), note))
+            events.append(
+                SMCEvent(BEARISH_OB, ob_idx, _ts_at(df, ob_idx), float(df["close"].iloc[ob_idx]), note, mitigated)
+            )
     return events
 
 
@@ -190,10 +232,46 @@ def _detect_fvg(df: pd.DataFrame, cfg: SMCConfig, language: str = "vi") -> list[
     return events
 
 
+def _detect_equal_highs_lows(df: pd.DataFrame, cfg: SMCConfig, language: str = "vi") -> list[SMCEvent]:
+    """A liquidity pool: two consecutive swing highs (or lows) sitting within
+    ``cfg.eq_threshold_mult * spread_ma`` of each other -- a common SMC target
+    for a stop-run/sweep before the real move. Tagged on the SECOND
+    (confirming) pivot, the earliest point the pair is actually known."""
+    en = language == "en"
+    events: list[SMCEvent] = []
+    swing_highs = [(i, float(df["high"].iloc[i])) for i in range(len(df)) if df["swing_high"].iloc[i]]
+    swing_lows = [(i, float(df["low"].iloc[i])) for i in range(len(df)) if df["swing_low"].iloc[i]]
+
+    for (_, level1), (i2, level2) in zip(swing_highs, swing_highs[1:]):
+        spread_ma = df["spread_ma"].iloc[i2]
+        if pd.isna(spread_ma) or abs(level2 - level1) >= cfg.eq_threshold_mult * spread_ma:
+            continue
+        note = (
+            f"Two swing highs near {level2:.2f} -- resting liquidity often swept before reversing"
+            if en
+            else f"Hai đỉnh swing gần nhau quanh {level2:.2f} -- thanh khoản chờ sẵn thường bị quét trước khi đảo chiều"
+        )
+        events.append(SMCEvent(EQUAL_HIGH, i2, _ts_at(df, i2), level2, note))
+
+    for (_, level1), (i2, level2) in zip(swing_lows, swing_lows[1:]):
+        spread_ma = df["spread_ma"].iloc[i2]
+        if pd.isna(spread_ma) or abs(level2 - level1) >= cfg.eq_threshold_mult * spread_ma:
+            continue
+        note = (
+            f"Two swing lows near {level2:.2f} -- resting liquidity often swept before reversing"
+            if en
+            else f"Hai đáy swing gần nhau quanh {level2:.2f} -- thanh khoản chờ sẵn thường bị quét trước khi đảo chiều"
+        )
+        events.append(SMCEvent(EQUAL_LOW, i2, _ts_at(df, i2), level2, note))
+
+    return events
+
+
 def detect_events(df: pd.DataFrame, cfg: SMCConfig = DEFAULT_CONFIG, language: str = "vi") -> list[SMCEvent]:
     structure_events = _detect_structure(df, language)
     ob_events = _detect_order_blocks(df, structure_events, cfg, language)
     fvg_events = _detect_fvg(df, cfg, language)
-    events = structure_events + ob_events + fvg_events
+    eq_events = _detect_equal_highs_lows(df, cfg, language)
+    events = structure_events + ob_events + fvg_events + eq_events
     events.sort(key=lambda e: e.index)
     return events

@@ -525,8 +525,19 @@ def _create_scenarios(
     # established trend, not entry points, even though they're bullish/bearish
     # in signal_outcomes' vocabulary. Both are recorded by signal_outcomes for
     # stats; this only affects trade-plan creation.
+    #
+    # getattr(e, "mitigated", False), not e.mitigated -- only app.smc's Order
+    # Block events have this attribute (a since-mitigated OB's zone has
+    # already been invalidated by price closing back through it, so entering
+    # off it now would be trading a premise that no longer holds); every
+    # other strategy's events default to "never mitigated" via the getattr
+    # fallback, same defensive-attribute pattern _VP_GATED_EVENT_TYPES uses
+    # for volume_confirmed.
     qualifying = [
-        e for e in events if e.type in bullish_events and e.type not in CONTINUATION_EVENT_TYPES
+        e for e in events
+        if e.type in bullish_events
+        and e.type not in CONTINUATION_EVENT_TYPES
+        and not getattr(e, "mitigated", False)
     ]
     if not qualifying:
         return

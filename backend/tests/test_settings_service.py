@@ -240,7 +240,7 @@ def test_crypto_analysis_config_reflects_overrides(session):
 
 
 def test_shadow_strategy_keys_defaults_to_every_registered_strategy(session):
-    assert settings_service.get_shadow_strategy_keys(session) == {"wyckoff", "sonicr", "smc"}
+    assert settings_service.get_shadow_strategy_keys(session) == {"wyckoff", "sonicr", "smc", "accumulation"}
 
 
 def test_shadow_strategy_keys_can_be_restricted(session):

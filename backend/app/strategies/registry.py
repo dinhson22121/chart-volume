@@ -13,6 +13,7 @@ import logging
 
 from app import smc, sonicr, wyckoff
 from app.strategies.base import Strategy
+from app.wyckoff import accumulation
 
 logger = logging.getLogger("chart_volume.strategies")
 
@@ -22,12 +23,14 @@ REGISTRY: dict[str, Strategy] = {
     "wyckoff": wyckoff,
     "sonicr": sonicr,
     "smc": smc,
+    "accumulation": accumulation,
 }
 
 LABELS: dict[str, str] = {
     "wyckoff": "Wyckoff (Accumulation/Distribution)",
     "sonicr": "Sonic R",
     "smc": "Smart Money Concept",
+    "accumulation": "Volume Accumulation (Tích lũy)",
 }
 
 

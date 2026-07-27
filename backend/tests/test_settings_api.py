@@ -255,7 +255,7 @@ def test_get_settings_exposes_crypto_trading_fee_default(client, auth_header):
 
 def test_get_settings_exposes_shadow_strategy_keys_default(client, auth_header):
     body = client.get("/settings", headers=auth_header).json()
-    assert set(body["shadow_strategy_keys"]) == {"wyckoff", "sonicr", "smc"}
+    assert set(body["shadow_strategy_keys"]) == {"wyckoff", "sonicr", "smc", "accumulation"}
 
 
 def test_put_settings_restricts_shadow_strategy_keys(client, auth_header):

@@ -96,7 +96,7 @@ TRAIL_ATR_MULT = 1.5
 # stats), consistent with treating them as trend confirmation rather than
 # standalone entries. Harmless for other strategies' event vocabularies,
 # whose event.type never matches these.
-_CONTINUATION_EVENT_TYPES = {"NoDemand", "NoSupply"}
+CONTINUATION_EVENT_TYPES = {"NoDemand", "NoSupply"}
 
 # Same set as app.wyckoff.volume_profile._VP_CHECKABLE/phase._VP_CHECKABLE --
 # the only 4 event types Volume Profile actually has a clean confirmation
@@ -520,13 +520,13 @@ def _create_scenarios(
     # (retail can't short VN equities) or crypto (spot buy/sell, no futures).
     # A bearish event is only ever a directional stat for signal_outcomes or a
     # cue to exit an existing long -- it never spawns its own trade plan.
-    # NoDemand/NoSupply (see _CONTINUATION_EVENT_TYPES) are excluded for a
+    # NoDemand/NoSupply (see CONTINUATION_EVENT_TYPES) are excluded for a
     # separate reason: they're confirmation signals inside an already-
     # established trend, not entry points, even though they're bullish/bearish
     # in signal_outcomes' vocabulary. Both are recorded by signal_outcomes for
     # stats; this only affects trade-plan creation.
     qualifying = [
-        e for e in events if e.type in bullish_events and e.type not in _CONTINUATION_EVENT_TYPES
+        e for e in events if e.type in bullish_events and e.type not in CONTINUATION_EVENT_TYPES
     ]
     if not qualifying:
         return

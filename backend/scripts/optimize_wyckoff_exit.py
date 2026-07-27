@@ -127,10 +127,10 @@ def _walk_approach_b(ticker, candles, events, levels, cfg, symbol, risk_cfg, tra
     """Same candidate-building as walk_events, but resolved with the
     breakeven+trail rule instead of trade_scenario._resolve_outcome."""
     from app.ai.narrative import PROVIDER_ANTHROPIC, ProviderConfig
-    from app.services.trade_scenario import _CONTINUATION_EVENT_TYPES, _build_scenario_candidate
+    from app.services.trade_scenario import CONTINUATION_EVENT_TYPES, _build_scenario_candidate
 
     qualifying = sorted(
-        (e for e in events if e.type in BULLISH_EVENTS and e.type not in _CONTINUATION_EVENT_TYPES),
+        (e for e in events if e.type in BULLISH_EVENTS and e.type not in CONTINUATION_EVENT_TYPES),
         key=lambda e: e.ts,
     )
     provider_cfg = ProviderConfig(provider=PROVIDER_ANTHROPIC, model="", api_key="", language="vi")

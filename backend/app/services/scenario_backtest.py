@@ -34,7 +34,7 @@ from app.ai.narrative import PROVIDER_ANTHROPIC, ProviderConfig
 from app.models import Candle, Symbol, TradeScenario
 from app.services import settings_service
 from app.services.trade_scenario import (
-    _CONTINUATION_EVENT_TYPES,
+    CONTINUATION_EVENT_TYPES,
     _build_scenario_candidate,
     _close_reason,
     _resolve_outcome,
@@ -144,7 +144,7 @@ def walk_events(
     qualifying = sorted(
         (
             e for e in events
-            if (e.type in bullish_events or e.type in bearish_events) and e.type not in _CONTINUATION_EVENT_TYPES
+            if (e.type in bullish_events or e.type in bearish_events) and e.type not in CONTINUATION_EVENT_TYPES
         ),
         key=lambda e: e.ts,
     )

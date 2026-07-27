@@ -73,7 +73,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "analysis.scenario.sl": "Cắt lỗ",
     "analysis.scenario.tp": "Chốt lời",
     "analysis.scenario.duration": "Tối đa {bars} nến để đạt mục tiêu",
-    "analysis.section.signals": "Tín hiệu Wyckoff",
+    "analysis.section.signals": "Tín hiệu đáng chú ý",
     "analysis.section.narrative": "Nhận định",
     "analysis.section.advice": "Lời khuyên",
     "analysis.noNarrative":
@@ -582,7 +582,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "analysis.scenario.sl": "Stop-Loss",
     "analysis.scenario.tp": "Take-Profit",
     "analysis.scenario.duration": "Up to {bars} candles to reach target",
-    "analysis.section.signals": "Wyckoff signals",
+    "analysis.section.signals": "Notable signals",
     "analysis.section.narrative": "Assessment",
     "analysis.section.advice": "Advice",
     "analysis.noNarrative":

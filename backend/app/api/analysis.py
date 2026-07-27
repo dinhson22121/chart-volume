@@ -56,8 +56,30 @@ def _scenario_out(s) -> dict | None:
     }
 
 
+def _actionable_signals(signals: list[dict], strategy: str) -> list[dict]:
+    """The subset of ``signals`` that could actually spawn a live TradeScenario
+    -- bullish (spot trading has no short-selling, see trade_scenario) and not
+    a continuation/confirmation type (Wyckoff's NoDemand/NoSupply describe an
+    already-established trend, not a new entry -- see
+    trade_scenario.CONTINUATION_EVENT_TYPES and _create_scenarios). Mirrors
+    _create_scenarios' own qualifying filter exactly, so this list is never
+    "more optimistic" than what live tracking actually acts on. Bearish/
+    continuation events are still recorded in the full ``signals`` list (used
+    by signal_outcomes stats and the chart's event markers) -- only this
+    display-oriented subset drops them, to stop the summary panel from
+    burying the handful of actionable signals under a much larger pile of
+    ones nobody could ever trade."""
+    strategy_module = strategy_registry.get_strategy(strategy)
+    bullish_events = strategy_module.BULLISH_EVENTS
+    return [
+        s for s in signals
+        if s.get("type") in bullish_events and s.get("type") not in trade_scenario.CONTINUATION_EVENT_TYPES
+    ]
+
+
 def _analysis_out(a: Analysis, session: Session) -> dict:
     scenario = trade_scenario.get_scenario(session, a.ticker, a.timeframe, a.strategy)
+    signals = json.loads(a.signals_json)
     return {
         "ticker": a.ticker,
         "timeframe": a.timeframe,
@@ -65,7 +87,8 @@ def _analysis_out(a: Analysis, session: Session) -> dict:
         "as_of": a.as_of,
         "phase": a.phase,
         "confidence": a.confidence,
-        "signals": json.loads(a.signals_json),
+        "signals": signals,
+        "actionable_signals": _actionable_signals(signals, a.strategy),
         "levels": json.loads(a.levels_json),
         "narrative": a.narrative,
         "advice": a.advice,

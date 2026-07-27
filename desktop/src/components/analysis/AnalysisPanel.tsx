@@ -101,11 +101,11 @@ export function AnalysisPanel({ analysis, loading, error }: Props) {
           </section>
         )}
 
-        {analysis.signals.length > 0 && (
+        {analysis.actionable_signals.length > 0 && (
           <section className="ap-section">
             <h4 className="ap-section__title">{t("analysis.section.signals")}</h4>
             <ul className="ap-signals">
-              {analysis.signals.slice(-8).reverse().map((s, i) => (
+              {analysis.actionable_signals.slice(-8).reverse().map((s, i) => (
                 <li key={i} className="ap-signal">
                   <span className="ap-signal__type mono">
                     {signalLabel(s.type, language)}

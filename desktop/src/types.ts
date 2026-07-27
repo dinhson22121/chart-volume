@@ -72,6 +72,7 @@ export interface Analysis {
   phase: string;
   confidence: number;
   signals: Signal[];
+  actionable_signals: Signal[];
   levels: Levels;
   narrative: string | null;
   advice: string | null;

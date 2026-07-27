@@ -55,6 +55,11 @@ class AnalysisResult:
     value_area_high: float | None = None
     value_area_low: float | None = None
     vp_alignment: str | None = None
+    # SMC-only (see app.smc.zones) -- Premium/Discount/Equilibrium zone
+    # boundaries + Strong/Weak High/Low labels, derived from the current
+    # active swing range. Display-only reference context, never a gate on
+    # entries. None for every other strategy.
+    smc_zones: dict | None = None
 
     def events_as_dicts(self) -> list[dict]:
         return [

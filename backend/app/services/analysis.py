@@ -73,6 +73,8 @@ def _serialize(result: AnalysisResult) -> tuple[str, str]:
             "poc": result.poc,
             "value_area_high": result.value_area_high,
             "value_area_low": result.value_area_low,
+            # SMC-only (see app.smc.zones) -- None for every other strategy.
+            "smc_zones": result.smc_zones,
         },
         ensure_ascii=False,
     )

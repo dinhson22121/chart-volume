@@ -1,11 +1,12 @@
 """Smart Money Concept (SMC) rule-based analysis engine.
 
-Market structure (BOS/CHoCH) + Order Blocks + Fair Value Gaps -- see
-app.smc.events for the detection rules. Deliberately excludes liquidity
-sweeps/premium-discount zones, which would just duplicate Wyckoff's
-Spring/Upthrust under different names. AnalysisResult/Levels are reused as-is
-from app.wyckoff since the shape (phase, confidence, events, levels, drivers,
-mtf context) is strategy-agnostic.
+Two structure tiers (internal + swing/major), Order Blocks, Fair Value
+Gaps, Equal Highs/Lows, and Premium/Discount/Equilibrium zones -- see
+app.smc.events for the detection rules and app.smc.zones for the zones.
+AnalysisResult/Levels are reused as-is from app.wyckoff since the shape
+(phase, confidence, events, levels, drivers, mtf context) is
+strategy-agnostic; smc_zones is this strategy's own addition to that shared
+shape (None for every other strategy).
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from app.smc.config import DEFAULT_CONFIG, SMCConfig
 from app.smc.events import SMCEvent, detect_events
 from app.smc.indicators import compute_features
 from app.smc.phase import BEARISH_EVENTS, BULLISH_EVENTS, RANGING_PHASES, classify_structure, phase_trend
+from app.smc.zones import compute_zones
 from app.wyckoff import MIN_BARS, AnalysisResult, Levels, candles_to_dataframe
 
 __all__ = [
@@ -54,6 +56,7 @@ def analyze(
     events = detect_events(feat, config, language)
     support, resistance = _latest_swing_levels(feat)
     phase, confidence, drivers, mtf_alignment = classify_structure(feat, events, daily_trend)
+    zones = compute_zones(support, resistance, phase)
 
     return AnalysisResult(
         phase=phase,
@@ -64,4 +67,5 @@ def analyze(
         drivers=drivers,
         daily_trend=daily_trend,
         mtf_alignment=mtf_alignment,
+        smc_zones=zones,
     )

@@ -145,6 +145,13 @@ def test_aligned_daily_trend_boosts_confidence():
     assert boosted_conf > base_conf
 
 
+def test_analyze_populates_smc_zones():
+    result = analyze(_to_candles(BULLISH_VALUES), CFG)
+    assert result.smc_zones is not None
+    assert result.smc_zones["discount_high"] < result.smc_zones["premium_low"]
+    assert result.smc_zones["low_label"] == "Strong Low"  # bullish structure
+
+
 def test_analyze_translates_event_notes_to_english():
     result = analyze(_to_candles(BULLISH_VALUES), CFG, language="en")
     choch_event = next(e for e in result.events if e.type == "CHoCH_Bull")

@@ -170,7 +170,7 @@ def walk_events(
             continue
 
         outcome = _resolve_outcome(
-            candidate.event_ts, candidate.stop_loss, candidate.take_profit, candidate.max_bars,
+            candidate.event_ts, candidate.entry, candidate.stop_loss, candidate.max_bars,
             candidate.is_bullish, candles, _settlement_bars_for(symbol, timeframe),
         )
         if outcome.status == "active":
@@ -181,12 +181,12 @@ def walk_events(
             candidate.exit_price = outcome.exit_price
             if outcome.status == "hit_sl":
                 candidate.close_reason = _close_reason(
-                    "hit_sl", price=outcome.touch_price, level=candidate.stop_loss,
+                    "hit_sl", price=outcome.touch_price, level=outcome.exit_price,
                     bar_ts=outcome.closed_bar_ts, language=language,
                 )
             elif outcome.status == "hit_tp":
                 candidate.close_reason = _close_reason(
-                    "hit_tp", level=candidate.take_profit, bar_ts=outcome.closed_bar_ts, language=language,
+                    "hit_tp", level=outcome.exit_price, bar_ts=outcome.closed_bar_ts, language=language,
                 )
             else:
                 candidate.close_reason = _close_reason("expired", max_bars=candidate.max_bars, language=language)

@@ -45,11 +45,18 @@ def _run(session, ticker, candles, events, phase=PHASE_RANGING, daily_trend=None
 
 
 def test_creates_and_resolves_a_scenario_immediately_against_known_future_candles(session):
-    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
-    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
-    candles.append(_candle(6, open=103.0, low=102.0, high=105.0, close=104.0))  # entry fill
-    candles.append(_candle(7, low=102.0, high=125.0, close=123.0))  # TP=123 reached same run
-    event = _event(SPRING, 5, candles[5])
+    # No fixed take-profit anymore (see trade_scenario.TRAIL_ATR_MULT) --
+    # "hit_tp" now means the stop trailed to breakeven-or-better and got
+    # hit. Needs >=15 real pre-event candles for a computable ATR
+    # (ATR_PERIOD=14); the flat low=95/high=105/close=100 shape gives TR=10
+    # per bar (constant close -> no gap component) so ATR=10.0 exactly.
+    candles = [_candle(i, low=95.0, high=105.0, close=100.0) for i in range(15)]
+    event = _event(SPRING, 14, candles[14])
+    candles.append(_candle(15, open=103.0, low=101.0, high=104.0, close=103.0))  # entry fill
+    # unrealized = 115-103 = 12 >= risk_distance (103-94.715=8.285) -> trail
+    # activates: trail_level = 115-1.5*10=100 -> current_stop=max(94.715,103,100)=103 (breakeven).
+    candles.append(_candle(16, low=100.0, high=115.0, close=105.0))
+    candles.append(_candle(17, low=102.0, high=106.0, close=104.0))  # low=102 pierces the 103 stop
 
     created = _run(session, "FPT", candles, [event])
 
@@ -58,7 +65,7 @@ def test_creates_and_resolves_a_scenario_immediately_against_known_future_candle
     assert row.source == "backtest"
     assert row.status == "hit_tp"  # resolved in the same call, no waiting for a later sync
     assert row.entry == 103.0
-    assert row.take_profit == pytest.approx(123.0)
+    assert row.exit_price == pytest.approx(103.0)
 
 
 def test_never_calls_ai_even_when_a_provider_is_configured(session, mocker):
@@ -81,21 +88,29 @@ def test_never_calls_ai_even_when_a_provider_is_configured(session, mocker):
 
 
 def test_walks_multiple_qualifying_events_in_chronological_order(session):
-    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
-    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
-    candles.append(_candle(6, open=103.0, low=102.0, high=105.0, close=104.0))  # entry #1
+    # No fixed take-profit anymore (see trade_scenario.TRAIL_ATR_MULT) --
+    # event #2's "hit_tp" now needs a computable ATR (>=15 real pre-event
+    # candles) to let the trailing stop activate. Event #1's SL-hit doesn't
+    # depend on ATR (an immediate stop-out never reaches the trail-update
+    # step), so its short setup is unchanged.
+    candles = [_candle(i, low=95.0, high=105.0, close=100.0) for i in range(5)]
+    candles.append(_candle(5, low=95.0, high=105.0, close=100.0))  # event #1 bar
+    candles.append(_candle(6, open=103.0, low=101.0, high=104.0, close=103.0))  # entry #1
     candles.append(_candle(7, low=60.0, high=105.0, close=61.0))  # SL hit for #1 (SL~94.7)
-    for i in range(8, 14):
-        candles.append(_candle(i, low=90.0, high=110.0, close=100.0))
-    candles[13] = _candle(13, low=95.0, high=101.0, close=100.0)  # second event bar
-    candles.append(_candle(14, open=103.0, low=102.0, high=105.0, close=104.0))  # entry #2
-    # Range height for event #2 looks back 20 bars, which (given how short
-    # this fixture's history is) reaches back into the crash bar at index 7 --
-    # capped range height ends up 50 (0.5 * entry), so TP = 103 + 50 = 153.
-    candles.append(_candle(15, low=102.0, high=160.0, close=155.0))  # TP hit for #2
+    # Filler so event #2 has >=15 clean pre-event candles for its own ATR
+    # window (range(len-14, len)) -- long enough that it never reaches back
+    # into the crash bar at index 7 or event #1's own non-flat bars.
+    for i in range(8, 24):
+        candles.append(_candle(i, low=95.0, high=105.0, close=100.0))
+    candles.append(_candle(24, low=95.0, high=105.0, close=100.0))  # event #2 bar
+    candles.append(_candle(25, open=103.0, low=101.0, high=104.0, close=103.0))  # entry #2
+    # unrealized = 115-103 = 12 >= risk_distance (103-94.715=8.285) -> trail
+    # activates: trail_level = 115-1.5*10=100 -> current_stop=max(94.715,103,100)=103 (breakeven).
+    candles.append(_candle(26, low=100.0, high=115.0, close=105.0))
+    candles.append(_candle(27, low=102.0, high=106.0, close=104.0))  # low=102 pierces the 103 stop
 
     first = _event(SPRING, 5, candles[5])
-    second = _event(SPRING, 13, candles[13])
+    second = _event(SPRING, 24, candles[24])
 
     created = _run(session, "FPT", candles, [first, second])
 

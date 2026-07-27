@@ -70,6 +70,18 @@ SETTLEMENT_BARS_STOCK: dict[str, int] = {
 # rather than silently presenting an early, unstable read as settled.
 MIN_RELIABLE_SAMPLE_SIZE = 30
 
+# Exit mechanism: breakeven-at-1R + ATR trailing stop, no fixed take-profit
+# ceiling. Backtested against optimize_wyckoff_exit.py's alternative (giving
+# the fixed TP/SL model more max_bars instead) on the full HOSE/HNX universe,
+# train/holdout split: the fixed-TP model was flat across every max_bars
+# multiplier tried (1x-3x -- max_bars was never the actual constraint, the
+# formula was already clamped at its floor), while this trail roughly halved
+# holdout mean_r (-0.45 -> -0.25) and raised win_rate ~10pp (19.8% -> 31.3%
+# at this multiplier, the best of {1.5, 2.0, 3.0} tried). Still net-negative
+# on holdout -- an improvement to the exit mechanism, not a solved edge; see
+# take_profit's own docstring note on what it means now.
+TRAIL_ATR_MULT = 1.5
+
 # NoDemand/NoSupply (app.wyckoff.events) are "supporting" signals that fire
 # *inside* an already-established trend (an absorption bar showing a lack of
 # selling/buying pressure) -- unlike Spring/SOS/SOW/BC/SC/Upthrust they don't
@@ -192,14 +204,15 @@ class ResolvedOutcome:
 
 def _resolve_outcome(
     event_ts: datetime,
+    entry: float,
     stop_loss: float,
-    take_profit: float,
     max_bars: int,
     is_bullish: bool,
     candles: list[Candle],
     min_settlement_bars: int = 0,
 ) -> ResolvedOutcome:
-    """Pure hit_sl/hit_tp/expiry decision over plain values -- no DB, no
+    """Breakeven-at-1R + ATR trailing stop -- no fixed take-profit ceiling
+    (see TRAIL_ATR_MULT). Pure decision over plain values -- no DB, no
     session. Shared by live tracking (_update_active_scenarios, which polls
     this against whatever candles have arrived so far) and
     app.services.scenario_backtest (which has the complete future candle
@@ -207,32 +220,50 @@ def _resolve_outcome(
     instead of waiting for later runs) -- so a backtest can never see a
     resolution live tracking couldn't have.
 
-    ``min_settlement_bars`` (see SETTLEMENT_BARS_STOCK) skips TP/SL checks on
+    Once the running favorable excursion reaches 1R (entry-to-stop
+    distance), the stop moves to at least breakeven, then trails
+    TRAIL_ATR_MULT ATRs behind the best price seen so far -- so a status of
+    ``hit_tp`` now means "stopped out at breakeven or better" (a win or
+    scratch, exit_price >= entry) and ``hit_sl`` means "stopped out below
+    entry" (a real loss), regardless of which stop (original, breakeven, or
+    trailed) actually triggered it. ATR is computed once from the pre-event
+    window (same window _build_scenario_candidate already used for max_bars)
+    -- not recomputed bar-by-bar as new candles arrive, to keep a live
+    scenario's trail comparable to how it was backtested.
+
+    ``min_settlement_bars`` (see SETTLEMENT_BARS_STOCK) skips stop checks on
     the first N subsequent bars: for a VN stock, shares bought at entry aren't
     tradeable again until T+2.5 settles, so a price touch on those bars isn't
     a fill a real order could have taken -- 0 for crypto (T+0) and any
     non-stock caller, via the default."""
+    pre_event = [c for c in candles if c.bucket_start <= event_ts]
+    atr = _atr(pre_event) or 0.0
+    risk_distance = abs(entry - stop_loss)
+    current_stop = stop_loss
+    best = entry
     subsequent = sorted((c for c in candles if c.bucket_start > event_ts), key=lambda c: c.bucket_start)
     for idx, bar in enumerate(subsequent, start=1):
         if idx <= min_settlement_bars:
             continue  # T+2.5: shares not settled yet, can't exit regardless of price
         # Checked intrabar (low/high), matching how a real stop order
         # executes on touch rather than waiting for the candle to close past
-        # the level -- and checked before hit_tp below, so a single bar that
-        # pierces both levels (real on volatile/low-liquidity assets)
-        # conservatively resolves as a stop-out rather than a win, since a
-        # real order would have triggered on the way down/up before price
-        # could recover to the opposite level.
-        hit_sl = bar.low <= stop_loss if is_bullish else bar.high >= stop_loss
-        if hit_sl:
+        # the level.
+        hit_stop = bar.low <= current_stop if is_bullish else bar.high >= current_stop
+        if hit_stop:
+            status = "hit_tp" if (current_stop >= entry if is_bullish else current_stop <= entry) else "hit_sl"
             touch_price = bar.low if is_bullish else bar.high
-            return ResolvedOutcome("hit_sl", bar.bucket_start, stop_loss, touch_price)
-        hit_tp = bar.high >= take_profit if is_bullish else bar.low <= take_profit
-        if hit_tp:
-            return ResolvedOutcome("hit_tp", bar.bucket_start, take_profit)
-    if len(subsequent) >= max_bars:
-        last = subsequent[-1] if subsequent else None
-        return ResolvedOutcome("expired", last.bucket_start if last else None, last.close if last else None)
+            return ResolvedOutcome(status, bar.bucket_start, current_stop, touch_price)
+
+        best = max(best, bar.high) if is_bullish else min(best, bar.low)
+        unrealized = (best - entry) if is_bullish else (entry - best)
+        if unrealized >= risk_distance and atr > 0:
+            trail_level = (best - TRAIL_ATR_MULT * atr) if is_bullish else (best + TRAIL_ATR_MULT * atr)
+            current_stop = (
+                max(current_stop, entry, trail_level) if is_bullish else min(current_stop, entry, trail_level)
+            )
+
+        if idx >= max_bars:
+            return ResolvedOutcome("expired", bar.bucket_start, bar.close)
     return ResolvedOutcome("active", None, None)
 
 
@@ -261,7 +292,7 @@ def _update_active_scenarios(
 
     for scenario in active:
         outcome = _resolve_outcome(
-            scenario.event_ts, scenario.stop_loss, scenario.take_profit, scenario.max_bars,
+            scenario.event_ts, scenario.entry, scenario.stop_loss, scenario.max_bars,
             scenario.is_bullish, candles, min_settlement_bars,
         )
         if outcome.status == "active":
@@ -272,12 +303,12 @@ def _update_active_scenarios(
         scenario.exit_price = outcome.exit_price
         if outcome.status == "hit_sl":
             scenario.close_reason = _close_reason(
-                "hit_sl", price=outcome.touch_price, level=scenario.stop_loss,
+                "hit_sl", price=outcome.touch_price, level=outcome.exit_price,
                 bar_ts=outcome.closed_bar_ts, language=language,
             )
         elif outcome.status == "hit_tp":
             scenario.close_reason = _close_reason(
-                "hit_tp", level=scenario.take_profit, bar_ts=outcome.closed_bar_ts, language=language,
+                "hit_tp", level=outcome.exit_price, bar_ts=outcome.closed_bar_ts, language=language,
             )
         else:  # expired
             scenario.close_reason = _close_reason("expired", max_bars=scenario.max_bars, language=language)

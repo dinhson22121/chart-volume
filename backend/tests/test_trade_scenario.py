@@ -566,7 +566,7 @@ def test_no_new_scenario_while_one_is_already_active(session):
 def test_resolve_outcome_stays_active_with_no_qualifying_bar_yet():
     candles = [_candle(1, low=99.0, high=101.0, close=100.0)]
     outcome = trade_scenario._resolve_outcome(
-        event_ts=candles[0].bucket_start, stop_loss=95.0, take_profit=110.0, max_bars=10,
+        event_ts=candles[0].bucket_start, entry=100.0, stop_loss=95.0, max_bars=10,
         is_bullish=True, candles=candles,
     )
     assert outcome.status == "active"
@@ -578,7 +578,7 @@ def test_resolve_outcome_hit_sl_bullish_uses_intrabar_low():
     event_bar = _candle(0, low=95.0, high=101.0, close=100.0)
     trigger_bar = _candle(1, low=93.0, high=101.0, close=94.5)  # low pierces SL=94.715
     outcome = trade_scenario._resolve_outcome(
-        event_ts=event_bar.bucket_start, stop_loss=94.715, take_profit=120.0, max_bars=10,
+        event_ts=event_bar.bucket_start, entry=100.0, stop_loss=94.715, max_bars=10,
         is_bullish=True, candles=[event_bar, trigger_bar],
     )
     assert outcome.status == "hit_sl"
@@ -587,33 +587,55 @@ def test_resolve_outcome_hit_sl_bullish_uses_intrabar_low():
     assert outcome.touch_price == pytest.approx(93.0)
 
 
-def test_resolve_outcome_hit_tp_bearish_uses_intrabar_low():
-    event_bar = _candle(0, low=99.0, high=105.0, close=100.0)
-    trigger_bar = _candle(1, low=79.0, high=101.0, close=80.0)  # low reaches TP=80
+def _flat_pre_event_candles(n: int, *, low: float, high: float, close: float):
+    """n candles, identical enough (constant close) that _atr's true-range
+    calc is trivial to reason about by hand: every bar's TR is exactly
+    (high - low), since prevclose == close never creates a gap component."""
+    return [_candle(i, low=low, high=high, close=close) for i in range(n)]
+
+
+def test_resolve_outcome_hit_tp_via_trailing_stop_after_favorable_move():
+    # No fixed take-profit anymore (see TRAIL_ATR_MULT) -- "hit_tp" now means
+    # the stop trailed to breakeven-or-better and then got hit. Needs real
+    # pre-event history for a computable ATR (ATR_PERIOD=14, so >=15 bars),
+    # unlike the old fixed-level check which needed none.
+    pre_event = _flat_pre_event_candles(15, low=99.0, high=101.0, close=100.0)  # TR=2/bar -> ATR=2.0
+    event_bar = pre_event[-1]
+    entry, stop_loss = 100.0, 105.0  # bearish: risk_distance=5.0 (2.5x ATR)
+    # Bar 1: low=95 -> unrealized = entry-95 = 5 >= risk_distance -> trail
+    # activates: trail_level = 95 + 1.5*2 = 98; current_stop = min(105,100,98) = 98.
+    bar1 = _candle(15, low=95.0, high=101.0, close=96.0)
+    # Bar 2: high=99 pierces the now-98 stop (>= current_stop=98, <= entry=100 -> hit_tp).
+    bar2 = _candle(16, low=95.0, high=99.0, close=97.0)
     outcome = trade_scenario._resolve_outcome(
-        event_ts=event_bar.bucket_start, stop_loss=105.315, take_profit=80.0, max_bars=10,
-        is_bullish=False, candles=[event_bar, trigger_bar],
+        event_ts=event_bar.bucket_start, entry=entry, stop_loss=stop_loss, max_bars=10,
+        is_bullish=False, candles=[*pre_event, bar1, bar2],
     )
     assert outcome.status == "hit_tp"
-    assert outcome.closed_bar_ts == trigger_bar.bucket_start
-    assert outcome.exit_price == pytest.approx(80.0)
+    assert outcome.closed_bar_ts == bar2.bucket_start
+    assert outcome.exit_price == pytest.approx(98.0)
 
 
-def test_resolve_outcome_both_touched_in_one_bar_resolves_hit_sl():
+def test_resolve_outcome_stop_check_uses_prior_bars_level_not_this_bars_trail_update():
+    # A bar whose own low pierces the CURRENT (pre-this-bar) stop resolves
+    # immediately, even though that same bar's high would, if evaluated
+    # first, have triggered a favorable-move trail update -- the stop for
+    # bar N is fixed before bar N's own range can move it.
     event_bar = _candle(0, low=95.0, high=101.0, close=100.0)
-    both_bar = _candle(1, low=90.0, high=125.0, close=110.0)  # pierces SL=94.7 AND TP=120
+    bar = _candle(1, low=90.0, high=125.0, close=110.0)  # pierces original SL=94.715
     outcome = trade_scenario._resolve_outcome(
-        event_ts=event_bar.bucket_start, stop_loss=94.715, take_profit=120.0, max_bars=10,
-        is_bullish=True, candles=[event_bar, both_bar],
+        event_ts=event_bar.bucket_start, entry=100.0, stop_loss=94.715, max_bars=10,
+        is_bullish=True, candles=[event_bar, bar],
     )
     assert outcome.status == "hit_sl"
+    assert outcome.exit_price == pytest.approx(94.715)
 
 
 def test_resolve_outcome_expires_after_max_bars_to_last_close():
     event_bar = _candle(0, low=95.0, high=101.0, close=100.0)
     flat_bars = [_candle(i, low=99.0, high=101.0, close=100.0) for i in range(1, 4)]
     outcome = trade_scenario._resolve_outcome(
-        event_ts=event_bar.bucket_start, stop_loss=94.715, take_profit=120.0, max_bars=3,
+        event_ts=event_bar.bucket_start, entry=100.0, stop_loss=94.715, max_bars=3,
         is_bullish=True, candles=[event_bar, *flat_bars],
     )
     assert outcome.status == "expired"
@@ -679,17 +701,28 @@ def test_bar_touching_both_sl_and_tp_resolves_as_hit_sl_not_hit_tp(session):
     assert row.status == "hit_sl"
 
 
-def test_hit_tp_still_triggers_on_intrabar_high_when_sl_untouched(session):
-    # Regression: the TP path was already intrabar -- confirms it's unchanged
-    # now that SL checking becomes intrabar too.
-    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
-    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
-    candles.append(_candle(6, low=97.0, high=103.0, close=100.0))  # entry fill, narrow so it never itself pierces SL/TP
-    event = _event(SPRING, 5, candles[5])
-    _sync(session, "FPT", candles, [event])
-    take_profit = session.exec(_select_scenario()).one().take_profit
+def _bullish_scenario_with_atr(session, ticker="FPT"):
+    """15 identical pre-event candles -- enough real history for a
+    computable ATR (ATR_PERIOD=14) -- plus an event bar and entry fill,
+    synced once. TR is exactly (high-low)=10 for every bar (constant close
+    means no gap component), so ATR=10.0 exactly. Returns the candles built
+    so far (callers append their own subsequent bars) and the event."""
+    candles = [_candle(i, low=95.0, high=105.0, close=100.0) for i in range(15)]
+    event = _event(SPRING, 14, candles[14])
+    candles.append(_candle(15, open=103.0, low=101.0, high=104.0, close=103.0))  # entry fill
+    _sync(session, ticker, candles, [event])
+    return candles, event
 
-    candles.append(_candle(7, low=99.0, high=take_profit + 1, close=100.5))
+
+def test_hit_tp_still_triggers_on_intrabar_high_when_sl_untouched(session):
+    # No fixed take-profit anymore (see TRAIL_ATR_MULT) -- "hit_tp" now means
+    # the stop trailed to breakeven-or-better and got hit, still resolved
+    # intrabar like SL always was.
+    candles, event = _bullish_scenario_with_atr(session)
+    # unrealized = 115-103 = 12 >= risk_distance (103-94.715=8.285) -> trail
+    # activates: trail_level = 115-1.5*10=100 -> current_stop=max(94.715,103,100)=103 (breakeven).
+    candles.append(_candle(16, low=100.0, high=115.0, close=105.0))
+    candles.append(_candle(17, low=102.0, high=106.0, close=104.0))  # low=102 pierces the 103 stop
     _sync(session, "FPT", candles, [event])
 
     row = session.exec(_select_scenario()).one()
@@ -738,20 +771,15 @@ def test_close_reason_respects_language(session):
     assert "vượt qua" not in row.close_reason
 
 
-def test_closes_hit_tp_when_a_later_candle_reaches_take_profit(session):
-    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
-    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
-    candles.append(_candle(6, low=97.0, high=103.0, close=100.0))  # entry fill, narrow so it never itself pierces SL/TP
-    event = _event(SPRING, 5, candles[5])
-    _sync(session, "FPT", candles, [event])
-    take_profit = session.exec(_select_scenario()).one().take_profit
-
-    candles.append(_candle(7, low=take_profit, high=take_profit + 1, close=take_profit))
+def test_closes_hit_tp_via_trailing_stop_after_favorable_move(session):
+    candles, event = _bullish_scenario_with_atr(session)
+    candles.append(_candle(16, low=100.0, high=115.0, close=105.0))
+    candles.append(_candle(17, low=102.0, high=106.0, close=104.0))
     _sync(session, "FPT", candles, [event])
 
     row = session.exec(_select_scenario()).one()
     assert row.status == "hit_tp"
-    assert row.closed_bar_ts == candles[7].bucket_start
+    assert row.closed_bar_ts == candles[-1].bucket_start
 
 
 def test_expires_after_max_bars_with_neither_tp_nor_sl_hit(session):
@@ -1122,19 +1150,15 @@ def test_exit_price_set_on_hit_sl(session):
 
 
 def test_exit_price_set_on_hit_tp(session):
-    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
-    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
-    candles.append(_candle(6, low=97.0, high=103.0, close=100.0))  # entry fill
-    event = _event(SPRING, 5, candles[5])
-    _sync(session, "FPT", candles, [event])
-    take_profit = session.exec(_select_scenario()).one().take_profit
-
-    candles.append(_candle(7, low=take_profit, high=take_profit + 1, close=take_profit))
+    candles, event = _bullish_scenario_with_atr(session)
+    entry = session.exec(_select_scenario()).one().entry
+    candles.append(_candle(16, low=100.0, high=115.0, close=105.0))
+    candles.append(_candle(17, low=102.0, high=106.0, close=104.0))
     _sync(session, "FPT", candles, [event])
 
     row = session.exec(_select_scenario()).one()
     assert row.status == "hit_tp"
-    assert row.exit_price == pytest.approx(take_profit)
+    assert row.exit_price == pytest.approx(entry)  # trailed to breakeven exactly in this setup
 
 
 def test_exit_price_set_on_expiry_to_last_close(session):

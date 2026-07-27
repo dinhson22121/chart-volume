@@ -233,8 +233,16 @@ class TradeScenario(SQLModel, table=True):
     is_bullish: bool
     entry: float
     stop_loss: float
+    # Informational only since the breakeven+trailing-stop exit mechanism
+    # (see app.services.trade_scenario.TRAIL_ATR_MULT/_resolve_outcome): the
+    # original measured-move target computed at creation, displayed as a
+    # reference point, but no longer an exit trigger -- a scenario now closes
+    # via the (possibly-trailed) stop, never by touching this level.
     take_profit: float
     max_bars: int
+    # hit_tp: closed at/above entry (breakeven or the trailing stop locked in
+    # a profit) -- a win or scratch. hit_sl: closed below entry -- a real
+    # loss. Neither implies price ever reached take_profit; see its own note.
     status: str = Field(default="active")  # active | hit_tp | hit_sl | expired
     # Plain-language rationale, set once at creation -- AI-written when a
     # narrative provider is configured, else a deterministic template built

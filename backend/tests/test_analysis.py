@@ -341,13 +341,20 @@ def test_run_scenario_backtest_returns_zero_when_no_candles(session):
 
 
 def test_run_scenario_backtest_creates_and_resolves_source_backtest_rows(session, mocker):
-    bars = [dict(BASE) for _ in range(6)]
-    bars[5] = dict(open=100.0, high=101.0, low=95.0, close=100.0, volume=1000.0)  # event bar
-    bars.append(dict(open=103.0, high=105.0, low=102.0, close=104.0, volume=1000.0))  # entry fill, idx 6
-    bars.append(dict(open=123.0, high=125.0, low=122.0, close=123.0, volume=1000.0))  # TP hit, idx 7
+    # No fixed take-profit anymore (see trade_scenario.TRAIL_ATR_MULT) --
+    # "hit_tp" now needs the trailing stop to activate, which needs a
+    # computable ATR (>=15 real pre-event candles). BASE's low=99/high=101/
+    # close=100 gives TR=2/bar (constant close -> no gap component), so
+    # ATR=2.0 exactly.
+    bars = [dict(BASE) for _ in range(15)]
+    bars.append(dict(open=103.0, high=104.0, low=101.0, close=103.0, volume=1000.0))  # entry fill, idx 15
+    # unrealized = 110-103 = 7 >= risk_distance (103-98.703=4.297) -> trail
+    # activates: trail_level = 110-1.5*2=107 -> current_stop=max(98.703,103,107)=107.
+    bars.append(dict(open=105.0, high=110.0, low=101.0, close=105.0, volume=1000.0))  # idx 16
+    bars.append(dict(open=108.0, high=109.0, low=106.0, close=108.0, volume=1000.0))  # low=106 pierces 107 stop, idx 17
     _seed_candles(session, bars)
-    event_ts = (pd.Timestamp("2025-01-01") + pd.Timedelta(days=5)).to_pydatetime()
-    event = WyckoffEvent(type="FakeBull", index=5, ts=event_ts, price=100.0, volume_confirmed=True)
+    event_ts = (pd.Timestamp("2025-01-01") + pd.Timedelta(days=14)).to_pydatetime()
+    event = WyckoffEvent(type="FakeBull", index=14, ts=event_ts, price=100.0, volume_confirmed=True)
     _register_fake_backtest_strategy(mocker, event)
 
     created = analysis_svc.run_scenario_backtest(session, "FPT", Timeframe.DAILY, strategy="fake-strategy")

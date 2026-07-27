@@ -16,7 +16,8 @@ from sqlmodel import Session, select
 
 from app.ai import narrative as narrative_mod
 from app.models import Analysis, Candle, Timeframe
-from app.services import settings_service, signal_outcomes, trade_scenario
+from app.services import config_version as config_version_mod
+from app.services import scenario_backtest, settings_service, signal_outcomes, trade_scenario
 from app.strategies import registry as strategy_registry
 from app.wyckoff import AnalysisResult
 
@@ -108,6 +109,7 @@ def run_analysis(
     provider_cfg = settings_service.get_narrative_config(session)
     result = strategy_module.analyze(candles, strategy_cfg, daily_trend, language)
     as_of = result.as_of
+    cfg_version = config_version_mod.compute(strategy, strategy_cfg)
 
     # Cheap deterministic bookkeeping: run on every call, independent of the
     # narrative cache below, so forward returns keep backfilling as new
@@ -115,12 +117,13 @@ def run_analysis(
     signal_outcomes.record_outcomes(
         session, ticker, timeframe, strategy, candles, result.events, strategy_module.BULLISH_EVENTS,
         phase_trend=strategy_module.phase_trend(result.phase),
+        config_version=cfg_version,
     )
     trade_scenario.sync_scenarios(
         session, ticker, timeframe, strategy, candles, result.events,
         strategy_module.BULLISH_EVENTS, result.levels,
         provider_cfg, strategy_module, strategy_cfg, daily_trend, strategy_module.RANGING_PHASES,
-        use_ai=use_ai,
+        use_ai=use_ai, config_version=cfg_version,
     )
 
     existing = session.exec(
@@ -196,15 +199,63 @@ def run_analysis(
     return analysis
 
 
+def run_scenario_backtest(
+    session: Session, ticker: str, timeframe: str, strategy: str | None = None
+) -> int:
+    """Replays candle history already sitting in the DB through
+    scenario_backtest.run_backtest, using the exact same strategy
+    setup/detection as run_analysis (daily_trend, strategy config, event
+    detection) -- so a backtest run can never drift from what live tracking
+    would have actually done on the same data.
+
+    Unlike run_analysis, this never ingests new candles, never calls the LLM,
+    and never writes an Analysis row -- it only produces source="backtest"
+    TradeScenario rows (see scenario_backtest.run_backtest's docstring on why
+    those are never AI-explained and always fully recomputed on each call).
+    Returns 0 (no error) when the ticker/timeframe has no candles yet."""
+    ticker = ticker.upper()
+    candles = _load_candles(session, ticker, timeframe)
+    if not candles:
+        logger.info("no candles for %s/%s, skipping backtest", ticker, timeframe)
+        return 0
+
+    strategy = strategy or settings_service.get_strategy(session)
+    strategy_module = strategy_registry.get_strategy(strategy)
+    strategy_cfg = settings_service.get_strategy_config(session, strategy)
+    daily_trend = (
+        _get_daily_trend(session, ticker, strategy, strategy_module)
+        if timeframe in _INTRADAY_TIMEFRAMES
+        else None
+    )
+    language = settings_service.get_language(session)
+    result = strategy_module.analyze(candles, strategy_cfg, daily_trend, language)
+    cfg_version = config_version_mod.compute(strategy, strategy_cfg)
+
+    return scenario_backtest.run_backtest(
+        session, ticker, timeframe, strategy, candles, result.events,
+        strategy_module.BULLISH_EVENTS, strategy_module.BEARISH_EVENTS, result.levels,
+        strategy_module, strategy_cfg, daily_trend, strategy_module.RANGING_PHASES,
+        language, cfg_version,
+    )
+
+
 def run_shadow_strategies(session: Session, ticker: str, timeframe: str, active_strategy: str) -> None:
     """Analyse ``ticker``/``timeframe`` under every strategy OTHER than the
     user's active one, so signal_outcomes/trade_scenario data accumulates for
     all strategies (not just whichever one is currently shown in the UI) --
     without ever calling the LLM or touching the active-strategy setting.
     Callers isolate their own failures per strategy the same way scheduler
-    batch functions isolate per-ticker failures."""
+    batch functions isolate per-ticker failures.
+
+    Gated per-strategy on ``shadow_strategy_keys`` (Settings): each listed
+    strategy runs once per ticker/timeframe on every scheduled batch, so on a
+    large watchlist it's a real, ongoing compute cost for data most users
+    never look at unless they're actively comparing strategies -- a user who
+    only cares about one alternative strategy can leave the others off
+    rather than paying for all of them."""
+    shadow_keys = settings_service.get_shadow_strategy_keys(session)
     for key in strategy_registry.REGISTRY:
-        if key == active_strategy:
+        if key == active_strategy or key not in shadow_keys:
             continue
         try:
             run_analysis(session, ticker, timeframe, use_ai=False, strategy=key)

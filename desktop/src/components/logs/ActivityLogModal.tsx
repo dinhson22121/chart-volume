@@ -92,6 +92,16 @@ const FIELD_LABELS: Record<string, Record<string, string>> = {
     ai_narrative_top100: "AI cho Top 100",
     potential_screen_auto_enabled: "Tự động chạy AI Đánh giá tiềm năng",
     potential_screen_time: "Giờ chạy AI Đánh giá tiềm năng",
+    shadow_strategy_keys: "Chiến lược chạy nền",
+    notional_capital: "Vốn danh nghĩa",
+    risk_pct_per_trade: "% vốn rủi ro mỗi lệnh",
+    slippage_pct_stock: "Trượt giá cổ phiếu (%)",
+    slippage_pct_crypto: "Trượt giá crypto (%)",
+    max_concurrent_scenarios: "Số lệnh mở đồng thời tối đa",
+    max_concurrent_scenarios_crypto: "Số lệnh crypto mở đồng thời tối đa",
+    broker_fee_pct_stock: "Phí môi giới cổ phiếu, khứ hồi (%)",
+    sell_tax_pct_stock: "Thuế bán cổ phiếu (%)",
+    stock_daily_price_limit_pct: "Biên độ giá trần/sàn 1 phiên (%)",
   },
   en: {
     language: "Language",
@@ -141,6 +151,16 @@ const FIELD_LABELS: Record<string, Record<string, string>> = {
     ai_narrative_top100: "AI for Top 100",
     potential_screen_auto_enabled: "AI Potential Screen Auto-run",
     potential_screen_time: "AI Potential Screen Run Time",
+    shadow_strategy_keys: "Background Shadow Strategies",
+    notional_capital: "Notional Capital",
+    risk_pct_per_trade: "% Capital Risked Per Trade",
+    slippage_pct_stock: "Stock Slippage (%)",
+    slippage_pct_crypto: "Crypto Slippage (%)",
+    max_concurrent_scenarios: "Max Concurrent Scenarios",
+    max_concurrent_scenarios_crypto: "Max Concurrent Crypto Scenarios",
+    broker_fee_pct_stock: "Stock Broker Fee, Round-trip (%)",
+    sell_tax_pct_stock: "Stock Sell Tax (%)",
+    stock_daily_price_limit_pct: "Daily Price-limit Band (%)",
   }
 };
 
@@ -215,7 +235,7 @@ export function ActivityLogModal({ onClose }: Props) {
       <div className="stats-modal" onClick={(e) => e.stopPropagation()}>
         <header className="settings-modal__header">
           <h2>{t("logs.title")}</h2>
-          <button className="settings-modal__close" onClick={onClose} aria-label={t("common.close")}>
+          <button className="settings-modal__close has-tooltip" onClick={onClose} data-tooltip={t("common.close")} aria-label={t("common.close")}>
             ×
           </button>
         </header>

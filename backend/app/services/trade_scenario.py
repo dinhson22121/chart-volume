@@ -9,14 +9,19 @@ return stat.
 from __future__ import annotations
 
 import logging
+import math
+import statistics
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlmodel import Session, func, select
 
 from app.ai import narrative as narrative_mod
 from app.ai.narrative import ProviderConfig
-from app.models import AssetClass, Candle, Symbol, Timeframe, TradeScenario
+from app.models import AssetClass, Candle, Exchange, Symbol, Timeframe, TradeScenario
+from app.services import benchmark as benchmark_svc
 from app.services import settings_service
+from app.services import stats_significance
 from app.wyckoff import Levels
 from app.wyckoff.events import SOS, SOW, SPRING, UPTHRUST, WyckoffEvent
 
@@ -60,6 +65,11 @@ SETTLEMENT_BARS_STOCK: dict[str, int] = {
     Timeframe.HALF_SESSION: 5,  # 2 sessions/day -> ~2.5 days = 5 half-sessions
 }
 
+# Below this many closed trades, expectancy/drawdown stats are too noisy to
+# draw conclusions from -- get_scenario_stats flags this via low_sample_size
+# rather than silently presenting an early, unstable read as settled.
+MIN_RELIABLE_SAMPLE_SIZE = 30
+
 # NoDemand/NoSupply (app.wyckoff.events) are "supporting" signals that fire
 # *inside* an already-established trend (an absorption bar showing a lack of
 # selling/buying pressure) -- unlike Spring/SOS/SOW/BC/SC/Upthrust they don't
@@ -100,8 +110,8 @@ def _close_reason(
 ) -> str:
     if status == "hit_sl":
         if language == "en":
-            return f"Close {price:.2f} broke past SL {level:.2f} at candle {bar_ts:%Y-%m-%d %H:%M}"
-        return f"Giá đóng cửa {price:.2f} vượt qua SL {level:.2f} tại nến {bar_ts:%Y-%m-%d %H:%M}"
+            return f"Price {price:.2f} breached SL {level:.2f} at candle {bar_ts:%Y-%m-%d %H:%M}"
+        return f"Giá {price:.2f} chạm SL {level:.2f} tại nến {bar_ts:%Y-%m-%d %H:%M}"
     if status == "hit_tp":
         if language == "en":
             return f"Reached TP {level:.2f} at candle {bar_ts:%Y-%m-%d %H:%M}"
@@ -172,6 +182,66 @@ def _generate_explanation(
         return template
 
 
+@dataclass
+class ResolvedOutcome:
+    status: str  # "active" | "hit_sl" | "hit_tp" | "expired"
+    closed_bar_ts: datetime | None
+    exit_price: float | None
+    touch_price: float | None = None  # hit_sl only -- the actual low/high that pierced, for the close_reason message
+
+
+def _resolve_outcome(
+    event_ts: datetime,
+    stop_loss: float,
+    take_profit: float,
+    max_bars: int,
+    is_bullish: bool,
+    candles: list[Candle],
+    min_settlement_bars: int = 0,
+) -> ResolvedOutcome:
+    """Pure hit_sl/hit_tp/expiry decision over plain values -- no DB, no
+    session. Shared by live tracking (_update_active_scenarios, which polls
+    this against whatever candles have arrived so far) and
+    app.services.scenario_backtest (which has the complete future candle
+    series up front and resolves a scenario the instant it's created,
+    instead of waiting for later runs) -- so a backtest can never see a
+    resolution live tracking couldn't have.
+
+    ``min_settlement_bars`` (see SETTLEMENT_BARS_STOCK) skips TP/SL checks on
+    the first N subsequent bars: for a VN stock, shares bought at entry aren't
+    tradeable again until T+2.5 settles, so a price touch on those bars isn't
+    a fill a real order could have taken -- 0 for crypto (T+0) and any
+    non-stock caller, via the default."""
+    subsequent = sorted((c for c in candles if c.bucket_start > event_ts), key=lambda c: c.bucket_start)
+    for idx, bar in enumerate(subsequent, start=1):
+        if idx <= min_settlement_bars:
+            continue  # T+2.5: shares not settled yet, can't exit regardless of price
+        # Checked intrabar (low/high), matching how a real stop order
+        # executes on touch rather than waiting for the candle to close past
+        # the level -- and checked before hit_tp below, so a single bar that
+        # pierces both levels (real on volatile/low-liquidity assets)
+        # conservatively resolves as a stop-out rather than a win, since a
+        # real order would have triggered on the way down/up before price
+        # could recover to the opposite level.
+        hit_sl = bar.low <= stop_loss if is_bullish else bar.high >= stop_loss
+        if hit_sl:
+            touch_price = bar.low if is_bullish else bar.high
+            return ResolvedOutcome("hit_sl", bar.bucket_start, stop_loss, touch_price)
+        hit_tp = bar.high >= take_profit if is_bullish else bar.low <= take_profit
+        if hit_tp:
+            return ResolvedOutcome("hit_tp", bar.bucket_start, take_profit)
+    if len(subsequent) >= max_bars:
+        last = subsequent[-1] if subsequent else None
+        return ResolvedOutcome("expired", last.bucket_start if last else None, last.close if last else None)
+    return ResolvedOutcome("active", None, None)
+
+
+def _settlement_bars_for(symbol: Symbol | None, timeframe: str) -> int:
+    if symbol is None or symbol.asset_class != AssetClass.STOCK:
+        return 0
+    return SETTLEMENT_BARS_STOCK.get(timeframe, 0)
+
+
 def _update_active_scenarios(
     session: Session, ticker: str, timeframe: str, strategy: str, candles: list[Candle], language: str
 ) -> None:
@@ -187,47 +257,32 @@ def _update_active_scenarios(
         return
 
     symbol = session.get(Symbol, ticker)
-    min_settlement_bars = (
-        SETTLEMENT_BARS_STOCK.get(timeframe, 0)
-        if symbol is not None and symbol.asset_class == AssetClass.STOCK
-        else 0
-    )
+    min_settlement_bars = _settlement_bars_for(symbol, timeframe)
 
     for scenario in active:
-        subsequent = sorted(
-            (c for c in candles if c.bucket_start > scenario.event_ts), key=lambda c: c.bucket_start
+        outcome = _resolve_outcome(
+            scenario.event_ts, scenario.stop_loss, scenario.take_profit, scenario.max_bars,
+            scenario.is_bullish, candles, min_settlement_bars,
         )
-        for idx, bar in enumerate(subsequent, start=1):
-            if idx <= min_settlement_bars:
-                continue  # T+2.5: shares not settled yet, can't exit regardless of price
-            hit_sl = bar.close <= scenario.stop_loss if scenario.is_bullish else bar.close >= scenario.stop_loss
-            if hit_sl:
-                scenario.status = "hit_sl"
-                scenario.closed_bar_ts = bar.bucket_start
-                scenario.exit_price = scenario.stop_loss
-                scenario.close_reason = _close_reason(
-                    "hit_sl", price=bar.close, level=scenario.stop_loss, bar_ts=bar.bucket_start, language=language
-                )
-                break
-            hit_tp = bar.high >= scenario.take_profit if scenario.is_bullish else bar.low <= scenario.take_profit
-            if hit_tp:
-                scenario.status = "hit_tp"
-                scenario.closed_bar_ts = bar.bucket_start
-                scenario.exit_price = scenario.take_profit
-                scenario.close_reason = _close_reason(
-                    "hit_tp", level=scenario.take_profit, bar_ts=bar.bucket_start, language=language
-                )
-                break
-        else:
-            if len(subsequent) >= scenario.max_bars:
-                scenario.status = "expired"
-                scenario.closed_bar_ts = subsequent[-1].bucket_start if subsequent else None
-                scenario.exit_price = subsequent[-1].close if subsequent else None
-                scenario.close_reason = _close_reason("expired", max_bars=scenario.max_bars, language=language)
+        if outcome.status == "active":
+            continue
 
-        if scenario.status != "active":
-            scenario.closed_at = _utcnow()
-            session.add(scenario)
+        scenario.status = outcome.status
+        scenario.closed_bar_ts = outcome.closed_bar_ts
+        scenario.exit_price = outcome.exit_price
+        if outcome.status == "hit_sl":
+            scenario.close_reason = _close_reason(
+                "hit_sl", price=outcome.touch_price, level=scenario.stop_loss,
+                bar_ts=outcome.closed_bar_ts, language=language,
+            )
+        elif outcome.status == "hit_tp":
+            scenario.close_reason = _close_reason(
+                "hit_tp", level=scenario.take_profit, bar_ts=outcome.closed_bar_ts, language=language,
+            )
+        else:  # expired
+            scenario.close_reason = _close_reason("expired", max_bars=scenario.max_bars, language=language)
+        scenario.closed_at = _utcnow()
+        session.add(scenario)
 
 
 def _pre_event_range_height(candles: list[Candle], event_index: int, levels: Levels) -> float:
@@ -276,11 +331,139 @@ def _compute_max_bars(candles_before_event: list[Candle], tp_distance: float) ->
     return max(MIN_MAX_BARS, min(MAX_MAX_BARS, bars))
 
 
+def _min_bars_to_reach(move_pct: float, daily_limit_pct: float) -> float:
+    """Fewest daily sessions needed to cover ``move_pct`` if price moved the
+    maximum allowed ``daily_limit_pct`` every single day (HOSE's daily band
+    compounds, e.g. 7%/day for a few days can cover a move a single day's
+    band alone couldn't) -- ``math.log`` bases, not a flat
+    ``move_pct / daily_limit_pct`` division, which would understate how many
+    sessions a large move actually needs once compounding is accounted for."""
+    if move_pct <= 0:
+        return 0.0
+    if daily_limit_pct <= 0:
+        return float("inf")
+    return math.log(1 + move_pct) / math.log(1 + daily_limit_pct)
+
+
 def _count_active(session: Session, asset_class: str | None = None) -> int:
     query = select(TradeScenario.id).where(TradeScenario.status == "active")
     if asset_class:
         query = query.join(Symbol, Symbol.ticker == TradeScenario.ticker).where(Symbol.asset_class == asset_class)
     return len(session.exec(query).all())
+
+
+def _build_scenario_candidate(
+    ticker: str,
+    timeframe: str,
+    strategy: str,
+    candles: list[Candle],
+    event: WyckoffEvent,
+    is_bullish: bool,
+    levels: Levels,
+    provider_cfg: ProviderConfig,
+    strategy_module,
+    strategy_cfg,
+    daily_trend: str | None,
+    ranging_phases: set[str],
+    symbol: Symbol | None,
+    risk_cfg: dict,
+    use_ai: bool,
+    config_version: str,
+) -> TradeScenario | None:
+    """Applies the entry gates (multi-timeframe alignment, phase-before-event,
+    Volume Profile confirmation) and computes entry/SL/TP/max_bars/
+    price_limit_caution for ONE candidate event -- returns an unsaved
+    TradeScenario, or None if any gate blocks it. Shared by live
+    _create_scenarios (which additionally restricts candidates to the single
+    most recent event, plus DB/portfolio-level checks that only make sense
+    for real-time tracking) and app.services.scenario_backtest (which walks
+    every qualifying historical event in isolation, with no portfolio-level
+    view across other tickers to check against)."""
+    n = len(candles)
+    if event.index >= n or event.index + 1 >= n:
+        return None
+
+    # Hard gate on multi-timeframe alignment: on an intraday timeframe with a
+    # known daily trend (see app.services.analysis._get_daily_trend),
+    # mtf_alignment used to be informational only -- a bullish signal against
+    # a bearish daily trend still spawned a trade plan. Block it instead;
+    # daily_trend is None on the daily timeframe itself or before any daily
+    # analysis exists, so this never gates those cases.
+    if daily_trend is not None and is_bullish != (daily_trend == "bullish"):
+        return None
+
+    # Gate on the phase as of just before the event, not the phase this same
+    # analysis run just classified -- a breakout event (SOS/BOS/CHoCH-style)
+    # inherently coincides with the phase flipping to Markup/Markdown/trending,
+    # so checking the post-event phase would almost always pass trivially.
+    # Re-running analyze() on the truncated pre-event window answers "was this
+    # actually a breakout out of a real range, or did it fire once already
+    # trending" -- the latter has no coherent range height to measure a move
+    # against.
+    truncated = candles[: event.index]
+    phase_before_event = strategy_module.analyze(truncated, strategy_cfg, daily_trend, provider_cfg.language).phase
+    if phase_before_event not in ranging_phases:
+        return None
+
+    # Gate on Volume Profile confirmation for the 4 event types it can
+    # actually evaluate (see _VP_GATED_EVENT_TYPES). volume_confirmed is
+    # False (evaluated, didn't hold) or None (not enough history for a
+    # profile yet) -- both are treated as "not confirmed" here: an
+    # unevaluated event is a missing condition, not a free pass. Other event
+    # types skip this gate entirely (see _VP_GATED_EVENT_TYPES for why).
+    if event.type in _VP_GATED_EVENT_TYPES and not event.volume_confirmed:
+        return None
+
+    # Not event.price (the event bar's own close): that price is already
+    # history by the time the signal can be confirmed. entry_bar.open is the
+    # earliest realistic fill -- guaranteed to exist by the index+1 check
+    # above.
+    entry = candles[event.index + 1].open
+    range_height = min(_pre_event_range_height(candles, event.index, levels), entry * MAX_RANGE_HEIGHT_PCT)
+    bar = candles[event.index]
+    stop_loss = bar.low * (1 - SL_BUFFER_PCT) if is_bullish else bar.high * (1 + SL_BUFFER_PCT)
+    take_profit = entry + range_height if is_bullish else entry - range_height
+    max_bars = _compute_max_bars(candles[: event.index], abs(take_profit - entry))
+    explanation = _generate_explanation(
+        event.type, is_bullish, entry, stop_loss, take_profit, max_bars, provider_cfg, use_ai
+    )
+
+    # Price-limit caution (stock only): flag, don't block, when the exchange's
+    # compounding daily band (see settings_service.stock_daily_price_limit_pct
+    # / _hnx) can't plausibly cover the SL or TP distance within max_bars
+    # sessions -- a level that's arithmetically out of reach in the time the
+    # scenario gives itself, not just "far away". See _min_bars_to_reach.
+    # HNX's daily band (+/-10%) is wider than HOSE's (+/-7%); a stock with no
+    # recorded exchange yet (predates this field) falls back to HOSE's
+    # tighter band rather than silently assuming the wider one.
+    price_limit_caution = False
+    if symbol is not None and symbol.asset_class == AssetClass.STOCK:
+        limit_key = (
+            "stock_daily_price_limit_pct_hnx" if symbol.exchange == Exchange.HNX
+            else "stock_daily_price_limit_pct"
+        )
+        limit_pct = risk_cfg[limit_key] / 100
+        sl_move = abs(entry - stop_loss) / entry
+        tp_move = abs(take_profit - entry) / entry
+        price_limit_caution = (
+            _min_bars_to_reach(sl_move, limit_pct) > max_bars or _min_bars_to_reach(tp_move, limit_pct) > max_bars
+        )
+
+    return TradeScenario(
+        ticker=ticker,
+        timeframe=timeframe,
+        strategy=strategy,
+        event_type=event.type,
+        event_ts=event.ts,
+        is_bullish=is_bullish,
+        entry=entry,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+        max_bars=max_bars,
+        explanation=explanation,
+        config_version=config_version,
+        price_limit_caution=price_limit_caution,
+    )
 
 
 def _create_scenarios(
@@ -298,6 +481,7 @@ def _create_scenarios(
     daily_trend: str | None,
     ranging_phases: set[str],
     use_ai: bool,
+    config_version: str = "",
 ) -> None:
     # Spot-only: the app never models short-selling/margin, on either stock
     # (retail can't short VN equities) or crypto (spot buy/sell, no futures).
@@ -342,38 +526,17 @@ def _create_scenarios(
     n = len(candles)
     if event.index >= n:
         return  # defensive, mirrors signal_outcomes.record_outcomes
+    # A live trader can only confirm this signal once the event bar has
+    # closed -- by then, that bar's own close is already history. The
+    # earliest realistic fill is the NEXT bar's open (see `entry` below), so
+    # if that bar doesn't exist yet (the event just fired on the newest
+    # candle in `candles`), there's nothing to enter at. Return without
+    # creating anything; nothing is persisted for this event, so a later run
+    # -- once a new candle has arrived -- picks it up fresh via the same
+    # "most recent qualifying event" selection above.
+    if event.index + 1 >= n:
+        return
     is_bullish = event.type in bullish_events
-
-    # Hard gate on multi-timeframe alignment: on an intraday timeframe with a
-    # known daily trend (see app.services.analysis._get_daily_trend),
-    # mtf_alignment used to be informational only -- a bullish signal against
-    # a bearish daily trend still spawned a trade plan. Block it instead;
-    # daily_trend is None on the daily timeframe itself or before any daily
-    # analysis exists, so this never gates those cases.
-    if daily_trend is not None and is_bullish != (daily_trend == "bullish"):
-        return
-
-    # Gate on the phase as of just before the event, not the phase this same
-    # analysis run just classified -- a breakout event (SOS/BOS/CHoCH-style)
-    # inherently coincides with the phase flipping to Markup/Markdown/trending,
-    # so checking the post-event phase would almost always pass trivially.
-    # Re-running analyze() on the truncated pre-event window answers "was this
-    # actually a breakout out of a real range, or did it fire once already
-    # trending" -- the latter has no coherent range height to measure a move
-    # against.
-    truncated = candles[: event.index]
-    phase_before_event = strategy_module.analyze(truncated, strategy_cfg, daily_trend, provider_cfg.language).phase
-    if phase_before_event not in ranging_phases:
-        return
-
-    # Gate on Volume Profile confirmation for the 4 event types it can
-    # actually evaluate (see _VP_GATED_EVENT_TYPES). volume_confirmed is
-    # False (evaluated, didn't hold) or None (not enough history for a
-    # profile yet) -- both are treated as "not confirmed" here: an
-    # unevaluated event is a missing condition, not a free pass. Other event
-    # types skip this gate entirely (see _VP_GATED_EVENT_TYPES for why).
-    if event.type in _VP_GATED_EVENT_TYPES and not event.volume_confirmed:
-        return
 
     existing = session.exec(
         select(TradeScenario).where(
@@ -394,6 +557,8 @@ def _create_scenarios(
     # cluster (risk-on/risk-off together), so a tighter sub-cap applies to it
     # specifically; asset_class is a simple proxy for "correlated cluster"
     # rather than a real correlation matrix, which is overkill at this scale.
+    # Live-tracking only -- see _build_scenario_candidate's docstring on why
+    # scenario_backtest can't apply this (no cross-ticker portfolio view).
     risk_cfg = settings_service.get_risk_config(session)
     if _count_active(session) >= risk_cfg["max_concurrent_scenarios"]:
         return
@@ -405,31 +570,12 @@ def _create_scenarios(
     ):
         return
 
-    entry = event.price
-    range_height = min(_pre_event_range_height(candles, event.index, levels), entry * MAX_RANGE_HEIGHT_PCT)
-    bar = candles[event.index]
-    stop_loss = bar.low * (1 - SL_BUFFER_PCT) if is_bullish else bar.high * (1 + SL_BUFFER_PCT)
-    take_profit = entry + range_height if is_bullish else entry - range_height
-    max_bars = _compute_max_bars(candles[: event.index], abs(take_profit - entry))
-    explanation = _generate_explanation(
-        event.type, is_bullish, entry, stop_loss, take_profit, max_bars, provider_cfg, use_ai
+    candidate = _build_scenario_candidate(
+        ticker, timeframe, strategy, candles, event, is_bullish, levels, provider_cfg,
+        strategy_module, strategy_cfg, daily_trend, ranging_phases, symbol, risk_cfg, use_ai, config_version,
     )
-
-    session.add(
-        TradeScenario(
-            ticker=ticker,
-            timeframe=timeframe,
-            strategy=strategy,
-            event_type=event.type,
-            event_ts=event.ts,
-            is_bullish=is_bullish,
-            entry=entry,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            max_bars=max_bars,
-            explanation=explanation,
-        )
-    )
+    if candidate is not None:
+        session.add(candidate)
 
 
 def sync_scenarios(
@@ -447,6 +593,7 @@ def sync_scenarios(
     daily_trend: str | None,
     ranging_phases: set[str],
     use_ai: bool = True,
+    config_version: str = "",
 ) -> None:
     """Update any already-active scenario against the latest candles first
     (so a scenario closed in this same run doesn't block a new event from
@@ -459,18 +606,40 @@ def sync_scenarios(
     let a new scenario be gated on the phase just before the triggering event
     (see the comment in ``_create_scenarios``). ``provider_cfg`` supplies both
     the language for close_reason/explanation text and (when ``use_ai``) the
-    AI provider for a written explanation."""
+    AI provider for a written explanation. ``config_version`` is stamped only
+    on a newly-created scenario (see app.services.config_version)."""
     _update_active_scenarios(session, ticker, timeframe, strategy, candles, provider_cfg.language)
     _create_scenarios(
         session, ticker, timeframe, strategy, candles, events, bullish_events, levels,
-        provider_cfg, strategy_module, strategy_cfg, daily_trend, ranging_phases, use_ai,
+        provider_cfg, strategy_module, strategy_cfg, daily_trend, ranging_phases, use_ai, config_version,
     )
     session.commit()
 
 
 def _filtered_scenarios_query(
-    ticker: str | None, status: str | None, strategy: str | None, asset_class: str | None = None
+    ticker: str | None,
+    status: str | None,
+    strategy: str | None,
+    asset_class: str | None = None,
+    source: str | None = "live",
+    is_bullish: bool | None = None,
 ):
+    # source defaults to "live" so every pre-existing caller (Trade History
+    # page, Trust Layer stats) keeps seeing only real-time-tracked scenarios
+    # unless it explicitly asks otherwise -- backtest.run_backtest's rows
+    # must never silently leak into numbers a user reads as "what actually
+    # happened". Pass source=None for no filter (both live and backtest
+    # pooled) -- callers should only do that for an explicit "all sources"
+    # view, never as a stats default.
+    #
+    # is_bullish has no filter by default (None = both directions pooled).
+    # source="live" rows are bullish-only by construction now (see
+    # _create_scenarios -- the app is spot-only for both stock and crypto, no
+    # short-selling), but source="backtest" rows still cover both directions
+    # (scenario_backtest.walk_events resolves the bearish side too, purely for
+    # research/reference -- see e.g. scripts/backtest_rsi_spring.py), and a
+    # pre-existing live row created before this restriction may still be
+    # bearish. Pass is_bullish=True to scope to only what was ever tradeable.
     query = select(TradeScenario)
     if ticker:
         query = query.where(TradeScenario.ticker == ticker.upper())
@@ -480,6 +649,10 @@ def _filtered_scenarios_query(
         query = query.where(TradeScenario.strategy == strategy)
     if asset_class:
         query = query.join(Symbol, Symbol.ticker == TradeScenario.ticker).where(Symbol.asset_class == asset_class)
+    if source is not None:
+        query = query.where(TradeScenario.source == source)
+    if is_bullish is not None:
+        query = query.where(TradeScenario.is_bullish == is_bullish)
     return query
 
 
@@ -491,11 +664,13 @@ def list_scenarios(
     status: str | None = None,
     strategy: str | None = None,
     asset_class: str | None = None,
+    source: str | None = "live",
+    is_bullish: bool | None = None,
 ) -> tuple[list[TradeScenario], int]:
     """Every scenario ever created, across all tickers -- for the Trade
     History page (as opposed to ``get_scenario``, which only ever returns one
     row for a single ticker/timeframe/strategy)."""
-    query = _filtered_scenarios_query(ticker, status, strategy, asset_class)
+    query = _filtered_scenarios_query(ticker, status, strategy, asset_class, source, is_bullish)
     total = session.exec(select(func.count()).select_from(query.subquery())).one()
     items = session.exec(
         query.order_by(TradeScenario.event_ts.desc()).offset((page - 1) * page_size).limit(page_size)
@@ -504,31 +679,105 @@ def list_scenarios(
 
 
 def get_scenario_stats(
-    session: Session, ticker: str | None = None, strategy: str | None = None, asset_class: str | None = None
+    session: Session,
+    ticker: str | None = None,
+    strategy: str | None = None,
+    asset_class: str | None = None,
+    current_config_version: str | None = None,
+    source: str | None = "live",
+    is_bullish: bool | None = None,
 ) -> dict:
-    """``win_count``/``loss_count``/``win_rate``/``avg_pnl_pct`` keep their
+    """``source`` defaults to "live" -- see _filtered_scenarios_query -- so the
+    Trust Layer numbers (monte_carlo/bootstrap/walk_forward included) never
+    silently pool in scenario_backtest's rows unless explicitly asked to.
+
+    ``is_bullish`` has no filter by default -- pass True to scope every
+    number (including monte_carlo/bootstrap/walk_forward) to only long
+    scenarios, the relevant view for a spot-only trader who can never
+    actually execute a bearish/short scenario.
+
+    ``win_count``/``loss_count``/``win_rate``/``avg_pnl_pct`` keep their
     original, narrower meaning: only scenarios that clearly hit TP or SL.
 
     ``expectancy_r``/``total_pnl_amount`` cover a wider sample (TP/SL/expired
     -- every status that now carries an ``exit_price``, see
     _update_active_scenarios) expressed as an R-multiple: return relative to
     the scenario's own risk distance (entry-to-stop), the standard way to
-    compare trades with different stop distances. A per-ticker slippage +
-    round-trip fee/tax haircut (stock vs crypto, see
-    settings_service.get_risk_config) worsens exit_price in the unfavorable
-    direction first, so the number reflects a realistic fill rather than the
-    exact trigger level -- without this, expectancy would silently assume
-    free trading, which for VN stocks alone overstates every trade by
-    ~0.2-0.3%. The $ amount applies
+    compare trades with different stop distances. A per-ticker cost haircut
+    (slippage for both asset classes, plus broker fee + VN sell tax for
+    stocks, CEX taker fee for crypto -- see settings_service.get_risk_config)
+    worsens exit_price in the unfavorable direction first, so the number
+    reflects a realistic fill rather than the exact trigger level -- without
+    this, expectancy would silently assume free trading, which for VN stocks
+    alone overstates every trade by ~0.2-0.3%. The $ amount applies
     fixed-fractional position sizing (risk_pct_per_trade of notional_capital
     per trade) -- both purely for display, computed at read time so tuning
-    either assumption never needs a migration."""
+    either assumption never needs a migration.
+
+    ``median_expectancy_r`` is the median of the same per-trade R-multiples
+    ``expectancy_r`` averages -- a single outlier trade (a too-tight stop
+    blowing up an ordinary $ move into a huge R, see _create_scenarios'
+    NoDemand/NoSupply comment) can drag the mean well above what most trades
+    actually looked like; the median isn't moved by one extreme value the way
+    a mean is. ``low_sample_size`` flags when there are fewer than
+    MIN_RELIABLE_SAMPLE_SIZE R-multiples behind these stats -- both are
+    ``None`` when there's no data at all.
+
+    ``current_config_count`` (only computed when ``current_config_version``
+    is given -- see app.services.config_version) is how many of the filtered
+    scenarios were created under today's exact thresholds, as opposed to
+    thresholds since retuned; left ``None`` when the caller can't name a
+    single strategy's current version (e.g. no strategy filter, several
+    strategies' scenarios pooled together).
+
+    ``benchmark_buy_hold_pct``/``strategy_return_pct``/``edge_vs_buy_hold_pct``
+    (see app.services.benchmark) compare the strategy's own realized return
+    against simply buying and holding each ticker over that SAME trade's own
+    window, sized in the same dollars actually put at risk -- the real
+    opportunity cost, as opposed to the random-entry baseline
+    signal_outcomes.get_stats compares win rate against.
+
+    ``max_drawdown_r``/``max_drawdown_amount``/``max_consecutive_losses``
+    describe the worst realized stretch, not just the average -- an
+    expectancy that's positive on average can still ruin an account during a
+    losing streak an average alone never shows.
+
+    ``monte_carlo`` (see stats_significance.monte_carlo_permutation_test)
+    reshuffles the SAME chronological R-multiples to check whether the
+    realized equity path is unusually smooth/rough compared to a random
+    reordering of the same wins/losses -- catches real loss-clustering risk
+    that expectancy_r's average never shows, since shuffling can't change
+    the mean itself. ``None`` below its 3-trade minimum.
+
+    ``bootstrap`` (see stats_significance.bootstrap_sharpe_ci) resamples the
+    same per-trade returns WITH replacement to put a confidence interval on
+    r_sharpe -- unlike monte_carlo (which reorders this exact fixed trade
+    set), this treats each return as a draw from an unknown distribution and
+    asks how much the estimate would move on a fresh sample. ``None`` below
+    5 trades.
+
+    ``walk_forward`` (see stats_significance.walk_forward_analysis) splits
+    the same R-multiples into sequential windows to check whether the edge
+    held up across time or was carried by one lucky stretch. ``None`` below
+    2 trades per window (5 windows by default -- needs 10+ trades)."""
     total_count = session.exec(
-        select(func.count()).select_from(_filtered_scenarios_query(ticker, None, strategy, asset_class).subquery())
+        select(func.count()).select_from(
+            _filtered_scenarios_query(ticker, None, strategy, asset_class, source, is_bullish).subquery()
+        )
     ).one()
 
+    current_config_count = None
+    if current_config_version is not None:
+        current_config_count = session.exec(
+            select(func.count()).select_from(
+                _filtered_scenarios_query(ticker, None, strategy, asset_class, source, is_bullish)
+                .where(TradeScenario.config_version == current_config_version)
+                .subquery()
+            )
+        ).one()
+
     decided = session.exec(
-        _filtered_scenarios_query(ticker, None, strategy, asset_class).where(
+        _filtered_scenarios_query(ticker, None, strategy, asset_class, source, is_bullish).where(
             TradeScenario.status.in_(["hit_tp", "hit_sl"])
         )
     ).all()
@@ -543,7 +792,7 @@ def get_scenario_stats(
     pnls = [_pnl_pct(s) for s in decided]
 
     closed = session.exec(
-        _filtered_scenarios_query(ticker, None, strategy, asset_class).where(
+        _filtered_scenarios_query(ticker, None, strategy, asset_class, source, is_bullish).where(
             TradeScenario.status.in_(["hit_tp", "hit_sl", "expired"]),
             TradeScenario.exit_price.is_not(None),
         )
@@ -553,23 +802,112 @@ def get_scenario_stats(
         row[0]: row[1] for row in session.exec(select(Symbol.ticker, Symbol.asset_class)).all()
     } if closed else {}
 
+    def _cost_pct(tkr: str) -> float:
+        if asset_classes.get(tkr) == AssetClass.CRYPTO:
+            # Alongside slippage, a round-trip CEX taker fee is real drag a
+            # pure slippage estimate ignores, same as broker_fee_pct_stock is
+            # for stocks below.
+            return (risk_cfg["slippage_pct_crypto"] + risk_cfg["trading_fee_pct_crypto"]) / 100
+        # Stocks additionally carry a round-trip broker commission and VN's
+        # flat sell-side tax -- both real drag a pure slippage estimate
+        # ignores, and both apply whether the trade won or lost.
+        return (
+            risk_cfg["slippage_pct_stock"] + risk_cfg["broker_fee_pct_stock"] + risk_cfg["sell_tax_pct_stock"]
+        ) / 100
+
     def _r_multiple(s: TradeScenario) -> float | None:
         risk_distance = abs(s.entry - s.stop_loss)
         if not risk_distance or s.exit_price is None:
             return None
-        is_crypto = asset_classes.get(s.ticker) == AssetClass.CRYPTO
-        slippage_pct = (risk_cfg["slippage_pct_crypto"] if is_crypto else risk_cfg["slippage_pct_stock"]) / 100
-        fee_pct = (risk_cfg["fee_pct_crypto"] if is_crypto else risk_cfg["fee_pct_stock"]) / 100
-        cost_amount = (slippage_pct + fee_pct) * s.entry
+        cost_amount = _cost_pct(s.ticker) * s.entry
         adjusted_exit = s.exit_price - cost_amount if s.is_bullish else s.exit_price + cost_amount
         raw = (adjusted_exit - s.entry) / risk_distance
         return raw if s.is_bullish else -raw
 
-    r_multiples = [r for s in closed if (r := _r_multiple(s)) is not None]
+    scored = [(s, r) for s in closed if (r := _r_multiple(s)) is not None]
+    r_multiples = [r for _, r in scored]
     risk_amount = risk_cfg["notional_capital"] * risk_cfg["risk_pct_per_trade"] / 100
+    total_pnl_amount = risk_amount * sum(r_multiples) if r_multiples else None
+
+    # Max drawdown + longest losing streak, walked in the order things
+    # actually resolved on the market timeline (closed_bar_ts -- the historical
+    # candle where TP/SL/expiry happened -- not closed_at, which is just
+    # whenever this app's process happened to run and notice it).
+    ordered = sorted(scored, key=lambda sr: sr[0].closed_bar_ts or sr[0].closed_at or sr[0].event_ts)
+    cum_r = 0.0
+    peak_r = 0.0
+    max_drawdown_r = 0.0
+    consecutive_losses = 0
+    max_consecutive_losses = 0
+    for s, r in ordered:
+        cum_r += r
+        peak_r = max(peak_r, cum_r)
+        max_drawdown_r = max(max_drawdown_r, peak_r - cum_r)
+        consecutive_losses = consecutive_losses + 1 if r < 0 else 0
+        max_consecutive_losses = max(max_consecutive_losses, consecutive_losses)
+
+    # Monte Carlo permutation test (see stats_significance.monte_carlo_
+    # permutation_test): reshuffles this SAME chronological R-multiple
+    # sequence to check whether the realized equity path is unusually
+    # smooth/rough compared to a random reordering of the same wins/losses --
+    # catches real loss-clustering risk that expectancy_r's average can't.
+    monte_carlo = stats_significance.monte_carlo_permutation_test(
+        [r for _, r in ordered], risk_amount, risk_cfg["notional_capital"]
+    )
+    # Bootstrap Sharpe CI (see stats_significance.bootstrap_sharpe_ci):
+    # resamples the SAME per-trade returns with replacement to estimate how
+    # much r_sharpe would wobble on a fresh sample -- the closest thing to
+    # "does the edge itself look real" this app computes without a full
+    # backtest.
+    bootstrap = stats_significance.bootstrap_sharpe_ci(
+        [r for _, r in ordered], risk_amount, risk_cfg["notional_capital"]
+    )
+    # Walk-forward consistency (see stats_significance.walk_forward_analysis):
+    # splits the same chronological R-multiples into sequential windows to
+    # check whether the edge held up across time, or was carried by one
+    # lucky stretch.
+    walk_forward = stats_significance.walk_forward_analysis([r for _, r in ordered])
+
+    # Buy-and-hold benchmark: for each closed scenario, what simply holding
+    # the ticker (no signals, no risk management) over that SAME trade's own
+    # entry-to-exit window would have returned, sized in the SAME dollars
+    # actually put at risk on that trade (risk_amount) -- on the daily
+    # timeframe regardless of which timeframe the scenario itself was
+    # generated on, since "did nothing in particular" is a date-range
+    # concept, not a signal-timeframe one. Pooling every scenario on a ticker
+    # into one min/max window (the previous approach) and averaging bare %
+    # returns compared a risk-managed, fractionally-sized return against a
+    # full-notional one over a mismatched window -- not a real opportunity
+    # cost. edge_vs_buy_hold_pct is derived from strategy/benchmark totals
+    # over this SAME matched set (only scenarios with a computable buy-hold
+    # return), not the full-population strategy_return_pct exposed below --
+    # keeping both sides of the subtraction over an identical trade
+    # population and dollar size is what makes "edge" mean anything.
+    matched_strategy_amount = 0.0
+    matched_buy_hold_amount = 0.0
+    matched_count = 0
+    for s, r in scored:
+        end_ts = s.closed_bar_ts or s.closed_at or s.event_ts
+        buy_hold_pct = benchmark_svc.buy_hold_return(session, s.ticker, Timeframe.DAILY, s.event_ts, end_ts)
+        if buy_hold_pct is None:
+            continue
+        matched_strategy_amount += risk_amount * r
+        matched_buy_hold_amount += risk_amount * buy_hold_pct
+        matched_count += 1
+    benchmark_buy_hold_pct = (
+        round(matched_buy_hold_amount / risk_cfg["notional_capital"], 4) if matched_count else None
+    )
+    strategy_return_pct = (
+        round(total_pnl_amount / risk_cfg["notional_capital"], 4) if total_pnl_amount is not None else None
+    )
+    edge_vs_buy_hold_pct = (
+        round((matched_strategy_amount - matched_buy_hold_amount) / risk_cfg["notional_capital"], 4)
+        if matched_count else None
+    )
 
     return {
         "total_count": total_count,
+        "current_config_count": current_config_count,
         "decided_count": len(decided),
         "win_count": len(wins),
         "loss_count": len(losses),
@@ -577,8 +915,25 @@ def get_scenario_stats(
         "avg_pnl_pct": round(sum(pnls) / len(pnls), 4) if pnls else None,
         "pnl_sample_count": len(r_multiples),
         "expectancy_r": round(sum(r_multiples) / len(r_multiples), 3) if r_multiples else None,
+        # A single too-tight-stop outlier can blow one trade's R-multiple up
+        # far beyond the rest (see MIN_RELIABLE_SAMPLE_SIZE's neighbor
+        # _create_scenarios' NoDemand/NoSupply comment) and drag the mean
+        # with it -- the median isn't moved by one extreme value the way a
+        # mean is, so it's exposed alongside expectancy_r rather than in
+        # place of it.
+        "median_expectancy_r": round(statistics.median(r_multiples), 3) if r_multiples else None,
+        "low_sample_size": (len(r_multiples) < MIN_RELIABLE_SAMPLE_SIZE) if r_multiples else None,
         "risk_amount_per_trade": round(risk_amount, 2),
-        "total_pnl_amount": round(risk_amount * sum(r_multiples), 2) if r_multiples else None,
+        "total_pnl_amount": round(total_pnl_amount, 2) if total_pnl_amount is not None else None,
+        "benchmark_buy_hold_pct": benchmark_buy_hold_pct,
+        "strategy_return_pct": strategy_return_pct,
+        "edge_vs_buy_hold_pct": edge_vs_buy_hold_pct,
+        "max_drawdown_r": round(max_drawdown_r, 3) if ordered else None,
+        "max_drawdown_amount": round(risk_amount * max_drawdown_r, 2) if ordered else None,
+        "max_consecutive_losses": max_consecutive_losses if ordered else None,
+        "monte_carlo": monte_carlo,
+        "bootstrap": bootstrap,
+        "walk_forward": walk_forward,
     }
 
 

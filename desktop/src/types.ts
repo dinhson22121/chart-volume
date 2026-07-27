@@ -7,6 +7,8 @@ export interface SymbolItem {
   name: string;
   asset_class: AssetClass;
   is_vn30: boolean;
+  exchange: "HOSE" | "HNX" | null;
+  is_hose_hnx: boolean;
   is_watchlist: boolean;
   is_top100: boolean;
   top100_rank: number | null;
@@ -104,6 +106,8 @@ export interface SignalStat {
   type: string;
   count: number;
   is_bullish: boolean;
+  n_current_config?: number;
+  significant_10: boolean | null;
   n_5: number;
   avg_return_5: number | null;
   win_rate_5: number | null;
@@ -176,14 +180,23 @@ export interface Settings {
   ai_narrative_vn30: boolean;
   ai_narrative_watchlist: boolean;
   ai_narrative_top100: boolean;
+  shadow_strategy_keys: string[];
   notional_capital: number;
   risk_pct_per_trade: number;
   slippage_pct_stock: number;
   slippage_pct_crypto: number;
-  fee_pct_stock: number;
-  fee_pct_crypto: number;
+  trading_fee_pct_crypto: number;
   max_concurrent_scenarios: number;
   max_concurrent_scenarios_crypto: number;
+  broker_fee_pct_stock: number;
+  sell_tax_pct_stock: number;
+  stock_daily_price_limit_pct: number;
+  stock_daily_price_limit_pct_hnx: number;
+  stock_min_avg_value_vnd: number;
+  hose_hnx_auto_refresh_enabled: boolean;
+  hose_hnx_refresh_time: string;
+  stock_batch_analysis_auto_enabled: boolean;
+  stock_batch_analysis_time: string;
   has_anthropic_key: boolean;
   has_gemini_key: boolean;
   has_openai_key: boolean;
@@ -247,6 +260,17 @@ export interface PotentialScreenStatus {
   last_error: string | null;
 }
 
+export interface StockBatchAnalysisStatus {
+  running: boolean;
+  total: number | null;
+  completed: number | null;
+  failed: number | null;
+  current_ticker: string | null;
+  last_error: string | null;
+  last_cancelled: boolean;
+  last_completed_at: string | null;
+}
+
 export interface ScanStatus {
   running: boolean;
   last_completed_at: string | null;
@@ -257,6 +281,8 @@ export interface ScanStatus {
   current_page: number | null;
   hits_so_far: number | null;
 }
+
+export type TradeHistorySource = "live" | "backtest" | "all";
 
 export interface TradeHistoryEntry {
   id: number;
@@ -273,6 +299,8 @@ export interface TradeHistoryEntry {
   status: "active" | "hit_tp" | "hit_sl" | "expired";
   close_reason: string | null;
   closed_at: string | null;
+  price_limit_caution: boolean;
+  source: "live" | "backtest";
 }
 
 export interface TradeHistoryPage {
@@ -284,6 +312,7 @@ export interface TradeHistoryPage {
 
 export interface TradeHistoryStats {
   total_count: number;
+  current_config_count: number | null;
   decided_count: number;
   win_count: number;
   loss_count: number;
@@ -291,8 +320,55 @@ export interface TradeHistoryStats {
   avg_pnl_pct: number | null;
   pnl_sample_count: number;
   expectancy_r: number | null;
+  median_expectancy_r: number | null;
+  low_sample_size: boolean | null;
   risk_amount_per_trade: number;
   total_pnl_amount: number | null;
+  benchmark_buy_hold_pct: number | null;
+  strategy_return_pct: number | null;
+  edge_vs_buy_hold_pct: number | null;
+  max_drawdown_r: number | null;
+  max_drawdown_amount: number | null;
+  max_consecutive_losses: number | null;
+  monte_carlo: MonteCarloResult | null;
+  bootstrap: BootstrapResult | null;
+  walk_forward: WalkForwardResult | null;
+}
+
+export interface MonteCarloResult {
+  actual_r_sharpe: number;
+  actual_max_drawdown_r: number;
+  p_value_r_sharpe: number;
+  p_value_max_drawdown_r: number;
+  simulated_r_sharpe_mean: number;
+  simulated_r_sharpe_p5: number;
+  simulated_r_sharpe_p95: number;
+  n_simulations: number;
+  n_trades: number;
+}
+
+export interface BootstrapResult {
+  observed_r_sharpe: number;
+  ci_lower: number;
+  ci_upper: number;
+  median_r_sharpe: number;
+  prob_positive: number;
+  confidence: number;
+  n_bootstrap: number;
+  n_trades: number;
+}
+
+export interface WalkForwardWindow {
+  n_trades: number;
+  expectancy_r: number | null;
+}
+
+export interface WalkForwardResult {
+  per_window: WalkForwardWindow[];
+  n_windows: number;
+  positive_windows: number;
+  consistency_ratio: number | null;
+  expectancy_std_across_windows: number | null;
 }
 
 export interface ConfigChangeLogEntry {

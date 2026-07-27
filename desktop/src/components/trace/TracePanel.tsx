@@ -46,7 +46,7 @@ export function TracePanel({ ticker, displaySymbol, timeframe, barTs, onClose }:
           <h2>
             {t("trace.title")} <span className="trace-ticker mono">{displaySymbol}</span>
           </h2>
-          <button className="settings-modal__close" onClick={onClose} aria-label={t("common.close")}>
+          <button className="settings-modal__close has-tooltip" onClick={onClose} data-tooltip={t("common.close")} aria-label={t("common.close")}>
             ×
           </button>
         </header>

@@ -17,11 +17,13 @@ import type {
   Settings,
   SettingsUpdate,
   SignalStat,
+  StockBatchAnalysisStatus,
   StrategyOption,
   SymbolItem,
   SystemLogPage,
   Timeframe,
   TradeHistoryPage,
+  TradeHistorySource,
   TradeHistoryStats,
 } from "../types";
 
@@ -58,6 +60,7 @@ export const api = {
   removeSymbol: (ticker: string) => req<unknown>(`/symbols/${ticker}`, { method: "DELETE" }),
   seedVn30: () => req<SeedVn30Result>("/symbols/seed-vn30", { method: "POST" }),
   seedTop100: () => req<{ count: number }>("/symbols/seed-top100", { method: "POST" }),
+  seedHoseHnx: () => req<{ count: number }>("/symbols/seed-hose-hnx", { method: "POST" }),
   getCandles: (ticker: string, timeframe: Timeframe) =>
     req<Candle[]>(`/candles/${ticker}?timeframe=${timeframe}`),
   getAnalysis: (ticker: string, timeframe: Timeframe) =>
@@ -142,26 +145,47 @@ export const api = {
   getTradeHistory: (
     page: number,
     pageSize: number,
-    filters: { ticker?: string; status?: string; strategy?: string; assetClass?: AssetClass } = {},
+    filters: {
+      ticker?: string;
+      status?: string;
+      strategy?: string;
+      assetClass?: AssetClass;
+      source?: TradeHistorySource;
+    } = {},
   ) => {
     const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
     if (filters.ticker) params.set("ticker", filters.ticker);
     if (filters.status) params.set("status", filters.status);
     if (filters.strategy) params.set("strategy", filters.strategy);
     if (filters.assetClass) params.set("asset_class", filters.assetClass);
+    if (filters.source) params.set("source", filters.source);
     return req<TradeHistoryPage>(`/trade-history?${params.toString()}`);
   },
-  getTradeHistoryStats: (filters: { ticker?: string; strategy?: string; assetClass?: AssetClass } = {}) => {
+  getTradeHistoryStats: (
+    filters: { ticker?: string; strategy?: string; assetClass?: AssetClass; source?: TradeHistorySource } = {},
+  ) => {
     const params = new URLSearchParams();
     if (filters.ticker) params.set("ticker", filters.ticker);
     if (filters.strategy) params.set("strategy", filters.strategy);
     if (filters.assetClass) params.set("asset_class", filters.assetClass);
+    if (filters.source) params.set("source", filters.source);
     const qs = params.toString();
     return req<TradeHistoryStats>(`/trade-history/stats${qs ? `?${qs}` : ""}`);
+  },
+  runBacktest: (ticker: string, timeframe: string, strategy?: string) => {
+    const params = new URLSearchParams({ ticker, timeframe });
+    if (strategy) params.set("strategy", strategy);
+    return req<{ ticker: string; timeframe: string; created: number }>(
+      `/trade-history/backtest?${params.toString()}`,
+      { method: "POST" },
+    );
   },
   runPotentialScreen: () => req<{ status: string }>("/potential-screen/run", { method: "POST" }),
   getPotentialScreenStatus: () => req<PotentialScreenStatus>("/potential-screen/status"),
   getPotentialScreenResults: () => req<PotentialScreenRow[]>("/potential-screen/results"),
+  runStockBatchAnalysis: () => req<{ status: string }>("/stock-batch-analysis/run", { method: "POST" }),
+  cancelStockBatchAnalysis: () => req<StockBatchAnalysisStatus>("/stock-batch-analysis/cancel", { method: "POST" }),
+  getStockBatchAnalysisStatus: () => req<StockBatchAnalysisStatus>("/stock-batch-analysis/status"),
 };
 
 export { API_BASE };

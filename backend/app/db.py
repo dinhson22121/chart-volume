@@ -32,9 +32,12 @@ _COLUMN_MIGRATIONS = {
     "symbol": {
         "is_top100": "is_top100 BOOLEAN NOT NULL DEFAULT 0",
         "top100_rank": "top100_rank INTEGER",
+        "exchange": "exchange TEXT",
+        "is_hose_hnx": "is_hose_hnx BOOLEAN NOT NULL DEFAULT 0",
     },
     "signaloutcome": {
         "aligned": "aligned BOOLEAN",
+        "config_version": "config_version TEXT NOT NULL DEFAULT ''",
     },
     "analysis": {
         "sub_agents_json": "sub_agents_json TEXT",
@@ -42,6 +45,9 @@ _COLUMN_MIGRATIONS = {
     },
     "tradescenario": {
         "exit_price": "exit_price FLOAT",
+        "config_version": "config_version TEXT NOT NULL DEFAULT ''",
+        "price_limit_caution": "price_limit_caution BOOLEAN NOT NULL DEFAULT 0",
+        "source": "source TEXT NOT NULL DEFAULT 'live'",
     },
 }
 

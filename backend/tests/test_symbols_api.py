@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import select
 
 from app.api import symbols as symbols_api
+from app.crawler.vnstock_client import CrawlError
 from app.db import get_session
 from app.main import app
 from app.models import Symbol, SystemActionLog
@@ -56,3 +57,26 @@ def test_seed_vn30_marks_existing_symbol_as_vn30_without_duplicating(session, cl
     symbol = session.get(Symbol, "FPT")
     assert symbol.is_vn30 is True
     assert symbol.is_watchlist is True  # untouched
+
+
+def test_seed_hose_hnx_requires_token(client):
+    assert client.post("/symbols/seed-hose-hnx").status_code == 401
+
+
+def test_seed_hose_hnx_returns_count(session, client, auth_header, mocker):
+    mocker.patch.object(symbols_api.hose_hnx, "seed_hose_hnx", return_value={"count": 2})
+
+    resp = client.post("/symbols/seed-hose-hnx", headers=auth_header)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"count": 2}
+
+
+def test_seed_hose_hnx_returns_502_on_crawl_failure(session, client, auth_header, mocker):
+    mocker.patch.object(
+        symbols_api.hose_hnx, "seed_hose_hnx", side_effect=CrawlError("rate limited"),
+    )
+
+    resp = client.post("/symbols/seed-hose-hnx", headers=auth_header)
+
+    assert resp.status_code == 502

@@ -64,7 +64,7 @@ export function DashboardModal({ onClose, onSelect }: Props) {
       <div className="stats-modal" onClick={(e) => e.stopPropagation()}>
         <header className="settings-modal__header">
           <h2>{t("dashboard.title")}</h2>
-          <button className="settings-modal__close" onClick={onClose} aria-label={t("common.close")}>
+          <button className="settings-modal__close has-tooltip" onClick={onClose} data-tooltip={t("common.close")} aria-label={t("common.close")}>
             ×
           </button>
         </header>
@@ -131,7 +131,7 @@ export function DashboardModal({ onClose, onSelect }: Props) {
                         <span className="mono" style={{ fontWeight: 600 }}>
                           {r.display_symbol}
                         </span>{" "}
-                        {r.asset_class === "crypto" && <span title="Crypto">🪙</span>}
+                        {r.asset_class === "crypto" && <span className="has-tooltip" data-tooltip={t("watchlist.cryptoBadge")}>🪙</span>}
                         {r.name && <span className="faint"> {r.name}</span>}
                       </td>
                       {r.has_data ? (

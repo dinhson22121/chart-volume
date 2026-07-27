@@ -26,7 +26,15 @@ from sqlmodel import Session, select
 from app.config import TIMEZONE
 from app.db import get_engine
 from app.models import AssetClass, Symbol, Timeframe
-from app.services import activity_log, crypto_screener, ingest, potential_screener, settings_service, top100
+from app.services import (
+    activity_log,
+    crypto_screener,
+    hose_hnx,
+    ingest,
+    potential_screener,
+    settings_service,
+    top100,
+)
 from app.services.analysis import run_analysis, run_shadow_strategies
 
 logger = logging.getLogger("chart_volume.scheduler")
@@ -41,6 +49,8 @@ _SCREENER_JOB_ID = "crypto_screener_scan"
 _CRYPTO_JOB_ID = "crypto_analysis_refresh"
 _TOP100_JOB_ID = "top100_refresh"
 _POTENTIAL_SCREEN_JOB_ID = "potential_screen_refresh"
+_HOSE_HNX_JOB_ID = "hose_hnx_refresh"
+_STOCK_BATCH_ANALYSIS_JOB_ID = "stock_batch_analysis_refresh"
 
 # Set once by build_scheduler() -- interval jobs are self-rescheduling (see
 # _reschedule_after_run) and need a handle to the live scheduler to queue
@@ -59,7 +69,7 @@ _CRYPTO_TIMEFRAMES = (Timeframe.HOUR_1, Timeframe.HOUR_4, Timeframe.DAILY)
 # Bounded concurrency for batch ingest+analysis, so a large watchlist/Top100
 # doesn't run fully sequentially -- capped low to avoid tripping rate limits
 # on vnstock/exchange APIs.
-_MAX_WORKERS = 5
+MAX_WORKERS = 5
 
 # scan_interval/crypto_analysis_interval setting -> timedelta() kwargs, used
 # by _reschedule_after_run to compute each job's next fixed-delay run date.
@@ -73,15 +83,20 @@ _INTERVAL_TRIGGER_KWARGS = {
 }
 
 
-def _tracked_symbols(session: Session, asset_class: str) -> list[Symbol]:
+def tracked_symbols(session: Session, asset_class: str) -> list[Symbol]:
     # is_top100 is only ever True on crypto symbols (top100.seed_top100 always
     # sets asset_class=CRYPTO), so including it here is a no-op for the stock
     # batch and extends the crypto batch to also auto-analyze the Top 100
     # list -- needed so dashboard ranking has real Analysis data for them,
-    # not just symbols the user happened to open manually.
+    # not just symbols the user happened to open manually. Symmetrically,
+    # is_hose_hnx (app.services.hose_hnx) is stock-only, a no-op for the
+    # crypto batch.
     return session.exec(
         select(Symbol).where(
-            (Symbol.is_vn30 == True) | (Symbol.is_watchlist == True) | (Symbol.is_top100 == True),  # noqa: E712
+            (Symbol.is_vn30 == True)  # noqa: E712
+            | (Symbol.is_watchlist == True)  # noqa: E712
+            | (Symbol.is_top100 == True)  # noqa: E712
+            | (Symbol.is_hose_hnx == True),  # noqa: E712
             Symbol.asset_class == asset_class,
         )
     ).all()
@@ -98,7 +113,7 @@ def _symbol_gets_ai(symbol: Symbol, ai_groups: dict) -> bool:
     )
 
 
-def _run_stock_symbol(engine, ticker: str, timeframe: str, use_ai: bool) -> bool:
+def run_stock_symbol(engine, ticker: str, timeframe: str, use_ai: bool) -> bool:
     """Runs on its own DB session bound to the SAME engine as the caller's
     session (SQLite is opened with check_same_thread=False precisely so each
     worker thread can do this) so ingest+analysis for one ticker never blocks
@@ -128,16 +143,16 @@ def _run_stock_symbol(engine, ticker: str, timeframe: str, use_ai: bool) -> bool
 
 
 def run_batch(session: Session, timeframe: str, use_ai: bool = True) -> int:
-    """Ingest + analyse every tracked STOCK ticker, up to _MAX_WORKERS at once.
+    """Ingest + analyse every tracked STOCK ticker, up to MAX_WORKERS at once.
     Returns how many succeeded."""
     ai_groups = settings_service.get_ai_narrative_groups(session)
-    symbols = _tracked_symbols(session, AssetClass.STOCK)
+    symbols = tracked_symbols(session, AssetClass.STOCK)
     engine = session.get_bind()
     ok = 0
-    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = [
             executor.submit(
-                _run_stock_symbol, engine, symbol.ticker, timeframe, use_ai and _symbol_gets_ai(symbol, ai_groups)
+                run_stock_symbol, engine, symbol.ticker, timeframe, use_ai and _symbol_gets_ai(symbol, ai_groups)
             )
             for symbol in symbols
         ]
@@ -153,7 +168,7 @@ def _run_crypto_symbol_timeframe(engine, ticker: str, timeframe: str, exchanges,
         with Session(engine) as session:
             # Re-fetched in this worker's own session rather than passed in
             # from the caller's -- an ORM object attached to one Session
-            # can't safely be added/committed via another (see _run_stock_symbol).
+            # can't safely be added/committed via another (see run_stock_symbol).
             symbol = session.exec(select(Symbol).where(Symbol.ticker == ticker)).first()
             ingest.ingest_crypto(
                 session, ticker, timeframe,
@@ -177,7 +192,7 @@ def _run_crypto_symbol_timeframe(engine, ticker: str, timeframe: str, exchanges,
 
 def run_crypto_batch(session: Session, use_ai: bool = True) -> int:
     """Ingest + analyse every tracked CRYPTO ticker across all 3 timeframes,
-    up to _MAX_WORKERS tasks at once.
+    up to MAX_WORKERS tasks at once.
 
     Previously crypto tickers fell through run_batch() (which only knows how
     to ingest stocks), so a promoted coin never got re-analysed unless the
@@ -186,10 +201,10 @@ def run_crypto_batch(session: Session, use_ai: bool = True) -> int:
     """
     exchanges = settings_service.get_crypto_exchanges(session)
     ai_groups = settings_service.get_ai_narrative_groups(session)
-    symbols = _tracked_symbols(session, AssetClass.CRYPTO)
+    symbols = tracked_symbols(session, AssetClass.CRYPTO)
     engine = session.get_bind()
     ok = 0
-    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = [
             executor.submit(
                 _run_crypto_symbol_timeframe,
@@ -245,6 +260,32 @@ def _top100_job() -> None:
             top100.seed_top100(session, "scheduled")
         except Exception as exc:  # noqa: BLE001 - seed_top100 already logged the error
             logger.warning("scheduled top100 refresh failed: %s", exc)
+
+
+def _hose_hnx_job() -> None:
+    # log_action_start/finish live inside seed_hose_hnx -- the job only
+    # isolates the exception so a failed vnstock fetch doesn't spam
+    # APScheduler.
+    with Session(get_engine()) as session:
+        try:
+            hose_hnx.seed_hose_hnx(session, "scheduled")
+        except Exception as exc:  # noqa: BLE001 - seed_hose_hnx already logged the error
+            logger.warning("scheduled hose/hnx refresh failed: %s", exc)
+
+
+def _stock_batch_analysis_job() -> None:
+    # Local import: app.services.stock_batch_analysis imports run_stock_symbol/
+    # tracked_symbols/MAX_WORKERS FROM this module, so importing it back at
+    # module load time would be circular -- deferring to call time breaks the
+    # cycle. log_action_start/finish live inside run_full_universe_analysis;
+    # this job only isolates the exception so a failure doesn't spam APScheduler.
+    from app.services import stock_batch_analysis
+
+    with Session(get_engine()) as session:
+        try:
+            stock_batch_analysis.run_full_universe_analysis(session, "scheduled")
+        except Exception as exc:  # noqa: BLE001 - run_full_universe_analysis already logged the error
+            logger.warning("scheduled stock batch analysis failed: %s", exc)
 
 
 def _potential_screen_job() -> None:
@@ -361,7 +402,9 @@ def reschedule(scheduler: BackgroundScheduler) -> None:
     Stock (VN market cadence) and crypto-screener jobs have independent
     enable toggles -- one can be off while the other runs.
     """
-    for job_id in (*_STOCK_JOB_IDS, _TOP100_JOB_ID, _POTENTIAL_SCREEN_JOB_ID):
+    for job_id in (
+        *_STOCK_JOB_IDS, _TOP100_JOB_ID, _POTENTIAL_SCREEN_JOB_ID, _HOSE_HNX_JOB_ID, _STOCK_BATCH_ANALYSIS_JOB_ID,
+    ):
         if scheduler.get_job(job_id):
             scheduler.remove_job(job_id)
 
@@ -371,6 +414,8 @@ def reschedule(scheduler: BackgroundScheduler) -> None:
         crypto_analysis_cfg = settings_service.get_crypto_analysis_config(session)
         top100_cfg = settings_service.get_top100_config(session)
         potential_screen_cfg = settings_service.get_potential_screen_config(session)
+        hose_hnx_cfg = settings_service.get_hose_hnx_config(session)
+        stock_batch_analysis_cfg = settings_service.get_stock_batch_analysis_config(session)
 
     if stock_cfg["enabled"]:
         _add_jobs(scheduler, stock_cfg)
@@ -394,6 +439,30 @@ def reschedule(scheduler: BackgroundScheduler) -> None:
         )
     else:
         logger.info("potential screen auto refresh disabled by settings")
+
+    if hose_hnx_cfg["enabled"]:
+        hh_h, hh_m = _parse_hhmm(hose_hnx_cfg["time"], "06:00")
+        # Mon-fri only, unlike top100/potential_screen: this refreshes a VN
+        # stock-exchange listing, which only changes on trading days.
+        scheduler.add_job(
+            _hose_hnx_job,
+            CronTrigger(hour=hh_h, minute=hh_m, day_of_week=_WEEKDAYS),
+            id=_HOSE_HNX_JOB_ID,
+        )
+    else:
+        logger.info("hose/hnx auto refresh disabled by settings")
+
+    if stock_batch_analysis_cfg["enabled"]:
+        sba_h, sba_m = _parse_hhmm(stock_batch_analysis_cfg["time"], "06:15")
+        # Mon-fri only, same as hose_hnx_refresh -- this is a VN stock-market
+        # batch, unlike top100/potential_screen.
+        scheduler.add_job(
+            _stock_batch_analysis_job,
+            CronTrigger(hour=sba_h, minute=sba_m, day_of_week=_WEEKDAYS),
+            id=_STOCK_BATCH_ANALYSIS_JOB_ID,
+        )
+    else:
+        logger.info("stock batch analysis auto refresh disabled by settings")
 
     _sync_interval_job(scheduler, _SCREENER_JOB_ID, _screener_job, screener_cfg["enabled"], "crypto screener")
     _sync_interval_job(

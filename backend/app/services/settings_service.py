@@ -96,14 +96,62 @@ DEFAULTS: dict[str, str] = {
     "risk_pct_per_trade": "1.0",
     "slippage_pct_stock": "0.05",
     "slippage_pct_crypto": "0.3",
-    # Round-trip brokerage fee + tax (VN stock: ~0.1-0.15%/side commission +
-    # 0.1% sell tax; crypto: centralized-exchange taker fee, both sides).
-    # Combined into one all-in percentage rather than split buy/sell legs, to
-    # match how slippage is already modeled -- see get_scenario_stats._r_multiple.
-    "fee_pct_stock": "0.25",
-    "fee_pct_crypto": "0.1",
+    # Round-trip taker fee estimate (typical CEX spot taker is ~0.1%/side, so
+    # ~0.2% round-trip) -- applied alongside slippage in get_scenario_stats'
+    # R-multiple calc, same as broker_fee_pct_stock is for stocks. Without it,
+    # crypto costs were understated relative to stock (which already carries a
+    # broker fee + tax on top of slippage).
+    "trading_fee_pct_crypto": "0.2",
     "max_concurrent_scenarios": "10",
     "max_concurrent_scenarios_crypto": "5",
+    # Realistic VN stock transaction cost, applied alongside slippage in
+    # get_scenario_stats' R-multiple calc: broker_fee_pct_stock is a round-trip
+    # commission estimate (varies by broker, ~0.1-0.35% typical); sell_tax_pct
+    # is VND's flat 0.1% tax on the sell leg's transaction value, charged
+    # regardless of whether the trade won or lost. stock_daily_price_limit_pct
+    # is HOSE's +/-7% daily band (VN30 constituents), used only to flag (never
+    # block) a scenario whose SL/TP implies a single-day move beyond what one
+    # session's price limit could actually deliver.
+    "broker_fee_pct_stock": "0.15",
+    "sell_tax_pct_stock": "0.1",
+    "stock_daily_price_limit_pct": "7.0",
+    # HNX's daily band is wider than HOSE's (+/-10% vs +/-7%) -- a single flat
+    # value here would misclassify price_limit_caution for every HNX ticker.
+    # See app.services.trade_scenario, which picks between the two by
+    # Symbol.exchange.
+    "stock_daily_price_limit_pct_hnx": "10.0",
+    # Minimum average daily traded value (VND) for a HOSE/HNX stock to be
+    # worth tracking -- Wyckoff analysis leans on volume patterns, and a
+    # thinly-traded stock's volume signal is mostly noise. 1 billion VND/day
+    # is a common retail rule-of-thumb "enough liquidity to enter/exit
+    # without much slippage" cutoff, not derived from this app's own data.
+    "stock_min_avg_value_vnd": "1000000000",
+    # Off by default: unlike top100 (one cheap CoinGecko page), seeding AND
+    # then crawling the full HOSE/HNX universe (~700 candidates before the
+    # liquidity filter) is a much heavier daily load against an unofficial,
+    # rate-limit-prone API -- same off-by-default rationale as
+    # potential_screen_auto_enabled.
+    "hose_hnx_auto_refresh_enabled": "false",
+    "hose_hnx_refresh_time": "06:00",
+    # Full tracked-stock-universe batch analysis (see
+    # app.services.stock_batch_analysis): refreshes the HOSE/HNX universe
+    # then ingests + analyses every tracked stock ticker -- heavier than
+    # hose_hnx_auto_refresh alone (that only re-seeds membership, this also
+    # crawls candles for everything), so off by default until verified not
+    # to trip vnstock's rate limit. Scheduled after hose_hnx's own 06:00
+    # refresh and before potential_screen's 06:30 run.
+    "stock_batch_analysis_auto_enabled": "false",
+    "stock_batch_analysis_time": "06:15",
+    # Shadow multi-strategy analysis (see app.services.analysis.run_shadow_strategies):
+    # every OTHER strategy in this list (i.e. not the currently active one)
+    # gets analysed in the background on each scheduled batch run, purely so
+    # signal_outcomes/trade_scenario data accumulates for it too. Costs
+    # compute (one extra analyze() pass per listed strategy per
+    # ticker/timeframe) but never LLM tokens or manual-refresh latency -- per
+    # strategy, not a single blanket on/off, so a user who only cares about
+    # comparing e.g. Wyckoff vs SMC can skip Sonic R's compute entirely.
+    # Defaults to every strategy currently in the registry.
+    "shadow_strategy_keys": ",".join(strategy_registry.REGISTRY),
 }
 
 # Allowed values for settings that are a fixed choice rather than a free number.
@@ -116,7 +164,8 @@ _FLOAT_KEYS = {
     "climax_vol_mult", "wide_spread_mult", "narrow_spread_mult", "low_vol_mult", "sos_vol_mult",
     "screener_mcap_max", "screener_min_volume_change_pct", "sonicr_t3_vfactor", "smc_fvg_min_gap_mult",
     "notional_capital", "risk_pct_per_trade", "slippage_pct_stock", "slippage_pct_crypto",
-    "fee_pct_stock", "fee_pct_crypto",
+    "trading_fee_pct_crypto", "broker_fee_pct_stock", "sell_tax_pct_stock", "stock_daily_price_limit_pct",
+    "stock_daily_price_limit_pct_hnx", "stock_min_avg_value_vnd",
 }
 _INT_KEYS = {
     "daily_lookback_days", "half_session_lookback_days", "lps_lookback_bars",
@@ -127,11 +176,11 @@ _INT_KEYS = {
 }
 _BOOL_KEYS = {
     "scheduler_enabled", "screener_enabled", "screener_require_volume_rising", "crypto_analysis_enabled",
-    "top100_auto_refresh_enabled",
+    "top100_auto_refresh_enabled", "hose_hnx_auto_refresh_enabled",
     "ai_narrative_vn30", "ai_narrative_watchlist", "ai_narrative_top100",
-    "potential_screen_auto_enabled",
+    "potential_screen_auto_enabled", "stock_batch_analysis_auto_enabled",
 }
-_LIST_KEYS = {"crypto_exchanges"}
+_LIST_KEYS = {"crypto_exchanges", "shadow_strategy_keys"}
 
 
 def _stored(session: Session) -> dict[str, str]:
@@ -300,10 +349,14 @@ def get_risk_config(session: Session) -> dict:
         "risk_pct_per_trade": val("risk_pct_per_trade"),
         "slippage_pct_stock": val("slippage_pct_stock"),
         "slippage_pct_crypto": val("slippage_pct_crypto"),
-        "fee_pct_stock": val("fee_pct_stock"),
-        "fee_pct_crypto": val("fee_pct_crypto"),
+        "trading_fee_pct_crypto": val("trading_fee_pct_crypto"),
         "max_concurrent_scenarios": int(val("max_concurrent_scenarios")),
         "max_concurrent_scenarios_crypto": int(val("max_concurrent_scenarios_crypto")),
+        "broker_fee_pct_stock": val("broker_fee_pct_stock"),
+        "sell_tax_pct_stock": val("sell_tax_pct_stock"),
+        "stock_daily_price_limit_pct": val("stock_daily_price_limit_pct"),
+        "stock_daily_price_limit_pct_hnx": val("stock_daily_price_limit_pct_hnx"),
+        "stock_min_avg_value_vnd": val("stock_min_avg_value_vnd"),
     }
 
 
@@ -340,6 +393,26 @@ def get_top100_config(session: Session) -> dict:
     }
 
 
+def get_hose_hnx_config(session: Session) -> dict:
+    stored = _stored(session)
+    return {
+        "enabled": _as_bool(
+            stored.get("hose_hnx_auto_refresh_enabled", DEFAULTS["hose_hnx_auto_refresh_enabled"])
+        ),
+        "time": stored.get("hose_hnx_refresh_time", DEFAULTS["hose_hnx_refresh_time"]),
+    }
+
+
+def get_stock_batch_analysis_config(session: Session) -> dict:
+    stored = _stored(session)
+    return {
+        "enabled": _as_bool(
+            stored.get("stock_batch_analysis_auto_enabled", DEFAULTS["stock_batch_analysis_auto_enabled"])
+        ),
+        "time": stored.get("stock_batch_analysis_time", DEFAULTS["stock_batch_analysis_time"]),
+    }
+
+
 def get_potential_screen_config(session: Session) -> dict:
     stored = _stored(session)
     return {
@@ -370,6 +443,20 @@ def get_crypto_exchanges(session: Session) -> tuple[str, ...]:
     raw = stored.get("crypto_exchanges", DEFAULTS["crypto_exchanges"])
     exchanges = tuple(v for v in raw.split(",") if v in CRYPTO_EXCHANGE_CHOICES)
     return exchanges or CryptoExchange.ALL
+
+
+def get_shadow_strategy_keys(session: Session) -> set[str]:
+    """Which strategies (see app.strategies.registry) get shadow-analysed
+    when they're NOT the active one. An empty set is a valid, deliberate
+    choice (shadow analysis fully off) -- unlike get_crypto_exchanges, this
+    does NOT fall back to "all" when empty, since "the user unchecked
+    everything" and "never configured" are different states (the latter is
+    handled by DEFAULTS itself listing every registry key). Unknown keys
+    (e.g. a strategy since removed from the registry) are dropped rather
+    than erroring, same defensive spirit as get_strategy's fallback."""
+    stored = _stored(session)
+    raw = stored.get("shadow_strategy_keys", DEFAULTS["shadow_strategy_keys"])
+    return {v for v in raw.split(",") if v and strategy_registry.is_known(v)}
 
 
 def get_crypto_analysis_config(session: Session) -> dict:

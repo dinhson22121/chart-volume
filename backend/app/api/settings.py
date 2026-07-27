@@ -27,6 +27,8 @@ _SCHEDULER_KEYS = {
     "crypto_analysis_enabled", "crypto_analysis_interval",
     "top100_auto_refresh_enabled", "top100_refresh_time",
     "potential_screen_auto_enabled", "potential_screen_time",
+    "hose_hnx_auto_refresh_enabled", "hose_hnx_refresh_time",
+    "stock_batch_analysis_auto_enabled", "stock_batch_analysis_time",
 }
 
 
@@ -78,14 +80,28 @@ class SettingsIn(BaseModel):
     ai_narrative_vn30: bool | None = None
     ai_narrative_watchlist: bool | None = None
     ai_narrative_top100: bool | None = None
+    shadow_strategy_keys: list[str] | None = None
+    # Risk management (see settings_service.get_risk_config). Pre-existing gap
+    # fixed alongside the VN-cost fields below: none of these were ever in
+    # this allowlist, so PUT /settings has silently dropped every risk
+    # setting the Settings UI sends since M4 -- Pydantic ignores unknown
+    # input fields by default, so they never reached settings_service.update.
     notional_capital: float | None = Field(default=None, gt=0)
     risk_pct_per_trade: float | None = Field(default=None, gt=0, le=100)
     slippage_pct_stock: float | None = Field(default=None, ge=0)
     slippage_pct_crypto: float | None = Field(default=None, ge=0)
-    fee_pct_stock: float | None = Field(default=None, ge=0)
-    fee_pct_crypto: float | None = Field(default=None, ge=0)
+    trading_fee_pct_crypto: float | None = Field(default=None, ge=0)
     max_concurrent_scenarios: int | None = Field(default=None, ge=1)
     max_concurrent_scenarios_crypto: int | None = Field(default=None, ge=1)
+    broker_fee_pct_stock: float | None = Field(default=None, ge=0)
+    sell_tax_pct_stock: float | None = Field(default=None, ge=0)
+    stock_daily_price_limit_pct: float | None = Field(default=None, gt=0, le=100)
+    stock_daily_price_limit_pct_hnx: float | None = Field(default=None, gt=0, le=100)
+    stock_min_avg_value_vnd: float | None = Field(default=None, ge=0)
+    hose_hnx_auto_refresh_enabled: bool | None = None
+    hose_hnx_refresh_time: str | None = None
+    stock_batch_analysis_auto_enabled: bool | None = None
+    stock_batch_analysis_time: str | None = None
 
     @field_validator("strategy")
     @classmethod
@@ -108,6 +124,18 @@ class SettingsIn(BaseModel):
             raise ValueError(
                 f"screener_scan_interval must be one of {settings_service.SCREENER_INTERVAL_CHOICES}"
             )
+        return value
+
+    @field_validator("shadow_strategy_keys")
+    @classmethod
+    def _validate_shadow_strategy_keys(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return value
+        # Unlike crypto_exchanges, an empty list is valid here -- "shadow
+        # analysis fully off" is a deliberate, supported choice.
+        unknown = [v for v in value if not strategy_registry.is_known(v)]
+        if unknown:
+            raise ValueError(f"unknown strategy key(s) {unknown}")
         return value
 
     @field_validator("crypto_exchanges")
@@ -138,7 +166,13 @@ class SettingsIn(BaseModel):
     def _validate_ollama_model(cls, value: str | None) -> str | None:
         # Same guard as app.api.ollama's PullIn -- this value is also
         # interpolated into an Ollama API request (narrative generation).
-        if value is not None and not is_valid_ollama_model(value):
+        # Empty string ("Ollama not configured yet", the default value --
+        # unlike PullIn, which always names a real model to download) is
+        # exempt: `toUpdate()` on the frontend sends every field on every
+        # save, so `value is not None` alone made saving Settings AT ALL
+        # impossible for any user who hadn't set an Ollama model, since ""
+        # always failed the pattern match.
+        if value and not is_valid_ollama_model(value):
             raise ValueError("ollama_model must be a plain 'name' or 'name:tag' (letters/digits/._- only, no '/')")
         return value
 

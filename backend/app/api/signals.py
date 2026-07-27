@@ -7,6 +7,7 @@ from sqlmodel import Session
 
 from app.auth import require_token
 from app.db import get_session
+from app.services import config_version as config_version_mod
 from app.services import settings_service, signal_outcomes
 
 router = APIRouter(prefix="/signals", tags=["signals"], dependencies=[Depends(require_token)])
@@ -22,6 +23,9 @@ def get_signal_stats(
     session: Session = Depends(get_session),
 ) -> list[dict]:
     active_strategy = strategy or settings_service.get_strategy(session)
+    active_cfg = settings_service.get_strategy_config(session, active_strategy)
+    current_config_version = config_version_mod.compute(active_strategy, active_cfg)
     return signal_outcomes.get_stats(
-        session, ticker, timeframe, active_strategy, aligned_only=aligned_only, asset_class=asset_class
+        session, ticker, timeframe, active_strategy, aligned_only=aligned_only, asset_class=asset_class,
+        current_config_version=current_config_version,
     )

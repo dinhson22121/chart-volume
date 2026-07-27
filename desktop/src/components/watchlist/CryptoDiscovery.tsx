@@ -373,11 +373,11 @@ export function CryptoDiscovery({ onPromoted }: Props) {
                 <div className="wl-crypto-card__row1">
                   <span className="wl-row__ticker mono">🪙 {c.symbol.toUpperCase()}</span>
                   <button
-                    className="wl-crypto-card__add"
+                    className="wl-crypto-card__add has-tooltip"
                     onClick={() => void handlePromote(c.coin_id)}
                     disabled={promoting === c.coin_id}
                     aria-label={t("crypto.watch.ariaLabel", { symbol: c.symbol })}
-                    title={t("crypto.watch.title")}
+                    data-tooltip={t("crypto.watch.title")}
                   >
                     {promoting === c.coin_id ? "…" : "+"}
                   </button>

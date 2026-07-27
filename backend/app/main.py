@@ -20,6 +20,7 @@ from app.api import (
     potential_screen,
     settings as settings_api,
     signals,
+    stock_batch_analysis,
     strategies,
     symbols,
     trade_history,
@@ -89,6 +90,7 @@ app.include_router(crypto.router)
 app.include_router(logs.router)
 app.include_router(potential_screen.router)
 app.include_router(trade_history.router)
+app.include_router(stock_batch_analysis.router)
 
 
 @app.get("/health")

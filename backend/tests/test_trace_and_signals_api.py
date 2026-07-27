@@ -102,3 +102,16 @@ def test_signal_stats_aligned_only_param_is_accepted(client, auth_header, mocker
 
     resp = client.get("/signals/stats?aligned_only=true", headers=auth_header)
     assert resp.status_code == 200
+
+
+def test_signal_stats_includes_config_version_and_significance_fields(client, auth_header, mocker):
+    _refresh_fpt(client, auth_header, mocker)
+
+    stats = client.get("/signals/stats", headers=auth_header).json()
+    spring_stats = next(s for s in stats if s["type"] == "Spring")
+
+    # signals.py always resolves the active strategy's current config version
+    # itself, so n_current_config is always present at the API layer (unlike
+    # the lower-level service default of omitting it when unset).
+    assert spring_stats["n_current_config"] == 1  # the one signal just recorded is under today's thresholds
+    assert "significant_10" in spring_stats

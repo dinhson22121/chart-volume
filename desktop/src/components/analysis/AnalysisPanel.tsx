@@ -110,7 +110,7 @@ export function AnalysisPanel({ analysis, loading, error }: Props) {
                   <span className="ap-signal__type mono">
                     {signalLabel(s.type, language)}
                     {s.volume_confirmed && (
-                      <span className="ap-signal__vp-badge" title={t("chart.poc")}>
+                      <span className="ap-signal__vp-badge has-tooltip" data-tooltip={t("chart.poc")}>
                         {" "}VP✓
                       </span>
                     )}

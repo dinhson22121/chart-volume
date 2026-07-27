@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.models import AssetClass, Symbol, SystemActionLog, Timeframe
+from app.models import AssetClass, Exchange, Symbol, SystemActionLog, Timeframe
 from app.scheduler import (
     _TZ,
     _crypto_batch_job,
@@ -314,6 +314,148 @@ def test_top100_job_swallows_crawl_errors(mocker):
     assert entry.status == "error"
 
 
+def test_hose_hnx_refresh_off_by_default(mocker):
+    engine = _fresh_engine()
+    mocker.patch("app.scheduler.get_engine", return_value=engine)
+
+    sched = build_scheduler()
+
+    assert sched.get_job("hose_hnx_refresh") is None
+
+
+def test_hose_hnx_refresh_registers_weekday_cron_when_enabled(mocker):
+    # Unlike top100/potential_screen (crypto/AI, no market-hours concept),
+    # HOSE/HNX is a VN-stock-market job -- mon-fri only, same as the stock
+    # ingest jobs.
+    engine = _fresh_engine()
+    mocker.patch("app.scheduler.get_engine", return_value=engine)
+    with Session(engine) as s:
+        settings_service.update(
+            s,
+            {
+                "scheduler_enabled": "false",
+                "crypto_analysis_enabled": "false",
+                "hose_hnx_auto_refresh_enabled": "true",
+                "hose_hnx_refresh_time": "05:45",
+            },
+        )
+
+    sched = build_scheduler()
+    job = sched.get_job("hose_hnx_refresh")
+
+    assert job is not None
+    fields = {f.name: f for f in job.trigger.fields}
+    assert str(fields["hour"]) == "5"
+    assert str(fields["minute"]) == "45"
+    assert str(fields["day_of_week"]) == "mon-fri"
+
+
+def test_hose_hnx_refresh_toggle_removes_and_restores_job(mocker):
+    engine = _fresh_engine()
+    mocker.patch("app.scheduler.get_engine", return_value=engine)
+    with Session(engine) as s:
+        settings_service.update(s, {"hose_hnx_auto_refresh_enabled": "true"})
+
+    sched = build_scheduler()
+    assert sched.get_job("hose_hnx_refresh") is not None
+
+    with Session(engine) as s:
+        settings_service.update(s, {"hose_hnx_auto_refresh_enabled": "false"})
+    reschedule(sched)
+    assert sched.get_job("hose_hnx_refresh") is None
+
+    with Session(engine) as s:
+        settings_service.update(s, {"hose_hnx_auto_refresh_enabled": "true"})
+    reschedule(sched)
+    assert sched.get_job("hose_hnx_refresh") is not None
+
+
+def test_hose_hnx_job_swallows_crawl_errors(mocker):
+    from app.crawler import vnstock_client
+    from app.scheduler import _hose_hnx_job
+
+    engine = _fresh_engine()
+    mocker.patch("app.scheduler.get_engine", return_value=engine)
+    mocker.patch.object(
+        vnstock_client, "fetch_hose_hnx_universe",
+        side_effect=vnstock_client.CrawlError("down"),
+    )
+
+    _hose_hnx_job()  # must not raise -- seed_hose_hnx already logged the error
+
+    with Session(engine) as s:
+        entry = s.exec(select(SystemActionLog)).one()
+    assert entry.action == "hose_hnx_seed"
+
+
+def test_stock_batch_analysis_refresh_off_by_default(mocker):
+    engine = _fresh_engine()
+    mocker.patch("app.scheduler.get_engine", return_value=engine)
+
+    sched = build_scheduler()
+
+    assert sched.get_job("stock_batch_analysis_refresh") is None
+
+
+def test_stock_batch_analysis_refresh_registers_weekday_cron_when_enabled(mocker):
+    # Same VN-stock-market cadence as hose_hnx_refresh (mon-fri only) --
+    # unlike top100/potential_screen which have no market-hours concept.
+    engine = _fresh_engine()
+    mocker.patch("app.scheduler.get_engine", return_value=engine)
+    with Session(engine) as s:
+        settings_service.update(
+            s,
+            {
+                "scheduler_enabled": "false",
+                "crypto_analysis_enabled": "false",
+                "stock_batch_analysis_auto_enabled": "true",
+                "stock_batch_analysis_time": "05:50",
+            },
+        )
+
+    sched = build_scheduler()
+    job = sched.get_job("stock_batch_analysis_refresh")
+
+    assert job is not None
+    fields = {f.name: f for f in job.trigger.fields}
+    assert str(fields["hour"]) == "5"
+    assert str(fields["minute"]) == "50"
+    assert str(fields["day_of_week"]) == "mon-fri"
+
+
+def test_stock_batch_analysis_refresh_toggle_removes_and_restores_job(mocker):
+    engine = _fresh_engine()
+    mocker.patch("app.scheduler.get_engine", return_value=engine)
+    with Session(engine) as s:
+        settings_service.update(s, {"stock_batch_analysis_auto_enabled": "true"})
+
+    sched = build_scheduler()
+    assert sched.get_job("stock_batch_analysis_refresh") is not None
+
+    with Session(engine) as s:
+        settings_service.update(s, {"stock_batch_analysis_auto_enabled": "false"})
+    reschedule(sched)
+    assert sched.get_job("stock_batch_analysis_refresh") is None
+
+    with Session(engine) as s:
+        settings_service.update(s, {"stock_batch_analysis_auto_enabled": "true"})
+    reschedule(sched)
+    assert sched.get_job("stock_batch_analysis_refresh") is not None
+
+
+def test_stock_batch_analysis_job_swallows_failures(mocker):
+    from app.scheduler import _stock_batch_analysis_job
+    from app.services import stock_batch_analysis
+
+    engine = _fresh_engine()
+    mocker.patch("app.scheduler.get_engine", return_value=engine)
+    mocker.patch.object(
+        stock_batch_analysis, "run_full_universe_analysis", side_effect=RuntimeError("boom"),
+    )
+
+    _stock_batch_analysis_job()  # must not raise -- isolated like the other scheduled jobs
+
+
 def test_run_batch_processes_all_tracked(batch_session, mocker):
     batch_session.add(Symbol(ticker="FPT", is_vn30=True))
     batch_session.add(Symbol(ticker="HPG", is_watchlist=True))
@@ -343,6 +485,22 @@ def test_run_batch_excludes_crypto_tickers(batch_session, mocker):
 
     assert ok == 1  # only FPT
     fetch_daily.assert_called_once_with("FPT", mocker.ANY, mocker.ANY)
+
+
+def test_run_batch_includes_hose_hnx_symbols(batch_session, mocker):
+    # HOSE/HNX-tracked stocks aren't necessarily vn30/watchlist -- must still
+    # get auto-analyzed so their data actually accumulates.
+    batch_session.add(
+        Symbol(ticker="SHS", is_hose_hnx=True, exchange=Exchange.HNX, asset_class=AssetClass.STOCK)
+    )
+    batch_session.commit()
+
+    mocker.patch.object(ingest.vnstock_client, "fetch_daily", return_value=_daily_df())
+    mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
+
+    ok = run_batch(batch_session, Timeframe.DAILY)
+
+    assert ok == 1
 
 
 def test_run_crypto_batch_ingests_all_three_timeframes(batch_session, mocker):

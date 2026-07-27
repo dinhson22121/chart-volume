@@ -53,13 +53,14 @@ export function SignalStatsModal({ onClose }: Props) {
       <div className="stats-modal" onClick={(e) => e.stopPropagation()}>
         <header className="settings-modal__header">
           <h2>{t("stats.title")}</h2>
-          <button className="settings-modal__close" onClick={onClose} aria-label={t("common.close")}>
+          <button className="settings-modal__close has-tooltip" onClick={onClose} data-tooltip={t("common.close")} aria-label={t("common.close")}>
             ×
           </button>
         </header>
 
         <div className="settings-modal__body">
           <p className="faint stats-hint">{t("stats.hint")}</p>
+          <p className="faint stats-hint">{t("stats.significanceHint")}</p>
 
           <label
             className="settings-field--row"
@@ -99,10 +100,10 @@ export function SignalStatsModal({ onClose }: Props) {
                     <th>{t("stats.table.signal")}</th>
                     <th>{t("stats.table.count")}</th>
                     <th>{t("stats.table.win5")}</th>
-                    <th title={t("stats.table.win10")}>{`${t("stats.table.win10")} (CI 95%)`}</th>
+                    <th className="has-tooltip" data-tooltip={t("stats.table.win10")}>{`${t("stats.table.win10")} (CI 95%)`}</th>
                     <th>{t("stats.table.win20")}</th>
-                    <th title={t("stats.edgeHint")}>{t("stats.table.edge10")}</th>
-                    <th title={t("stats.expectancyHint")}>{t("stats.table.expectancy10")}</th>
+                    <th className="has-tooltip" data-tooltip={t("stats.edgeHint")}>{t("stats.table.edge10")}</th>
+                    <th className="has-tooltip" data-tooltip={t("stats.expectancyHint")}>{t("stats.table.expectancy10")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -111,8 +112,20 @@ export function SignalStatsModal({ onClose }: Props) {
                       <td>
                         <span className={`stats-dot ${s.is_bullish ? "stats-dot--bull" : "stats-dot--bear"}`} />
                         {signalLabel(s.type, language)}
+                        {s.significant_10 === true && (
+                          <span className="has-tooltip" data-tooltip={t("stats.significantHint")} style={{ marginLeft: 4 }}>
+                            ✓
+                          </span>
+                        )}
                       </td>
-                      <td className="mono">{s.count}</td>
+                      <td className="mono">
+                        {s.count}
+                        {s.n_current_config !== undefined && (
+                          <span className="faint" style={{ marginLeft: 4, fontSize: "0.85em" }}>
+                            ({t("stats.table.currentConfig", { n: s.n_current_config })})
+                          </span>
+                        )}
+                      </td>
                       <td className="mono">{pct(s.win_rate_5)}</td>
                       <td className="mono">
                         {pct(s.win_rate_10)}

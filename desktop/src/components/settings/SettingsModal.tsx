@@ -1,8 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
-import type { NarrativeProvider, OllamaStatus, Settings, SettingsUpdate } from "../../types";
+import type {
+  NarrativeProvider,
+  OllamaStatus,
+  Settings,
+  SettingsUpdate,
+  StockBatchAnalysisStatus,
+  StrategyOption,
+} from "../../types";
 import { useI18n } from "../../i18n/I18nContext";
 import type { Language } from "../../i18n/translations";
+import { formatDateTime } from "../../lib/datetime";
 import { LicenseSection } from "../license/LicenseSection";
 import "./settings.css";
 
@@ -88,19 +96,28 @@ interface FormState {
   cryptoAnalysisInterval: string;
   top100AutoRefreshEnabled: boolean;
   top100RefreshTime: string;
+  hoseHnxAutoRefreshEnabled: boolean;
+  hoseHnxRefreshTime: string;
+  stockBatchAnalysisAutoEnabled: boolean;
+  stockBatchAnalysisTime: string;
   potentialScreenAutoEnabled: boolean;
   potentialScreenTime: string;
   aiNarrativeVn30: boolean;
   aiNarrativeWatchlist: boolean;
   aiNarrativeTop100: boolean;
+  shadowStrategyKeys: string[];
   notionalCapital: string;
   riskPctPerTrade: string;
   slippagePctStock: string;
   slippagePctCrypto: string;
-  feePctStock: string;
-  feePctCrypto: string;
+  tradingFeePctCrypto: string;
   maxConcurrentScenarios: string;
   maxConcurrentScenariosCrypto: string;
+  brokerFeePctStock: string;
+  sellTaxPctStock: string;
+  stockDailyPriceLimitPct: string;
+  stockDailyPriceLimitPctHnx: string;
+  stockMinAvgValueVnd: string;
 }
 
 function toForm(s: Settings): FormState {
@@ -145,19 +162,28 @@ function toForm(s: Settings): FormState {
     cryptoAnalysisInterval: s.crypto_analysis_interval,
     top100AutoRefreshEnabled: s.top100_auto_refresh_enabled,
     top100RefreshTime: s.top100_refresh_time,
+    hoseHnxAutoRefreshEnabled: s.hose_hnx_auto_refresh_enabled,
+    hoseHnxRefreshTime: s.hose_hnx_refresh_time,
+    stockBatchAnalysisAutoEnabled: s.stock_batch_analysis_auto_enabled,
+    stockBatchAnalysisTime: s.stock_batch_analysis_time,
     potentialScreenAutoEnabled: s.potential_screen_auto_enabled,
     potentialScreenTime: s.potential_screen_time,
     aiNarrativeVn30: s.ai_narrative_vn30,
     aiNarrativeWatchlist: s.ai_narrative_watchlist,
     aiNarrativeTop100: s.ai_narrative_top100,
+    shadowStrategyKeys: s.shadow_strategy_keys,
     notionalCapital: String(s.notional_capital),
     riskPctPerTrade: String(s.risk_pct_per_trade),
     slippagePctStock: String(s.slippage_pct_stock),
     slippagePctCrypto: String(s.slippage_pct_crypto),
-    feePctStock: String(s.fee_pct_stock),
-    feePctCrypto: String(s.fee_pct_crypto),
+    tradingFeePctCrypto: String(s.trading_fee_pct_crypto),
     maxConcurrentScenarios: String(s.max_concurrent_scenarios),
     maxConcurrentScenariosCrypto: String(s.max_concurrent_scenarios_crypto),
+    brokerFeePctStock: String(s.broker_fee_pct_stock),
+    sellTaxPctStock: String(s.sell_tax_pct_stock),
+    stockDailyPriceLimitPct: String(s.stock_daily_price_limit_pct),
+    stockDailyPriceLimitPctHnx: String(s.stock_daily_price_limit_pct_hnx),
+    stockMinAvgValueVnd: String(s.stock_min_avg_value_vnd),
   };
 }
 
@@ -200,19 +226,28 @@ function toUpdate(f: FormState): SettingsUpdate {
     crypto_analysis_interval: f.cryptoAnalysisInterval,
     top100_auto_refresh_enabled: f.top100AutoRefreshEnabled,
     top100_refresh_time: f.top100RefreshTime,
+    hose_hnx_auto_refresh_enabled: f.hoseHnxAutoRefreshEnabled,
+    hose_hnx_refresh_time: f.hoseHnxRefreshTime,
+    stock_batch_analysis_auto_enabled: f.stockBatchAnalysisAutoEnabled,
+    stock_batch_analysis_time: f.stockBatchAnalysisTime,
     potential_screen_auto_enabled: f.potentialScreenAutoEnabled,
     potential_screen_time: f.potentialScreenTime,
     ai_narrative_vn30: f.aiNarrativeVn30,
     ai_narrative_watchlist: f.aiNarrativeWatchlist,
     ai_narrative_top100: f.aiNarrativeTop100,
+    shadow_strategy_keys: f.shadowStrategyKeys,
     notional_capital: Number(f.notionalCapital),
     risk_pct_per_trade: Number(f.riskPctPerTrade),
     slippage_pct_stock: Number(f.slippagePctStock),
     slippage_pct_crypto: Number(f.slippagePctCrypto),
-    fee_pct_stock: Number(f.feePctStock),
-    fee_pct_crypto: Number(f.feePctCrypto),
+    trading_fee_pct_crypto: Number(f.tradingFeePctCrypto),
     max_concurrent_scenarios: Number(f.maxConcurrentScenarios),
     max_concurrent_scenarios_crypto: Number(f.maxConcurrentScenariosCrypto),
+    broker_fee_pct_stock: Number(f.brokerFeePctStock),
+    sell_tax_pct_stock: Number(f.sellTaxPctStock),
+    stock_daily_price_limit_pct: Number(f.stockDailyPriceLimitPct),
+    stock_daily_price_limit_pct_hnx: Number(f.stockDailyPriceLimitPctHnx),
+    stock_min_avg_value_vnd: Number(f.stockMinAvgValueVnd),
   };
   if (f.anthropicApiKey.trim()) {
     update.anthropic_api_key = f.anthropicApiKey.trim();
@@ -243,12 +278,103 @@ export function SettingsModal({ onClose, strategy, onLicenseCleared }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
+  const [strategies, setStrategies] = useState<StrategyOption[]>([]);
+  useEffect(() => {
+    void api.getStrategies().then(setStrategies);
+  }, []);
+
+  const toggleShadowStrategyKey = (key: string) =>
+    setForm((f) =>
+      f
+        ? {
+            ...f,
+            shadowStrategyKeys: f.shadowStrategyKeys.includes(key)
+              ? f.shadowStrategyKeys.filter((k) => k !== key)
+              : [...f.shadowStrategyKeys, key],
+          }
+        : f
+    );
+
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [ollamaStatusLoading, setOllamaStatusLoading] = useState(false);
   const [pullModelName, setPullModelName] = useState("");
   const [pulling, setPulling] = useState(false);
   const [pullProgress, setPullProgress] = useState<string | null>(null);
   const [pullError, setPullError] = useState<string | null>(null);
+
+  const [stockBatchStatus, setStockBatchStatus] = useState<StockBatchAnalysisStatus | null>(null);
+  const [stockBatchRunError, setStockBatchRunError] = useState<string | null>(null);
+  const stockBatchPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopStockBatchPolling = useCallback(() => {
+    if (stockBatchPollRef.current) {
+      clearInterval(stockBatchPollRef.current);
+      stockBatchPollRef.current = null;
+    }
+  }, []);
+
+  const pollStockBatchStatus = useCallback(() => {
+    api.getStockBatchAnalysisStatus().then((s) => {
+      setStockBatchStatus(s);
+      if (!s.running) stopStockBatchPolling();
+    });
+  }, [stopStockBatchPolling]);
+
+  const startStockBatchPolling = useCallback(() => {
+    if (!stockBatchPollRef.current) {
+      stockBatchPollRef.current = setInterval(pollStockBatchStatus, 2000);
+    }
+  }, [pollStockBatchStatus]);
+
+  useEffect(() => {
+    api.getStockBatchAnalysisStatus().then((s) => {
+      setStockBatchStatus(s);
+      // The modal can open while a scheduled/earlier-triggered run is still
+      // in progress -- start polling right away instead of only after this
+      // session's own "Run now" click.
+      if (s.running) startStockBatchPolling();
+    });
+    return stopStockBatchPolling;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleRunStockBatchNow = async () => {
+    setStockBatchRunError(null);
+    try {
+      const result = await api.runStockBatchAnalysis();
+      if (result.status === "started") {
+        // Optimistic update: BackgroundTasks only start running AFTER this
+        // response is sent, so an immediate status poll can still read a
+        // stale running:false and flip the button back to "not running" for
+        // a moment -- looking like the click did nothing and prompting a
+        // second click. Reflect "running" right away instead of racing that
+        // poll; the next poll (below, and the interval) overwrites it with
+        // the real total/progress once the run actually populates it.
+        setStockBatchStatus((prev) => ({
+          running: true,
+          total: prev?.total ?? null,
+          completed: prev?.completed ?? null,
+          failed: prev?.failed ?? null,
+          current_ticker: prev?.current_ticker ?? null,
+          last_error: prev?.last_error ?? null,
+          last_cancelled: false,
+          last_completed_at: prev?.last_completed_at ?? null,
+        }));
+        startStockBatchPolling();
+      }
+      pollStockBatchStatus();
+    } catch (e) {
+      setStockBatchRunError(e instanceof Error ? e.message : t("stockBatch.status.error", { error: "" }));
+    }
+  };
+
+  const handleCancelStockBatch = async () => {
+    try {
+      await api.cancelStockBatchAnalysis();
+    } catch (e) {
+      setStockBatchRunError(e instanceof Error ? e.message : t("stockBatch.status.error", { error: "" }));
+    }
+  };
 
   const MODEL_OPTIONS = [
     { value: "claude-sonnet-4-5", label: t("settings.ai.model.sonnet") },
@@ -310,7 +436,18 @@ export function SettingsModal({ onClose, strategy, onLicenseCleared }: Props) {
   // Deep-compares against the last-saved values (not just "something changed
   // at some point") -- so flipping a setting and flipping it back leaves the
   // Save button in its normal state instead of staying flagged dirty.
-  const isDirty = form !== null && loaded !== null && JSON.stringify(form) !== JSON.stringify(toForm(loaded));
+  //
+  // shadowStrategyKeys is sorted before comparing: toggleShadowStrategyKey
+  // re-adds a toggled-back-on key at the END of the array (not its original
+  // position), so disabling then re-enabling a strategy produces the same
+  // SET of keys but a different array ORDER -- a plain JSON.stringify would
+  // treat that as still dirty even though nothing meaningful changed. Order
+  // is display-irrelevant here (checkboxes render from the fetched
+  // `strategies` list, not from this array) and the backend itself only
+  // ever treats it as a set (settings_service.get_shadow_strategy_keys).
+  const stableStringify = (f: FormState) =>
+    JSON.stringify({ ...f, shadowStrategyKeys: [...f.shadowStrategyKeys].sort() });
+  const isDirty = form !== null && loaded !== null && stableStringify(form) !== stableStringify(toForm(loaded));
 
   const totalMemGB = getTotalMemGB();
   const hasEnoughRamForLocalAI = totalMemGB >= MIN_RAM_GB_FOR_LOCAL_AI;
@@ -404,12 +541,34 @@ export function SettingsModal({ onClose, strategy, onLicenseCleared }: Props) {
     }
   };
 
+  const stockBatchStatusLine = stockBatchStatus?.running
+    ? t("stockBatch.status.running", {
+        completed: stockBatchStatus.completed ?? 0,
+        total: stockBatchStatus.total ?? 0,
+        ticker: stockBatchStatus.current_ticker
+          ? t("stockBatch.status.currentTicker", { ticker: stockBatchStatus.current_ticker })
+          : "",
+      })
+    : stockBatchStatus?.last_cancelled
+      ? t("stockBatch.status.cancelled", {
+          completed: stockBatchStatus.completed ?? 0,
+          total: stockBatchStatus.total ?? 0,
+        })
+      : stockBatchStatus?.last_completed_at
+        ? stockBatchStatus.failed
+          ? t("stockBatch.status.lastRunWithFailed", {
+              time: formatDateTime(stockBatchStatus.last_completed_at, language),
+              failed: stockBatchStatus.failed,
+            })
+          : t("stockBatch.status.lastRun", { time: formatDateTime(stockBatchStatus.last_completed_at, language) })
+        : t("stockBatch.status.never");
+
   return (
     <div className="settings-overlay" onClick={onClose}>
       <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
         <header className="settings-modal__header">
           <h2>{t("settings.title")}</h2>
-          <button className="settings-modal__close" onClick={onClose} aria-label={t("common.close")}>
+          <button className="settings-modal__close has-tooltip" onClick={onClose} data-tooltip={t("common.close")} aria-label={t("common.close")}>
             ×
           </button>
         </header>
@@ -782,6 +941,18 @@ export function SettingsModal({ onClose, strategy, onLicenseCleared }: Props) {
                 </label>
               </div>
 
+              <p className="settings-hint faint">{t("settings.autoUpdate.shadowStrategiesHint")}</p>
+              {strategies.map((opt) => (
+                <label className="settings-field settings-field--row" key={opt.key}>
+                  <input
+                    type="checkbox"
+                    checked={form.shadowStrategyKeys.includes(opt.key)}
+                    onChange={() => toggleShadowStrategyKey(opt.key)}
+                  />
+                  <span>{t("settings.autoUpdate.shadowStrategyFor", { strategy: opt.label })}</span>
+                </label>
+              ))}
+
               <label className="settings-field settings-field--row">
                 <input
                   type="checkbox"
@@ -824,6 +995,68 @@ export function SettingsModal({ onClose, strategy, onLicenseCleared }: Props) {
                 />
                 <span className="settings-hint faint">{t("settings.autoUpdate.top100Hint")}</span>
               </label>
+
+              <label className="settings-field settings-field--row">
+                <input
+                  type="checkbox"
+                  checked={form.hoseHnxAutoRefreshEnabled}
+                  onChange={(e) => set("hoseHnxAutoRefreshEnabled", e.target.checked)}
+                />
+                <span>{t("settings.autoUpdate.enableHoseHnx")}</span>
+              </label>
+              <label className="settings-field">
+                <span>{t("settings.autoUpdate.hoseHnxTime")}</span>
+                <input
+                  type="time"
+                  value={form.hoseHnxRefreshTime}
+                  disabled={!form.hoseHnxAutoRefreshEnabled}
+                  onChange={(e) => set("hoseHnxRefreshTime", e.target.value)}
+                />
+                <span className="settings-hint faint">{t("settings.autoUpdate.hoseHnxHint")}</span>
+              </label>
+
+              <label className="settings-field settings-field--row">
+                <input
+                  type="checkbox"
+                  checked={form.stockBatchAnalysisAutoEnabled}
+                  onChange={(e) => set("stockBatchAnalysisAutoEnabled", e.target.checked)}
+                />
+                <span>{t("settings.autoUpdate.enableStockBatch")}</span>
+              </label>
+              <label className="settings-field">
+                <span>{t("settings.autoUpdate.stockBatchTime")}</span>
+                <input
+                  type="time"
+                  value={form.stockBatchAnalysisTime}
+                  disabled={!form.stockBatchAnalysisAutoEnabled}
+                  onChange={(e) => set("stockBatchAnalysisTime", e.target.value)}
+                />
+                <span className="settings-hint faint">{t("stockBatch.hint")}</span>
+              </label>
+              <div
+                className="settings-field"
+                style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}
+              >
+                <button
+                  className="btn btn--primary"
+                  onClick={() => void handleRunStockBatchNow()}
+                  disabled={stockBatchStatus?.running}
+                >
+                  {stockBatchStatus?.running ? t("stockBatch.buttonRunning") : t("stockBatch.button")}
+                </button>
+                {stockBatchStatus?.running && (
+                  <button className="btn" onClick={() => void handleCancelStockBatch()}>
+                    {t("stockBatch.cancel")}
+                  </button>
+                )}
+                <span className="faint">{stockBatchStatusLine}</span>
+              </div>
+              {stockBatchRunError && <p className="settings-error">{stockBatchRunError}</p>}
+              {!stockBatchStatus?.running && stockBatchStatus?.last_error && (
+                <p className="settings-error">
+                  {t("stockBatch.status.error", { error: stockBatchStatus.last_error })}
+                </p>
+              )}
 
               <label className="settings-field settings-field--row">
                 <input
@@ -891,23 +1124,13 @@ export function SettingsModal({ onClose, strategy, onLicenseCleared }: Props) {
                   />
                 </label>
                 <label className="settings-field">
-                  <span>{t("settings.risk.feeStock")}</span>
+                  <span>{t("settings.risk.tradingFeeCrypto")}</span>
                   <input
                     type="number"
                     step="0.01"
                     min={0}
-                    value={form.feePctStock}
-                    onChange={(e) => set("feePctStock", e.target.value)}
-                  />
-                </label>
-                <label className="settings-field">
-                  <span>{t("settings.risk.feeCrypto")}</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    value={form.feePctCrypto}
-                    onChange={(e) => set("feePctCrypto", e.target.value)}
+                    value={form.tradingFeePctCrypto}
+                    onChange={(e) => set("tradingFeePctCrypto", e.target.value)}
                   />
                 </label>
                 <label className="settings-field">
@@ -929,6 +1152,59 @@ export function SettingsModal({ onClose, strategy, onLicenseCleared }: Props) {
                     value={form.maxConcurrentScenariosCrypto}
                     onChange={(e) => set("maxConcurrentScenariosCrypto", e.target.value)}
                   />
+                </label>
+                <label className="settings-field">
+                  <span>{t("settings.risk.brokerFeeStock")}</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    value={form.brokerFeePctStock}
+                    onChange={(e) => set("brokerFeePctStock", e.target.value)}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>{t("settings.risk.sellTaxStock")}</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    value={form.sellTaxPctStock}
+                    onChange={(e) => set("sellTaxPctStock", e.target.value)}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>{t("settings.risk.priceLimitStock")}</span>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min={0.5}
+                    max={100}
+                    value={form.stockDailyPriceLimitPct}
+                    onChange={(e) => set("stockDailyPriceLimitPct", e.target.value)}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>{t("settings.risk.priceLimitHnx")}</span>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min={0.5}
+                    max={100}
+                    value={form.stockDailyPriceLimitPctHnx}
+                    onChange={(e) => set("stockDailyPriceLimitPctHnx", e.target.value)}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>{t("settings.risk.minAvgValueVnd")}</span>
+                  <input
+                    type="number"
+                    step="100000000"
+                    min={0}
+                    value={form.stockMinAvgValueVnd}
+                    onChange={(e) => set("stockMinAvgValueVnd", e.target.value)}
+                  />
+                  <span className="settings-hint faint">{t("settings.risk.minAvgValueVndHint")}</span>
                 </label>
               </div>
             </section>

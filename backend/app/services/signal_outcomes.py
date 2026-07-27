@@ -9,13 +9,26 @@ null and get filled in on a later run once more candles have been ingested.
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import timedelta
 
 from sqlmodel import Session, select
 
-from app.models import Candle, SignalOutcome, Symbol
+from app.models import Candle, SignalOutcome, Symbol, Timeframe
 from app.wyckoff.events import WyckoffEvent
 
 HORIZONS = (5, 10, 20)
+
+# Approximate bar length per timeframe, used only to decide whether two
+# events' forward-return windows overlap (see _effective_n_for_horizon) --
+# doesn't need to be exact, just close enough to tell "overlapping" from
+# "independent".
+_BAR_DURATION: dict[str, timedelta] = {
+    Timeframe.DAILY: timedelta(days=1),
+    Timeframe.HALF_SESSION: timedelta(hours=2, minutes=30),
+    Timeframe.HOUR_1: timedelta(hours=1),
+    Timeframe.HOUR_4: timedelta(hours=4),
+    Timeframe.WEEK: timedelta(days=7),
+}
 
 # A "win" requires the forward move to clear this magnitude in the signal's
 # expected direction, not merely close on the right side of zero. A >0%
@@ -39,6 +52,7 @@ def record_outcomes(
     events: list[WyckoffEvent],
     bullish_events: set[str],
     phase_trend: str | None = None,
+    config_version: str = "",
 ) -> None:
     """``bullish_events`` is the calling strategy's own set of bullish event
     type strings (e.g. ``strategy_module.BULLISH_EVENTS``) -- each strategy
@@ -48,7 +62,11 @@ def record_outcomes(
     ``phase_trend`` is the trend the engine classified for this analysis
     (``strategy_module.phase_trend(result.phase)``): an event is ``aligned``
     when its own polarity matches it, letting stats separate signals the
-    engine endorsed from counter-trend ones it discounted."""
+    engine endorsed from counter-trend ones it discounted.
+
+    ``config_version`` (see app.services.config_version) is stamped only on a
+    newly-created row -- never rewritten on an existing one, same as every
+    other field here once its horizon is filled."""
     if not events:
         return
     closes = [c.close for c in candles]
@@ -85,6 +103,7 @@ def record_outcomes(
             event_price=entry_price,
             is_bullish=is_bullish,
             aligned=aligned,
+            config_version=config_version,
         )
         changed = existing is None
         # Backfill alignment on a pre-existing row that predates this column.
@@ -154,6 +173,31 @@ def _pooled_baseline(
     }
 
 
+def _effective_n_for_horizon(rows: list[SignalOutcome], horizon: int) -> int:
+    """Declustered observation count for this horizon's significance test (see
+    app.services.stats_significance.effective_n) -- rows sharing a
+    (ticker, timeframe) can have overlapping forward-return windows, but
+    different timeframes need their own bar-length threshold, so grouping and
+    correction run once per timeframe present in ``rows``, then sum.
+    A timeframe missing from _BAR_DURATION (shouldn't happen given the fixed
+    Timeframe set) is treated as independent rather than raising, since this
+    is a correction on top of the raw count, not a hard requirement."""
+    from app.services.stats_significance import effective_n
+
+    by_timeframe: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+    for row in rows:
+        by_timeframe[row.timeframe][row.ticker].append(row.event_ts)
+
+    total = 0
+    for timeframe, timestamps_by_ticker in by_timeframe.items():
+        bar_duration = _BAR_DURATION.get(timeframe)
+        if bar_duration is None:
+            total += sum(len(ts) for ts in timestamps_by_ticker.values())
+            continue
+        total += effective_n(timestamps_by_ticker, horizon, bar_duration)
+    return total
+
+
 def get_stats(
     session: Session,
     ticker: str | None = None,
@@ -161,6 +205,7 @@ def get_stats(
     strategy: str | None = None,
     aligned_only: bool = False,
     asset_class: str | None = None,
+    current_config_version: str | None = None,
 ) -> list[dict]:
     """Win rate is derived from the stored ``return_N`` at read time (via
     WIN_THRESHOLD), not from the stored ``is_win_N`` flags -- so tightening
@@ -173,7 +218,20 @@ def get_stats(
     ``app.services.baseline``) and how much this event type beats it. A win
     rate alone can't say whether a signal has real edge -- it needs a
     baseline to be compared against (natural drift alone can put an
-    unconditional long-side win rate well above 0%)."""
+    unconditional long-side win rate well above 0%).
+
+    ``current_config_version`` (see app.services.config_version), when given,
+    adds ``n_current_config``: how many of this event_type's rows were
+    produced under the exact thresholds active right now, as opposed to
+    thresholds the user has since retuned -- ``count``/``n_N`` pool every
+    regime together, which is fine for volume but not for judging whether
+    today's rules specifically have shown any edge yet.
+
+    ``significant_10`` is a Benjamini-Hochberg-corrected significance flag
+    (see app.services.stats_significance) for horizon 10's win rate against
+    its baseline, corrected across every entry this call returns together --
+    the more event types/strategies get compared side by side, the more of
+    them will look "significant" by chance alone if left uncorrected."""
     query = select(SignalOutcome)
     if ticker:
         query = query.where(SignalOutcome.ticker == ticker.upper())
@@ -194,6 +252,7 @@ def get_stats(
     baseline = _pooled_baseline(session, ticker, timeframe, asset_class)
 
     from app.services.baseline import wilson_ci  # local: see _pooled_baseline
+    from app.services.stats_significance import benjamini_hochberg, one_sample_p_value
 
     stats: list[dict] = []
     for event_type, group in by_type.items():
@@ -203,6 +262,8 @@ def get_stats(
             "count": len(group),
             "is_bullish": is_bullish,
         }
+        if current_config_version is not None:
+            entry["n_current_config"] = sum(1 for g in group if g.config_version == current_config_version)
         for horizon in HORIZONS:
             returns = [r for g in group if (r := getattr(g, f"return_{horizon}")) is not None]
             wins = sum(is_win(r, is_bullish) for r in returns)
@@ -223,4 +284,28 @@ def get_stats(
         stats.append(entry)
 
     stats.sort(key=lambda s: s["count"], reverse=True)
+
+    # Multiple-comparisons correction: every entry in `stats` is a separate
+    # hypothesis test ("does this event type's win rate differ from
+    # baseline?") shown to the user side by side in one table -- the more of
+    # them are compared at once, the more will clear an uncorrected 95% CI by
+    # chance alone. BH-correct across exactly this family (this call's
+    # result set), not globally, since that's the set the user actually views
+    # together. The SE itself also needs its own correction first: rows whose
+    # horizon-10 windows overlap (same ticker, events closer together than 10
+    # bars) aren't independent trials, so the p-value is computed against a
+    # declustered n_eff (see _effective_n_for_horizon), not the raw n_10 --
+    # otherwise overlap alone can manufacture a falsely tiny p-value before BH
+    # even gets a chance to correct across event types.
+    p_values = [
+        one_sample_p_value(
+            s["win_rate_10"],
+            s["baseline_win_rate_10"],
+            _effective_n_for_horizon([g for g in by_type[s["type"]] if g.return_10 is not None], 10),
+        )
+        for s in stats
+    ]
+    for entry, significant in zip(stats, benjamini_hochberg(p_values)):
+        entry["significant_10"] = significant
+
     return stats

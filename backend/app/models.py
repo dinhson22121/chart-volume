@@ -32,6 +32,15 @@ class AssetClass:
     CRYPTO = "crypto"
 
 
+class Exchange:
+    """Listed VN stock exchange -- orthogonal to is_vn30 (a VN30 constituent
+    is also HOSE). UPCOM (unlisted) is deliberately not tracked here (see
+    app.services.hose_hnx): thinner liquidity, lower disclosure standards."""
+
+    HOSE = "HOSE"
+    HNX = "HNX"
+
+
 class CryptoExchange:
     BINANCE = "binance"
     KUCOIN = "kucoin"
@@ -57,6 +66,14 @@ class Symbol(SQLModel, table=True):
     display_symbol: str = ""
     asset_class: str = Field(default=AssetClass.STOCK, index=True)
     is_vn30: bool = False
+    # Which listed exchange (see Exchange) a stock trades on -- None for
+    # crypto and for stocks added before this field existed. Drives the
+    # HOSE-vs-HNX daily price-limit band (app.services.trade_scenario).
+    exchange: Optional[str] = None
+    # HOSE/HNX-universe membership above the liquidity bar (crypto analog:
+    # is_top100) -- seeded/refreshed by app.services.hose_hnx. A stock keeps
+    # its `exchange` even after dropping below the bar; only this flag clears.
+    is_hose_hnx: bool = False
     is_watchlist: bool = False
     # Top-100-by-market-cap membership (crypto analog of is_vn30) -- seeded
     # from CoinGecko, refreshed manually or by the top100_refresh cron job.
@@ -173,6 +190,12 @@ class SignalOutcome(SQLModel, table=True):
     # get_stats can filter to aligned-only. Null on rows written before this
     # column existed.
     aligned: Optional[bool] = None
+    # Fingerprint of the detector thresholds active when this row was first
+    # created (see app.services.config_version) -- lets stats tell apart
+    # samples produced under the currently-active thresholds from samples
+    # produced under thresholds the user has since retuned. Empty string on
+    # rows written before this column existed (unknown regime, not "current").
+    config_version: str = ""
     updated_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -185,9 +208,19 @@ class TradeScenario(SQLModel, table=True):
     see app.services.trade_scenario for the create/update logic.
     """
 
+    # `source` is part of the identity tuple so a "live" row and a
+    # "backtest" row for the exact same event can coexist (running a
+    # backtest over a date range live tracking has already partly covered
+    # shouldn't collide with what's already there). NOTE: existing SQLite
+    # databases created before this field existed keep the OLD 5-column
+    # constraint -- ALTER TABLE can't redefine a constraint in SQLite, and a
+    # full table-recreation migration isn't worth it for what's currently a
+    # narrow, low-risk edge case on a local single-user dev database. New
+    # databases (create_all on a table that doesn't exist yet) get the
+    # correct 6-column constraint below.
     __table_args__ = (
         UniqueConstraint(
-            "ticker", "timeframe", "strategy", "event_type", "event_ts", name="uq_trade_scenario"
+            "ticker", "timeframe", "strategy", "event_type", "event_ts", "source", name="uq_trade_scenario"
         ),
     )
 
@@ -216,6 +249,24 @@ class TradeScenario(SQLModel, table=True):
     # get_scenario_stats compute R-multiple/P&L uniformly across every closed
     # status instead of excluding "expired" for lack of an exit price.
     exit_price: Optional[float] = None
+    # Same fingerprint/semantics as SignalOutcome.config_version above.
+    config_version: str = ""
+    # True when the SL/TP distance from entry exceeds the stock exchange's
+    # daily price-limit band (see settings_service.stock_daily_price_limit_pct)
+    # while the scenario is expected to resolve within a session or two --
+    # a level that band may not let a single day's price reach or that a
+    # gap could jump straight through. Informational only, stock-only (see
+    # app.services.trade_scenario._create_scenarios); never blocks creation.
+    price_limit_caution: bool = False
+    # "live" (forward-tracked, created as events happen -- see
+    # app.services.trade_scenario.sync_scenarios) or "backtest" (walked
+    # retroactively over already-known history -- see
+    # app.services.scenario_backtest). Trust Layer stats (Monte Carlo,
+    # Bootstrap, Walk-Forward) default to "live" only: backtested numbers can
+    # be inflated by hindsight (detector thresholds tuned by eye against the
+    # very history being scored) and must never be silently pooled with the
+    # genuinely out-of-sample live-tracked ones.
+    source: str = Field(default="live")
     updated_at: datetime = Field(default_factory=_utcnow)
 
 

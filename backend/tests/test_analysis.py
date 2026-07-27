@@ -5,11 +5,12 @@ import pandas as pd
 from sqlmodel import select
 
 from app.ai.narrative import DISCLAIMER, ProviderConfig
-from app.models import Analysis, Candle, SignalOutcome, Timeframe
+from app.models import Analysis, Candle, SignalOutcome, Timeframe, TradeScenario
 from app.services import analysis as analysis_svc
 from app.services import settings_service
 from app.strategies import registry as strategy_registry
 from app.wyckoff import AnalysisResult, Levels
+from app.wyckoff.events import WyckoffEvent
 
 BASE = dict(open=100.0, high=101.0, low=99.0, close=100.0, volume=1000.0)
 SPRING_BAR = dict(open=98.0, high=99.8, low=97.0, close=99.3, volume=1500.0)
@@ -154,6 +155,22 @@ def test_run_analysis_records_signal_outcomes(session, mocker):
     assert outcomes[0].return_20 is not None  # 20 bars of flat data followed the Spring
 
 
+def test_run_analysis_stamps_config_version_on_signal_outcome(session, mocker):
+    mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
+    _seed_candles(session, [dict(BASE) for _ in range(25)] + [SPRING_BAR] + [dict(BASE) for _ in range(20)])
+
+    analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY)
+
+    from app.services import config_version as config_version_mod
+    from app.services import settings_service as settings_svc
+
+    strategy = settings_svc.get_strategy(session)
+    expected = config_version_mod.compute(strategy, settings_svc.get_strategy_config(session, strategy))
+
+    outcome = session.exec(select(SignalOutcome).where(SignalOutcome.event_type == "Spring")).first()
+    assert outcome.config_version == expected
+
+
 def test_signal_outcomes_backfill_as_more_candles_arrive(session, mocker):
     mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
     _seed_candles(session, [dict(BASE) for _ in range(25)] + [SPRING_BAR])
@@ -244,6 +261,37 @@ def test_run_shadow_strategies_analyses_every_other_strategy(session, mocker):
             assert row.narrative is None
 
 
+def test_run_shadow_strategies_skips_when_all_disabled(session, mocker):
+    mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
+    _seed_candles(session, [dict(BASE) for _ in range(25)] + [SPRING_BAR])
+    settings_service.update(session, {"shadow_strategy_keys": []})
+
+    active = settings_service.get_strategy(session)
+    analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY, strategy=active)
+    analysis_svc.run_shadow_strategies(session, "FPT", Timeframe.DAILY, active)
+
+    rows = session.exec(
+        select(Analysis).where(Analysis.ticker == "FPT", Analysis.timeframe == Timeframe.DAILY)
+    ).all()
+    # Only the active-strategy row from run_analysis -- no shadow rows created.
+    assert {r.strategy for r in rows} == {active}
+
+
+def test_run_shadow_strategies_respects_per_strategy_selection(session, mocker):
+    mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
+    _seed_candles(session, [dict(BASE) for _ in range(25)] + [SPRING_BAR])
+    settings_service.update(session, {"shadow_strategy_keys": ["smc"]})  # sonicr left out
+
+    active = settings_service.get_strategy(session)  # "wyckoff" by default
+    analysis_svc.run_analysis(session, "FPT", Timeframe.DAILY, strategy=active)
+    analysis_svc.run_shadow_strategies(session, "FPT", Timeframe.DAILY, active)
+
+    rows = session.exec(
+        select(Analysis).where(Analysis.ticker == "FPT", Analysis.timeframe == Timeframe.DAILY)
+    ).all()
+    assert {r.strategy for r in rows} == {"wyckoff", "smc"}  # sonicr excluded by settings
+
+
 def test_run_shadow_strategies_isolates_a_failing_strategy(session, mocker, caplog):
     mocker.patch.object(analysis_svc.narrative_mod, "_call_claude", return_value=CANNED)
     _seed_candles(session, [dict(BASE) for _ in range(25)] + [SPRING_BAR])
@@ -256,6 +304,9 @@ def test_run_shadow_strategies_isolates_a_failing_strategy(session, mocker, capl
         phase_trend=lambda _phase: "neutral",
     )
     mocker.patch.dict(strategy_registry.REGISTRY, {"broken-strategy": broken_strategy})
+    # shadow_strategy_keys' default was computed from REGISTRY before this
+    # test's patch added "broken-strategy" -- opt it in explicitly.
+    settings_service.update(session, {"shadow_strategy_keys": ["sonicr", "smc", "broken-strategy"]})
 
     with caplog.at_level(logging.WARNING, logger="chart_volume.analysis"):
         analysis_svc.run_shadow_strategies(session, "FPT", Timeframe.DAILY, "wyckoff")
@@ -266,3 +317,74 @@ def test_run_shadow_strategies_isolates_a_failing_strategy(session, mocker, capl
         select(Analysis).where(Analysis.ticker == "FPT", Analysis.timeframe == Timeframe.DAILY)
     ).all()
     assert {r.strategy for r in rows} == {"sonicr", "smc"}
+
+
+# --- run_scenario_backtest: full-history replay reusing run_analysis' own
+# strategy setup (see app.services.scenario_backtest) ---
+
+def _register_fake_backtest_strategy(mocker, event: WyckoffEvent):
+    def _fake_analyze(candles, cfg, daily_trend=None, language="vi"):
+        return types.SimpleNamespace(
+            phase="Ranging", confidence=0.9, events=[event],
+            levels=Levels(support=90.0, resistance=110.0), as_of=candles[-1].bucket_start,
+        )
+
+    fake_strategy = types.SimpleNamespace(
+        analyze=_fake_analyze, BULLISH_EVENTS={"FakeBull"}, BEARISH_EVENTS=set(), RANGING_PHASES={"Ranging"},
+        phase_trend=lambda _phase: "neutral",
+    )
+    mocker.patch.dict(strategy_registry.REGISTRY, {"fake-strategy": fake_strategy})
+
+
+def test_run_scenario_backtest_returns_zero_when_no_candles(session):
+    assert analysis_svc.run_scenario_backtest(session, "NOPE", Timeframe.DAILY) == 0
+
+
+def test_run_scenario_backtest_creates_and_resolves_source_backtest_rows(session, mocker):
+    bars = [dict(BASE) for _ in range(6)]
+    bars[5] = dict(open=100.0, high=101.0, low=95.0, close=100.0, volume=1000.0)  # event bar
+    bars.append(dict(open=103.0, high=105.0, low=102.0, close=104.0, volume=1000.0))  # entry fill, idx 6
+    bars.append(dict(open=123.0, high=125.0, low=122.0, close=123.0, volume=1000.0))  # TP hit, idx 7
+    _seed_candles(session, bars)
+    event_ts = (pd.Timestamp("2025-01-01") + pd.Timedelta(days=5)).to_pydatetime()
+    event = WyckoffEvent(type="FakeBull", index=5, ts=event_ts, price=100.0, volume_confirmed=True)
+    _register_fake_backtest_strategy(mocker, event)
+
+    created = analysis_svc.run_scenario_backtest(session, "FPT", Timeframe.DAILY, strategy="fake-strategy")
+
+    assert created == 1
+    row = session.exec(select(TradeScenario)).one()
+    assert row.source == "backtest"
+    assert row.status == "hit_tp"
+    assert row.strategy == "fake-strategy"
+
+
+def test_run_scenario_backtest_defaults_to_the_active_strategy(session, mocker):
+    bars = [dict(BASE) for _ in range(6)]
+    bars[5] = dict(open=100.0, high=101.0, low=95.0, close=100.0, volume=1000.0)
+    bars.append(dict(open=103.0, high=105.0, low=102.0, close=104.0, volume=1000.0))
+    bars.append(dict(open=123.0, high=125.0, low=122.0, close=123.0, volume=1000.0))
+    _seed_candles(session, bars)
+    event_ts = (pd.Timestamp("2025-01-01") + pd.Timedelta(days=5)).to_pydatetime()
+    event = WyckoffEvent(type="FakeBull", index=5, ts=event_ts, price=100.0, volume_confirmed=True)
+    _register_fake_backtest_strategy(mocker, event)
+    settings_service.update(session, {"strategy": "fake-strategy"})
+
+    created = analysis_svc.run_scenario_backtest(session, "FPT", Timeframe.DAILY)
+
+    assert created == 1
+    row = session.exec(select(TradeScenario)).one()
+    assert row.strategy == "fake-strategy"
+
+
+def test_run_scenario_backtest_never_writes_an_analysis_row(session, mocker):
+    bars = [dict(BASE) for _ in range(6)]
+    bars.append(dict(open=100.0, high=101.0, low=99.0, close=100.0, volume=1000.0))
+    _seed_candles(session, bars)
+    event_ts = (pd.Timestamp("2025-01-01") + pd.Timedelta(days=5)).to_pydatetime()
+    event = WyckoffEvent(type="FakeBull", index=5, ts=event_ts, price=100.0, volume_confirmed=True)
+    _register_fake_backtest_strategy(mocker, event)
+
+    analysis_svc.run_scenario_backtest(session, "FPT", Timeframe.DAILY, strategy="fake-strategy")
+
+    assert session.exec(select(Analysis)).first() is None

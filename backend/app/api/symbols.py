@@ -8,10 +8,10 @@ from sqlmodel import Session, select
 
 from app.auth import require_token
 from app.crawler import coingecko_client
-from app.crawler.vnstock_client import fetch_vn30
+from app.crawler.vnstock_client import CrawlError, fetch_vn30
 from app.db import get_session
 from app.models import AssetClass, Symbol
-from app.services import activity_log, top100
+from app.services import activity_log, hose_hnx, top100
 from app.validation import is_valid_ticker
 
 router = APIRouter(prefix="/symbols", tags=["symbols"], dependencies=[Depends(require_token)])
@@ -112,3 +112,13 @@ def seed_top100(session: Session = Depends(get_session)) -> dict:
         return top100.seed_top100(session, "manual")
     except coingecko_client.CrawlError as exc:
         raise HTTPException(status_code=502, detail=f"CoinGecko fetch failed: {exc}") from exc
+
+
+@router.post("/seed-hose-hnx")
+def seed_hose_hnx(session: Session = Depends(get_session)) -> dict:
+    """Seeds/refreshes the HOSE+HNX common-stock universe above the
+    configured liquidity bar (see settings_service.stock_min_avg_value_vnd)."""
+    try:
+        return hose_hnx.seed_hose_hnx(session, "manual")
+    except CrawlError as exc:
+        raise HTTPException(status_code=502, detail=f"HOSE/HNX fetch failed: {exc}") from exc

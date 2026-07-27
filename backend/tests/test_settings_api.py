@@ -219,17 +219,11 @@ def test_put_settings_accepts_potential_screen_settings(client, auth_header):
     assert body["potential_screen_time"] == "05:00"
 
 
-def test_put_settings_accepts_plain_ollama_model(client, auth_header):
-    resp = client.put("/settings", json={"ollama_model": "qwen2.5:7b"}, headers=auth_header)
-    assert resp.status_code == 200
-    assert resp.json()["ollama_model"] == "qwen2.5:7b"
-
-
-def test_put_settings_accepts_risk_settings(client, auth_header):
-    # Regression: these fields were readable via GET (settings_service.DEFAULTS)
-    # but PUT silently dropped them -- SettingsIn never declared them, so
-    # Pydantic ignored them as unknown fields and the Settings modal's Risk
-    # Management section couldn't actually persist a change.
+def test_put_settings_accepts_risk_management_settings(client, auth_header):
+    # Regression: these fields were missing from SettingsIn's allowlist, so
+    # PUT /settings silently dropped them (Pydantic ignores unknown input
+    # fields by default) -- the Settings UI's risk section never actually
+    # persisted anything.
     resp = client.put(
         "/settings",
         json={
@@ -237,29 +231,115 @@ def test_put_settings_accepts_risk_settings(client, auth_header):
             "risk_pct_per_trade": 2.0,
             "slippage_pct_stock": 0.1,
             "slippage_pct_crypto": 0.5,
-            "fee_pct_stock": 0.3,
-            "fee_pct_crypto": 0.15,
-            "max_concurrent_scenarios": 15,
+            "trading_fee_pct_crypto": 0.25,
+            "max_concurrent_scenarios": 20,
             "max_concurrent_scenarios_crypto": 8,
         },
         headers=auth_header,
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["notional_capital"] == 50_000_000
-    assert body["risk_pct_per_trade"] == 2.0
-    assert body["slippage_pct_stock"] == 0.1
-    assert body["slippage_pct_crypto"] == 0.5
-    assert body["fee_pct_stock"] == 0.3
-    assert body["fee_pct_crypto"] == 0.15
-    assert body["max_concurrent_scenarios"] == 15
+    assert body["notional_capital"] == pytest.approx(50_000_000)
+    assert body["risk_pct_per_trade"] == pytest.approx(2.0)
+    assert body["slippage_pct_stock"] == pytest.approx(0.1)
+    assert body["slippage_pct_crypto"] == pytest.approx(0.5)
+    assert body["trading_fee_pct_crypto"] == pytest.approx(0.25)
+    assert body["max_concurrent_scenarios"] == 20
     assert body["max_concurrent_scenarios_crypto"] == 8
 
 
-def test_get_settings_exposes_fee_defaults(client, auth_header):
+def test_get_settings_exposes_crypto_trading_fee_default(client, auth_header):
     body = client.get("/settings", headers=auth_header).json()
-    assert body["fee_pct_stock"] == 0.25
-    assert body["fee_pct_crypto"] == 0.1
+    assert body["trading_fee_pct_crypto"] == pytest.approx(0.2)
+
+
+def test_get_settings_exposes_shadow_strategy_keys_default(client, auth_header):
+    body = client.get("/settings", headers=auth_header).json()
+    assert set(body["shadow_strategy_keys"]) == {"wyckoff", "sonicr", "smc"}
+
+
+def test_put_settings_restricts_shadow_strategy_keys(client, auth_header):
+    resp = client.put("/settings", json={"shadow_strategy_keys": ["smc"]}, headers=auth_header)
+    assert resp.status_code == 200
+    assert resp.json()["shadow_strategy_keys"] == ["smc"]
+
+
+def test_put_settings_allows_emptying_shadow_strategy_keys(client, auth_header):
+    resp = client.put("/settings", json={"shadow_strategy_keys": []}, headers=auth_header)
+    assert resp.status_code == 200
+    assert resp.json()["shadow_strategy_keys"] == []
+
+
+def test_put_settings_rejects_unknown_shadow_strategy_key(client, auth_header):
+    resp = client.put("/settings", json={"shadow_strategy_keys": ["not-a-strategy"]}, headers=auth_header)
+    assert resp.status_code == 422
+
+
+def test_get_settings_exposes_vn_cost_defaults(client, auth_header):
+    body = client.get("/settings", headers=auth_header).json()
+    assert body["broker_fee_pct_stock"] == pytest.approx(0.15)
+    assert body["sell_tax_pct_stock"] == pytest.approx(0.1)
+    assert body["stock_daily_price_limit_pct"] == pytest.approx(7.0)
+    assert body["stock_daily_price_limit_pct_hnx"] == pytest.approx(10.0)
+    assert body["stock_min_avg_value_vnd"] == pytest.approx(1_000_000_000)
+    assert body["hose_hnx_auto_refresh_enabled"] is False
+    assert body["hose_hnx_refresh_time"] == "06:00"
+
+
+def test_put_settings_accepts_vn_cost_settings(client, auth_header):
+    resp = client.put(
+        "/settings",
+        json={"broker_fee_pct_stock": 0.25, "sell_tax_pct_stock": 0.15, "stock_daily_price_limit_pct": 10.0},
+        headers=auth_header,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["broker_fee_pct_stock"] == pytest.approx(0.25)
+    assert body["sell_tax_pct_stock"] == pytest.approx(0.15)
+    assert body["stock_daily_price_limit_pct"] == pytest.approx(10.0)
+
+
+def test_put_settings_accepts_hose_hnx_settings(client, auth_header):
+    resp = client.put(
+        "/settings",
+        json={
+            "stock_daily_price_limit_pct_hnx": 12.0,
+            "stock_min_avg_value_vnd": 500_000_000,
+            "hose_hnx_auto_refresh_enabled": True,
+            "hose_hnx_refresh_time": "05:30",
+        },
+        headers=auth_header,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["stock_daily_price_limit_pct_hnx"] == pytest.approx(12.0)
+    assert body["stock_min_avg_value_vnd"] == pytest.approx(500_000_000)
+    assert body["hose_hnx_auto_refresh_enabled"] is True
+    assert body["hose_hnx_refresh_time"] == "05:30"
+
+
+def test_get_settings_exposes_stock_batch_analysis_defaults(client, auth_header):
+    body = client.get("/settings", headers=auth_header).json()
+    assert body["stock_batch_analysis_auto_enabled"] is False
+    assert body["stock_batch_analysis_time"] == "06:15"
+
+
+def test_put_settings_accepts_stock_batch_analysis_settings(client, auth_header):
+    resp = client.put(
+        "/settings",
+        json={"stock_batch_analysis_auto_enabled": True, "stock_batch_analysis_time": "05:45"},
+        headers=auth_header,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["stock_batch_analysis_auto_enabled"] is True
+    assert body["stock_batch_analysis_time"] == "05:45"
+
+
+def test_put_settings_accepts_plain_ollama_model(client, auth_header):
+    resp = client.put("/settings", json={"ollama_model": "qwen2.5:7b"}, headers=auth_header)
+    assert resp.status_code == 200
+    assert resp.json()["ollama_model"] == "qwen2.5:7b"
 
 
 def test_put_settings_rejects_zero_max_concurrent_scenarios(client, auth_header):
@@ -274,3 +354,22 @@ def test_put_settings_rejects_ollama_model_embedding_a_registry_host(client, aut
         "/settings", json={"ollama_model": "evil-registry.example/library/llama3"}, headers=auth_header
     )
     assert resp.status_code == 422
+
+
+def test_put_settings_accepts_empty_ollama_model(client, auth_header):
+    # Regression: the frontend's toUpdate() sends every FormState field on
+    # every save (not just the ones the user touched), and ollama_model
+    # defaults to "" (Ollama never configured) -- rejecting "" here made
+    # Settings unsaveable at all for any user who hadn't set an Ollama model,
+    # regardless of which field they were actually trying to change.
+    resp = client.put("/settings", json={"ollama_model": "", "language": "en"}, headers=auth_header)
+    assert resp.status_code == 200
+    assert resp.json()["ollama_model"] == ""
+    assert resp.json()["language"] == "en"
+
+
+def test_put_settings_allows_clearing_ollama_model_back_to_empty(client, auth_header):
+    client.put("/settings", json={"ollama_model": "qwen2.5:7b"}, headers=auth_header)
+    resp = client.put("/settings", json={"ollama_model": ""}, headers=auth_header)
+    assert resp.status_code == 200
+    assert resp.json()["ollama_model"] == ""

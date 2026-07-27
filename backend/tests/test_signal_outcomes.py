@@ -1,4 +1,5 @@
 import types
+from datetime import datetime, timedelta
 
 import pandas as pd
 import pytest
@@ -257,6 +258,122 @@ def test_get_stats_baseline_is_none_without_matching_candles(session):
     spring_stats = next(s for s in signal_outcomes.get_stats(session) if s["type"] == SPRING)
     assert spring_stats["baseline_win_rate_5"] is None
     assert spring_stats["edge_5"] is None
+    # No baseline -> nothing to test significance against.
+    assert spring_stats["significant_10"] is None
+
+
+# --- Multiple-comparisons correction (Benjamini-Hochberg) ---
+
+def test_get_stats_significant_10_true_for_strong_edge_vs_baseline(session, mocker):
+    candles = [_candle(i, 100.0 + i) for i in range(40)]  # steady uptrend -> every event wins
+    events = [_event(SPRING, i, candles[i].bucket_start, candles[i].close) for i in range(3, 26)]
+    signal_outcomes.record_outcomes(session, "FPT", Timeframe.DAILY, STRATEGY, candles, events, BULLISH_EVENTS)
+
+    weak_baseline = {"long_win_rate": 0.3, "short_win_rate": 0.3, "n": 1000}
+    mocker.patch.object(
+        signal_outcomes, "_pooled_baseline",
+        return_value={5: weak_baseline, 10: weak_baseline, 20: weak_baseline},
+    )
+
+    spring_stats = next(s for s in signal_outcomes.get_stats(session) if s["type"] == SPRING)
+    assert spring_stats["win_rate_10"] == 1.0
+    assert spring_stats["significant_10"] is True
+
+
+def _seed_outcome(session, *, ticker: str, event_ts: datetime, return_10: float, is_bullish: bool = True):
+    session.add(
+        SignalOutcome(
+            ticker=ticker, timeframe=Timeframe.DAILY, strategy=STRATEGY, event_type=SPRING,
+            event_ts=event_ts, event_price=100.0, is_bullish=is_bullish, return_10=return_10,
+        )
+    )
+
+
+def test_significant_10_false_when_apparent_edge_only_comes_from_overlapping_events(session, mocker):
+    # 30 daily events on the SAME ticker, one bar apart -- their horizon-10
+    # forward-return windows overlap almost completely, so they are nowhere
+    # near 30 independent trials. Naively treating raw n=30 as independent
+    # would call a middling 50% win rate "significant" against a weak 30%
+    # baseline; declustered (~3 independent observations, since each kept
+    # event must be >=10 days from the last) it is not.
+    start = datetime(2025, 1, 1)
+    for i in range(30):
+        _seed_outcome(
+            session, ticker="FPT", event_ts=start + timedelta(days=i),
+            return_10=0.02 if i % 2 == 0 else 0.0,  # exactly 15 wins / 15 non-wins
+        )
+    session.commit()
+
+    weak_baseline = {"long_win_rate": 0.3, "short_win_rate": 0.3, "n": 1000}
+    mocker.patch.object(
+        signal_outcomes, "_pooled_baseline", return_value={5: weak_baseline, 10: weak_baseline, 20: weak_baseline},
+    )
+
+    spring_stats = next(s for s in signal_outcomes.get_stats(session) if s["type"] == SPRING)
+    assert spring_stats["win_rate_10"] == pytest.approx(0.5)
+    assert spring_stats["n_10"] == 30  # point estimate still uses every observation
+    assert spring_stats["significant_10"] is False  # but the overlap-corrected p-value doesn't clear alpha
+
+
+def test_significant_10_still_true_when_events_are_spaced_beyond_the_horizon(session, mocker):
+    # Same edge/baseline shape as above, but events are 15 days apart --
+    # beyond the horizon-10 overlap window -- so every observation is already
+    # independent and declustering shouldn't change the verdict.
+    start = datetime(2025, 1, 1)
+    for i in range(5):
+        _seed_outcome(session, ticker="FPT", event_ts=start + timedelta(days=15 * i), return_10=0.02)
+    session.commit()
+
+    weak_baseline = {"long_win_rate": 0.3, "short_win_rate": 0.3, "n": 1000}
+    mocker.patch.object(
+        signal_outcomes, "_pooled_baseline", return_value={5: weak_baseline, 10: weak_baseline, 20: weak_baseline},
+    )
+
+    spring_stats = next(s for s in signal_outcomes.get_stats(session) if s["type"] == SPRING)
+    assert spring_stats["win_rate_10"] == 1.0
+    assert spring_stats["significant_10"] is True
+
+
+# --- config_version: separates stats produced under different detector thresholds ---
+
+def test_record_outcomes_stamps_config_version_and_is_immutable(session):
+    candles = [_candle(i, 100.0 + i) for i in range(30)]
+    event = _event(SPRING, 5, candles[5].bucket_start, candles[5].close)
+
+    signal_outcomes.record_outcomes(
+        session, "FPT", Timeframe.DAILY, STRATEGY, candles, [event], BULLISH_EVENTS, config_version="wyckoff:v1",
+    )
+    row = session.exec(_select_outcome()).first()
+    assert row.config_version == "wyckoff:v1"
+
+    # Same event, later run under a different version -- must not rewrite
+    # the already-created row's tag.
+    signal_outcomes.record_outcomes(
+        session, "FPT", Timeframe.DAILY, STRATEGY, candles, [event], BULLISH_EVENTS, config_version="wyckoff:v2",
+    )
+    row_again = session.exec(_select_outcome()).first()
+    assert row_again.config_version == "wyckoff:v1"
+
+
+def test_get_stats_n_current_config_counts_only_matching_rows(session):
+    candles = [_candle(i, 100.0 + i) for i in range(40)]
+    old_event = _event(SPRING, 3, candles[3].bucket_start, candles[3].close)
+    new_event = _event(SPRING, 10, candles[10].bucket_start, candles[10].close)
+    signal_outcomes.record_outcomes(
+        session, "FPT", Timeframe.DAILY, STRATEGY, candles, [old_event], BULLISH_EVENTS, config_version="wyckoff:old",
+    )
+    signal_outcomes.record_outcomes(
+        session, "FPT", Timeframe.DAILY, STRATEGY, candles, [new_event], BULLISH_EVENTS, config_version="wyckoff:new",
+    )
+
+    without_version = next(s for s in signal_outcomes.get_stats(session) if s["type"] == SPRING)
+    assert "n_current_config" not in without_version
+
+    with_version = next(
+        s for s in signal_outcomes.get_stats(session, current_config_version="wyckoff:new") if s["type"] == SPRING
+    )
+    assert with_version["count"] == 2
+    assert with_version["n_current_config"] == 1
 
 
 def test_get_stats_filters_by_asset_class(session):

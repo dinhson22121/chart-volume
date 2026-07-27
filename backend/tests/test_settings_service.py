@@ -237,3 +237,76 @@ def test_crypto_analysis_config_reflects_overrides(session):
     cfg = settings_service.get_crypto_analysis_config(session)
     assert cfg["enabled"] is False
     assert cfg["interval"] == "1h"
+
+
+def test_shadow_strategy_keys_defaults_to_every_registered_strategy(session):
+    assert settings_service.get_shadow_strategy_keys(session) == {"wyckoff", "sonicr", "smc"}
+
+
+def test_shadow_strategy_keys_can_be_restricted(session):
+    settings_service.update(session, {"shadow_strategy_keys": ["smc"]})
+    assert settings_service.get_shadow_strategy_keys(session) == {"smc"}
+
+
+def test_shadow_strategy_keys_can_be_emptied(session):
+    settings_service.update(session, {"shadow_strategy_keys": []})
+    assert settings_service.get_shadow_strategy_keys(session) == set()
+
+
+def test_shadow_strategy_keys_drops_unknown_keys(session):
+    settings_service.update(session, {"shadow_strategy_keys": ["smc", "made-up"]})
+    assert settings_service.get_shadow_strategy_keys(session) == {"smc"}
+
+
+def test_get_risk_config_hnx_price_limit_and_liquidity_threshold_defaults(session):
+    cfg = settings_service.get_risk_config(session)
+    assert cfg["stock_daily_price_limit_pct_hnx"] == 10.0
+    assert cfg["stock_min_avg_value_vnd"] == 1_000_000_000.0
+    assert cfg["stock_daily_price_limit_pct"] == 7.0  # HOSE untouched
+
+
+def test_get_risk_config_hnx_price_limit_and_liquidity_threshold_overrides(session):
+    settings_service.update(session, {
+        "stock_daily_price_limit_pct_hnx": "12.0", "stock_min_avg_value_vnd": "500000000",
+    })
+    cfg = settings_service.get_risk_config(session)
+    assert cfg["stock_daily_price_limit_pct_hnx"] == 12.0
+    assert cfg["stock_min_avg_value_vnd"] == 500_000_000.0
+
+
+def test_get_hose_hnx_config_defaults_to_disabled(session):
+    # Unlike top100 (a single, cheap CoinGecko page), seeding + crawling the
+    # full HOSE/HNX universe is a much heavier daily load -- off by default
+    # until the user has verified it doesn't get rate-limited, same rationale
+    # as potential_screen_auto_enabled defaulting off.
+    cfg = settings_service.get_hose_hnx_config(session)
+    assert cfg["enabled"] is False
+    assert cfg["time"] == "06:00"
+
+
+def test_get_hose_hnx_config_reflects_overrides(session):
+    settings_service.update(
+        session, {"hose_hnx_auto_refresh_enabled": "true", "hose_hnx_refresh_time": "05:30"}
+    )
+    cfg = settings_service.get_hose_hnx_config(session)
+    assert cfg["enabled"] is True
+    assert cfg["time"] == "05:30"
+
+
+def test_get_stock_batch_analysis_config_defaults_to_disabled(session):
+    # Same off-by-default rationale as hose_hnx_auto_refresh/potential_screen:
+    # a full run crawls every tracked stock (and refreshes the HOSE/HNX
+    # universe first), a heavy daily load against an unofficial, rate-
+    # limit-prone API -- opt-in only.
+    cfg = settings_service.get_stock_batch_analysis_config(session)
+    assert cfg["enabled"] is False
+    assert cfg["time"] == "06:15"
+
+
+def test_get_stock_batch_analysis_config_reflects_overrides(session):
+    settings_service.update(
+        session, {"stock_batch_analysis_auto_enabled": "true", "stock_batch_analysis_time": "05:45"}
+    )
+    cfg = settings_service.get_stock_batch_analysis_config(session)
+    assert cfg["enabled"] is True
+    assert cfg["time"] == "05:45"

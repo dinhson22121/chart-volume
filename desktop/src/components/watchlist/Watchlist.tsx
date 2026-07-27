@@ -6,7 +6,7 @@ import { formatTime } from "../../lib/datetime";
 import { useI18n } from "../../i18n/I18nContext";
 import "./watchlist.css";
 
-export type WatchlistTab = "vn30" | "top100" | "crypto";
+export type WatchlistTab = "vn30" | "top100" | "hose_hnx" | "crypto";
 
 interface Props {
   symbols: SymbolItem[];
@@ -50,16 +50,20 @@ export function Watchlist({
   const [top100Seeding, setTop100Seeding] = useState(false);
   const [top100SeedError, setTop100SeedError] = useState<string | null>(null);
   const [lastTop100Seed, setLastTop100Seed] = useState<{ completedAt: number; count: number } | null>(null);
+  const [hoseHnxSeeding, setHoseHnxSeeding] = useState(false);
+  const [hoseHnxSeedError, setHoseHnxSeedError] = useState<string | null>(null);
+  const [lastHoseHnxSeed, setLastHoseHnxSeed] = useState<{ completedAt: number; count: number } | null>(null);
 
-  const { vn30, top100, watchlist } = useMemo(() => {
+  const { vn30, top100, hoseHnx, watchlist } = useMemo(() => {
     const vn30 = symbols.filter((s) => s.is_vn30).sort((a, b) => a.ticker.localeCompare(b.ticker));
     const top100 = symbols
       .filter((s) => s.is_top100)
       .sort((a, b) => (a.top100_rank ?? Infinity) - (b.top100_rank ?? Infinity));
+    const hoseHnx = symbols.filter((s) => s.is_hose_hnx).sort((a, b) => a.ticker.localeCompare(b.ticker));
     const watchlist = symbols
       .filter((s) => s.is_watchlist && !s.is_vn30)
       .sort((a, b) => a.ticker.localeCompare(b.ticker));
-    return { vn30, top100, watchlist };
+    return { vn30, top100, hoseHnx, watchlist };
   }, [symbols]);
 
   const submit = (e: FormEvent) => {
@@ -99,6 +103,20 @@ export function Watchlist({
     }
   };
 
+  const handleSeedHoseHnx = async () => {
+    setHoseHnxSeeding(true);
+    setHoseHnxSeedError(null);
+    try {
+      const result = await api.seedHoseHnx();
+      setLastHoseHnxSeed({ completedAt: Date.now(), count: result.count });
+      onSeeded();
+    } catch (e) {
+      setHoseHnxSeedError(e instanceof Error ? e.message : t("watchlist.seedHoseHnx.error"));
+    } finally {
+      setHoseHnxSeeding(false);
+    }
+  };
+
   const renderRow = (s: SymbolItem, removable: boolean, card = false, showRank = false) => (
     <li key={s.ticker}>
       <button
@@ -116,8 +134,9 @@ export function Watchlist({
               <span className="wl-row__ticker mono">{s.display_symbol}</span>
               {removable && (
                 <span
-                  className="wl-row__remove"
+                  className="wl-row__remove has-tooltip"
                   role="button"
+                  data-tooltip={t("watchlist.remove.ariaLabel", { ticker: s.display_symbol })}
                   aria-label={t("watchlist.remove.ariaLabel", { ticker: s.display_symbol })}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -133,12 +152,13 @@ export function Watchlist({
         ) : (
           <>
             <span className="wl-row__ticker mono">{s.display_symbol}</span>
-            {s.asset_class === "crypto" && <span title="Crypto">🪙</span>}
+            {s.asset_class === "crypto" && <span className="has-tooltip" data-tooltip={t("watchlist.cryptoBadge")}>🪙</span>}
             {s.name && <span className="wl-row__name faint">{s.name}</span>}
             {removable && (
               <span
-                className="wl-row__remove"
+                className="wl-row__remove has-tooltip"
                 role="button"
+                data-tooltip={t("watchlist.remove.ariaLabel", { ticker: s.display_symbol })}
                 aria-label={t("watchlist.remove.ariaLabel", { ticker: s.display_symbol })}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -164,7 +184,13 @@ export function Watchlist({
           maxLength={8}
           onChange={(e) => setInput(e.target.value)}
         />
-        <button type="submit" className="wl-add__btn" disabled={busy}>
+        <button
+          type="submit"
+          className="wl-add__btn has-tooltip"
+          disabled={busy}
+          data-tooltip={t("watchlist.addButton")}
+          aria-label={t("watchlist.addButton")}
+        >
           +
         </button>
       </form>
@@ -190,6 +216,12 @@ export function Watchlist({
               onClick={() => onTabChange("top100")}
             >
               {t("watchlist.tab.top100")}
+            </button>
+            <button
+              className={activeTab === "hose_hnx" ? "is-active" : ""}
+              onClick={() => onTabChange("hose_hnx")}
+            >
+              {t("watchlist.tab.hoseHnx")}
             </button>
             <button
               className={activeTab === "crypto" ? "is-active" : ""}
@@ -271,6 +303,44 @@ export function Watchlist({
                 <ul className="wl-list--scroll wl-list--cards">
                   {top100.map((s) => renderRow(s, false, true, true))}
                 </ul>
+              )}
+            </div>
+          ) : activeTab === "hose_hnx" ? (
+            <div className="wl-accordion__body">
+              <div className="wl-scanbar">
+                <span className="wl-status faint">
+                  {hoseHnxSeeding
+                    ? t("watchlist.seedHoseHnx.loading")
+                    : hoseHnxSeedError
+                      ? t("watchlist.seedHoseHnx.errorStatus")
+                      : lastHoseHnxSeed
+                        ? t("watchlist.seedHoseHnx.doneAt", {
+                            time: formatTime(lastHoseHnxSeed.completedAt, language),
+                            count: lastHoseHnxSeed.count,
+                          })
+                        : t("watchlist.seedHoseHnx.never")}
+                </span>
+                <button
+                  className="wl-seed"
+                  onClick={() => void handleSeedHoseHnx()}
+                  disabled={hoseHnxSeeding || busy}
+                >
+                  {hoseHnxSeeding ? t("watchlist.seedHoseHnx.buttonLoading") : t("watchlist.seedHoseHnx.button")}
+                </button>
+              </div>
+
+              {hoseHnxSeeding && (
+                <div className="wl-progress" role="progressbar" aria-label={t("watchlist.seedHoseHnx.loading")}>
+                  <div className="wl-progress-fill" />
+                </div>
+              )}
+
+              {hoseHnxSeedError && <p className="wl-error">{hoseHnxSeedError}</p>}
+
+              {hoseHnx.length === 0 && !hoseHnxSeeding ? (
+                <p className="wl-empty faint">{t("watchlist.seedHoseHnx.empty")}</p>
+              ) : (
+                <ul className="wl-list--scroll wl-list--cards">{hoseHnx.map((s) => renderRow(s, false, true))}</ul>
               )}
             </div>
           ) : (

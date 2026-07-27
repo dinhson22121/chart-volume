@@ -245,19 +245,23 @@ export default function App({ onLicenseCleared }: Props) {
               </button>
             ))}
           </div>
-          <select
-            className="strategy-select"
-            value={strategy}
-            onChange={(e) => void handleStrategyChange(e.target.value)}
-            disabled={!strategies.length}
-            title={t("settings.strategy.hint")}
-          >
-            {strategies.map((s) => (
-              <option key={s.key} value={s.key}>
-                {s.label}
-              </option>
-            ))}
-          </select>
+          {/* Wrapped in a span: generated content (::after) isn't reliably
+              rendered on <select> itself across browsers, so the tooltip
+              class lives on a wrapper instead of the control. */}
+          <span className="has-tooltip" data-tooltip={t("settings.strategy.hint")}>
+            <select
+              className="strategy-select"
+              value={strategy}
+              onChange={(e) => void handleStrategyChange(e.target.value)}
+              disabled={!strategies.length}
+            >
+              {strategies.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </span>
           <button
             className="btn btn--primary"
             onClick={handleRefresh}
@@ -266,50 +270,50 @@ export default function App({ onLicenseCleared }: Props) {
             {refreshing ? t("app.refresh.analyzing") : t("app.refresh.analyze")}
           </button>
           <button
-            className="btn btn--icon"
+            className="btn btn--icon has-tooltip"
             onClick={() => setDashboardOpen(true)}
             aria-label={t("app.header.dashboard")}
-            title={t("app.header.dashboard")}
+            data-tooltip={t("app.header.dashboard")}
           >
             🗂️
           </button>
           <button
-            className="btn btn--icon"
+            className="btn btn--icon has-tooltip"
             onClick={() => setStatsOpen(true)}
             aria-label={t("app.header.stats")}
-            title={t("app.header.stats")}
+            data-tooltip={t("app.header.stats")}
           >
             📊
           </button>
           <button
-            className="btn btn--icon"
+            className="btn btn--icon has-tooltip"
             onClick={() => setLogsOpen(true)}
             aria-label={t("app.header.logs")}
-            title={t("app.header.logs")}
+            data-tooltip={t("app.header.logs")}
           >
             📜
           </button>
           <button
-            className="btn btn--icon"
+            className="btn btn--icon has-tooltip"
             onClick={() => setTradeHistoryOpen(true)}
             aria-label={t("app.header.tradeHistory")}
-            title={t("app.header.tradeHistory")}
+            data-tooltip={t("app.header.tradeHistory")}
           >
             🧾
           </button>
           <button
-            className="btn btn--icon"
+            className="btn btn--icon has-tooltip"
             onClick={() => setPotentialScreenOpen(true)}
             aria-label={t("app.header.potentialScreen")}
-            title={t("app.header.potentialScreen")}
+            data-tooltip={t("app.header.potentialScreen")}
           >
             🔮
           </button>
           <button
-            className="btn btn--icon"
+            className="btn btn--icon has-tooltip"
             onClick={() => setSettingsOpen(true)}
             aria-label={t("app.header.settings")}
-            title={t("app.header.settings")}
+            data-tooltip={t("app.header.settings")}
           >
             ⚙
           </button>

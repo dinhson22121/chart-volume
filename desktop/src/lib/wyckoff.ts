@@ -18,6 +18,7 @@ const BULLISH_SIGNALS = new Set([
   "Spring", "SC", "SOS", "NoSupply", "LPS",
   "DragonCrossUp", "SonicCrossUp", "SonicEntryLong",
   "BOS_Bull", "CHoCH_Bull", "BullishOB", "BullishFVG",
+  "Volume Accumulation",
 ]);
 // LPS/LPSY and SonicEntryLong/Short are confirmed entry points, not just raw
 // detector signals -- given a distinct marker shape on the chart so they

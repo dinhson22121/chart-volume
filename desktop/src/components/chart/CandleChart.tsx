@@ -212,10 +212,17 @@ export function CandleChart({ candles, analysis, onBarClick }: Props) {
     priceLinesRef.current.forEach((line) => candleSeries.removePriceLine(line));
     priceLinesRef.current = [];
 
-    // Markers for detected Wyckoff events. LPS/LPSY are confirmed entry points
-    // (a pullback re-testing a broken level) -- rendered as a filled circle so
-    // they stand out from the arrow markers of the other 8 raw detectors.
-    const markers: SeriesMarker<Time>[] = (analysis?.signals ?? [])
+    // Markers for actionable events only (bullish, non-continuation -- the
+    // same qualifying filter trade_scenario._create_scenarios uses, see
+    // app.api.analysis._actionable_signals). The full analysis.signals list
+    // includes bearish and trend-confirmation events too (NoDemand/NoSupply,
+    // etc.) -- rendering every one of those as its own always-visible text
+    // label made the chart's marker text collide and pile up on tickers with
+    // frequent signals, for events that were never tradeable anyway (spot
+    // trading has no short-selling). LPS/LPSY are confirmed entry points (a
+    // pullback re-testing a broken level) -- rendered as a filled circle so
+    // they stand out from the arrow markers of the other detectors.
+    const markers: SeriesMarker<Time>[] = (analysis?.actionable_signals ?? [])
       .filter((s) => s.ts)
       .map((s) => {
         const bull = signalIsBullish(s.type);

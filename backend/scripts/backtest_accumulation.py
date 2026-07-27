@@ -28,9 +28,10 @@ from app.db import get_engine  # noqa: E402
 from app.models import Symbol, Timeframe  # noqa: E402
 from app.services import scenario_backtest, settings_service  # noqa: E402
 from app.wyckoff import accumulation  # noqa: E402
-from scripts.backtest_rsi_spring import _chronological_breakdown, N_TIME_SLICES  # noqa: E402
 from scripts.optimize_wyckoff import (  # noqa: E402
+    N_TIME_SLICES,
     OPT_HOLDOUT_CUTOFF,
+    _chronological_breakdown,
     _format_window,
     _load_daily_candles,
     _r_multiple,

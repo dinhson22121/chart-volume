@@ -679,7 +679,7 @@ def _filtered_scenarios_query(
     # _create_scenarios -- the app is spot-only for both stock and crypto, no
     # short-selling), but source="backtest" rows still cover both directions
     # (scenario_backtest.walk_events resolves the bearish side too, purely for
-    # research/reference -- see e.g. scripts/backtest_rsi_spring.py), and a
+    # research/reference -- see e.g. scripts/backtest_accumulation.py), and a
     # pre-existing live row created before this restriction may still be
     # bearish. Pass is_bullish=True to scope to only what was ever tradeable.
     query = select(TradeScenario)

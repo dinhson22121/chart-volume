@@ -12,13 +12,18 @@ unnecessary here -- the session's already-final volume is used directly
 against the trailing average.
 
 A pure volume/price-momentum idea, structurally unrelated to Wyckoff phase
-detection or RSI (app.wyckoff.rsi_spring). Backtested against the full
-HOSE/HNX universe with the SAME thresholds FiinTrade publishes (no fitting
-to this app's own data): holdout bootstrap CI entirely positive
-([+0.031, +0.075] mean_r, n=2361) and walk_forward_consistency=1.00, the
-strongest and most time-consistent result found this session -- see
-scripts/backtest_accumulation.py. Registered in app.strategies.registry as
-"accumulation", selectable in the UI like Wyckoff/SMC/Sonic R.
+detection or RSI-based momentum (an earlier RSI-oversold-turn experiment
+this session, since removed: it looked promising pooled but its holdout
+edge was concentrated in a 6-month stretch, with the most recent 3 straight
+slices trending negative -- decayed, not durable; see git history).
+Backtested against the full HOSE/HNX universe with the SAME thresholds
+FiinTrade publishes (no fitting to this app's own data): holdout bootstrap
+CI entirely positive ([+0.031, +0.075] mean_r, n=2361) and
+walk_forward_consistency=1.00, with every one of 6 chronological slices
+positive -- the strongest and most time-consistent result found this
+session -- see scripts/backtest_accumulation.py. Registered in
+app.strategies.registry as "accumulation", selectable in the UI like
+Wyckoff/SMC/Sonic R.
 """
 
 from __future__ import annotations

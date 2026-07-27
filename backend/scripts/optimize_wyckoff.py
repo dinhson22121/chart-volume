@@ -133,6 +133,43 @@ def _format_window(label: str, w: dict) -> str:
     )
 
 
+# How many equal, chronologically-ordered slices to break a holdout window
+# into for the "is this concentrated in one stretch" check -- separate from
+# stats_significance.walk_forward_analysis's own default of 5, so a report
+# can show real calendar dates per slice, not just a single ratio. This is
+# NOT optional: RSI Spring's pooled holdout number once looked like a real
+# edge, but turned out to be concentrated in 2 of 6 slices, with the most
+# recent 3 consecutive slices trending negative -- see git history for that
+# experiment's own module (removed once this checked showed the same
+# decay-over-time pattern every other signal tried this session had).
+N_TIME_SLICES = 6
+
+
+def _chronological_breakdown(dated_r: list[tuple], n_slices: int = N_TIME_SLICES) -> None:
+    """dated_r: list of (event_ts, r) tuples. Prints n_slices equal,
+    chronologically-ordered slices with their own date range/mean/win-rate,
+    so a positive pooled result that's actually concentrated in one narrow
+    stretch (vs. spread evenly across the window) is directly visible."""
+    ordered = sorted(dated_r, key=lambda pair: pair[0])
+    n = len(ordered)
+    if n == 0:
+        print("  (no trades)")
+        return
+    slice_size = max(1, n // n_slices)
+    for i in range(0, n, slice_size):
+        chunk = ordered[i : i + slice_size]
+        if not chunk:
+            continue
+        rs = [r for _, r in chunk]
+        start_ts, end_ts = chunk[0][0], chunk[-1][0]
+        mean_r = sum(rs) / len(rs)
+        win_rate = sum(1 for r in rs if r > 0) / len(rs)
+        print(
+            f"    {start_ts:%Y-%m-%d} .. {end_ts:%Y-%m-%d}  n={len(rs):>4}  "
+            f"mean_r={mean_r:+.3f}  win_rate={win_rate:.1%}"
+        )
+
+
 def main() -> None:
     engine = get_engine()
     with Session(engine) as session:

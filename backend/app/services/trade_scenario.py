@@ -345,8 +345,10 @@ def _min_bars_to_reach(move_pct: float, daily_limit_pct: float) -> float:
     return math.log(1 + move_pct) / math.log(1 + daily_limit_pct)
 
 
-def _count_active(session: Session, asset_class: str | None = None) -> int:
+def _count_active(session: Session, strategy: str | None = None, asset_class: str | None = None) -> int:
     query = select(TradeScenario.id).where(TradeScenario.status == "active")
+    if strategy:
+        query = query.where(TradeScenario.strategy == strategy)
     if asset_class:
         query = query.join(Symbol, Symbol.ticker == TradeScenario.ticker).where(Symbol.asset_class == asset_class)
     return len(session.exec(query).all())
@@ -553,20 +555,29 @@ def _create_scenarios(
     # Portfolio-level risk caps: v1's has_active check above only prevents a
     # SECOND scenario on the same (ticker, timeframe, strategy) -- it says
     # nothing about how many are open across the whole tracked universe at
-    # once. Small-cap crypto in particular tends to move as one correlated
-    # cluster (risk-on/risk-off together), so a tighter sub-cap applies to it
-    # specifically; asset_class is a simple proxy for "correlated cluster"
-    # rather than a real correlation matrix, which is overkill at this scale.
-    # Live-tracking only -- see _build_scenario_candidate's docstring on why
-    # scenario_backtest can't apply this (no cross-ticker portfolio view).
+    # once, for THIS strategy. Scoped per-strategy, not pooled across every
+    # strategy: shadow_strategy_keys runs several strategies in parallel
+    # purely to accumulate signal_outcomes/trade_scenario data, and they never
+    # compete for the same real capital -- pooling them meant whichever
+    # strategy's active count reached the cap first (in practice, whichever
+    # had run the longest) silently starved every OTHER strategy from ever
+    # creating a scenario again, regardless of how few (even zero) of its own
+    # were open. Small-cap crypto in particular tends to move as one
+    # correlated cluster (risk-on/risk-off together), so a tighter sub-cap
+    # applies to it specifically; asset_class is a simple proxy for
+    # "correlated cluster" rather than a real correlation matrix, which is
+    # overkill at this scale. Live-tracking only -- see
+    # _build_scenario_candidate's docstring on why scenario_backtest can't
+    # apply this (no cross-ticker portfolio view).
     risk_cfg = settings_service.get_risk_config(session)
-    if _count_active(session) >= risk_cfg["max_concurrent_scenarios"]:
+    if _count_active(session, strategy=strategy) >= risk_cfg["max_concurrent_scenarios"]:
         return
     symbol = session.get(Symbol, ticker)
     if (
         symbol is not None
         and symbol.asset_class == AssetClass.CRYPTO
-        and _count_active(session, asset_class=AssetClass.CRYPTO) >= risk_cfg["max_concurrent_scenarios_crypto"]
+        and _count_active(session, strategy=strategy, asset_class=AssetClass.CRYPTO)
+        >= risk_cfg["max_concurrent_scenarios_crypto"]
     ):
         return
 

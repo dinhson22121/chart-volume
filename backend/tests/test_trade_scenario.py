@@ -1165,6 +1165,32 @@ def test_portfolio_cap_blocks_new_scenario_when_at_global_limit(session):
     assert session.exec(_select_scenario().where(TradeScenario.ticker == "FPT")).first() is None
 
 
+def test_portfolio_cap_is_scoped_per_strategy_not_global(session):
+    # Regression: shadow multi-strategy analysis (settings.shadow_strategy_keys)
+    # runs several strategies against the same tracked universe purely for
+    # signal_outcomes/trade_scenario data accumulation -- they aren't
+    # competing for the same real capital, so one strategy's active scenarios
+    # must never count against another strategy's own cap. Before this fix,
+    # _count_active pooled every strategy together, so once ANY one strategy
+    # (typically whichever ran first/longest) reached max_concurrent_scenarios
+    # globally, every OTHER strategy was silently blocked from ever creating
+    # a scenario again, no matter how few (zero) it had of its own.
+    settings_service.update(session, {"max_concurrent_scenarios": "1"})
+    _make_scenario(session, ticker="HPG", strategy="wyckoff", status="active")  # wyckoff already at its own cap
+
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    candles.append(_candle(6, low=90.0, high=110.0, close=100.0))  # entry fill
+    event = _event(SPRING, 5, candles[5])
+    provider_cfg = ProviderConfig(provider=PROVIDER_ANTHROPIC, model="claude-sonnet-4-5", api_key="", language="vi")
+    trade_scenario.sync_scenarios(
+        session, "FPT", Timeframe.DAILY, "smc", candles, [event], BULLISH_EVENTS, LEVELS,
+        provider_cfg, _fake_strategy_module(), None, None, RANGING_PHASES,
+    )
+
+    assert session.exec(_select_scenario().where(TradeScenario.strategy == "smc")).first() is not None
+
+
 def test_portfolio_cap_crypto_sub_limit_blocks_only_crypto(session):
     session.add(Symbol(ticker="BITCOIN", asset_class=AssetClass.CRYPTO))
     session.add(Symbol(ticker="ETHEREUM", asset_class=AssetClass.CRYPTO))

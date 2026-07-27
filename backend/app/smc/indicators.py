@@ -30,16 +30,20 @@ def _is_swing_low(lows: pd.Series, i: int, lookback: int) -> bool:
 
 
 def compute_features(df: pd.DataFrame, cfg: SMCConfig = DEFAULT_CONFIG) -> pd.DataFrame:
-    """Adds: spread, spread_ma, swing_high, swing_low.
+    """Adds: spread, spread_ma, swing_high, swing_low, major_swing_high,
+    major_swing_low.
 
-    A swing high/low at bar ``i`` is only confirmed once ``cfg.swing_lookback``
-    bars exist on both sides of it (a fractal) -- like LPS/LPSY or an FVG's
-    middle candle, this is a naturally lagging signal: it can't be known in
-    real time until later bars close.
+    A swing high/low at bar ``i`` is only confirmed once the relevant
+    lookback's worth of bars exist on both sides of it (a fractal) -- like
+    LPS/LPSY or an FVG's middle candle, this is a naturally lagging signal:
+    it can't be known in real time until later bars close. major_swing_*
+    uses ``cfg.major_swing_lookback`` (a longer horizon) instead of
+    ``cfg.swing_lookback`` -- see SMCConfig's own docstring on the two tiers.
     """
     out = df.copy().reset_index(drop=True)
     n = len(out)
     lookback = cfg.swing_lookback
+    major_lookback = cfg.major_swing_lookback
 
     out["spread"] = out["high"] - out["low"]
     out["spread_ma"] = out["spread"].rolling(SPREAD_MA_LEN, min_periods=_MIN_PERIODS).mean()
@@ -51,5 +55,13 @@ def compute_features(df: pd.DataFrame, cfg: SMCConfig = DEFAULT_CONFIG) -> pd.Da
         swing_low[i] = _is_swing_low(out["low"], i, lookback)
     out["swing_high"] = swing_high
     out["swing_low"] = swing_low
+
+    major_swing_high = [False] * n
+    major_swing_low = [False] * n
+    for i in range(major_lookback, n - major_lookback):
+        major_swing_high[i] = _is_swing_high(out["high"], i, major_lookback)
+        major_swing_low[i] = _is_swing_low(out["low"], i, major_lookback)
+    out["major_swing_high"] = major_swing_high
+    out["major_swing_low"] = major_swing_low
 
     return out

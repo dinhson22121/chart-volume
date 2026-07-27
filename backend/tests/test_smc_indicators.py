@@ -48,6 +48,19 @@ def test_no_swing_points_on_a_pure_monotonic_move():
     assert not feat["swing_low"].any()
 
 
+def test_major_swing_lookback_confirms_at_a_longer_horizon_than_swing_lookback():
+    # Peak at idx 4 (101) clears its immediate 2-bar neighborhood (confirms
+    # at the short swing_lookback), but a higher bar at idx 1 (105) sits
+    # within the wider 4-bar window -- so the same peak can't confirm at the
+    # longer major_swing_lookback, and the rest of the series decreases
+    # monotonically after idx 4 (no other candidate can be a local max).
+    values = [100, 105, 98, 99, 101, 99, 98, 97, 96, 95, 94, 93, 92, 91, 90]
+    feat = compute_features(_bars_to_df(values), SMCConfig(swing_lookback=2, major_swing_lookback=4))
+
+    assert feat["swing_high"].iloc[4] == True  # noqa: E712 -- confirms at the short tier
+    assert not feat["major_swing_high"].any()  # not enough clean clearance for the long tier
+
+
 def test_spread_ma_is_nan_until_min_periods_reached():
     values = [100, 101, 102]
     feat = compute_features(_bars_to_df(values), SMCConfig())

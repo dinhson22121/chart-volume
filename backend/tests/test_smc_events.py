@@ -15,6 +15,9 @@ from app.smc.events import (
     CHOCH_BULL,
     EQUAL_HIGH,
     EQUAL_LOW,
+    SWING_BOS_BULL,
+    SWING_BULLISH_OB,
+    SWING_CHOCH_BULL,
     detect_events,
 )
 from app.smc.indicators import compute_features
@@ -292,6 +295,48 @@ def test_detects_bearish_fvg_when_gap_exceeds_threshold():
     fvg = _by_type(events, BEARISH_FVG)
     assert len(fvg) == 1
     assert fvg[0].index == 11
+
+
+# --- Major/"swing" structure tier: same BOS/CHoCH/Order-Block logic as the
+# --- internal tier above, just driven by major_swing_lookback instead of
+# --- swing_lookback and tagged with its own distinct event-type strings.
+
+def test_swing_tier_stays_empty_on_a_series_too_short_for_the_default_major_lookback():
+    # Same scenario as test_first_break_of_a_swing_high_is_choch_bull_not_bos
+    # -- confirms at the internal tier (swing_lookback=2), but CFG's default
+    # major_swing_lookback=20 needs far more bars on each side than this
+    # ~21-bar series has to spare.
+    values = [110, 108, 106, 104, 102, 100, 102, 104, 106, 108, 110, 112, 110, 108, 106, 104, 103, 105, 108, 111, 113]
+    feat = compute_features(_df(*_zigzag(values)), CFG)
+    events = detect_events(feat, CFG)
+
+    assert _by_type(events, CHOCH_BULL)  # internal tier still fires as before
+    assert not _by_type(events, SWING_CHOCH_BULL)  # too short for the major tier
+
+
+def test_swing_tier_fires_its_own_bos_and_order_block_when_major_lookback_is_reached():
+    # Exact same scenario proven at the internal tier in
+    # test_bullish_order_block_anchors_to_last_down_candle_before_bos, but
+    # with major_swing_lookback set equal to swing_lookback -- both tiers
+    # should then fire equivalently, just under their own distinct names.
+    values = [
+        110, 108, 106, 104, 102, 100,
+        102, 104, 106, 108, 110, 112,
+        110, 108, 106, 104, 103,
+        105, 108, 111, 113, 115, 117, 119,
+        117, 115, 113, 112, 111,
+    ]
+    opens, highs, lows, closes = _zigzag(values)
+    opens.append(113.0); closes.append(112.0); highs.append(113.5); lows.append(111.5)  # noqa: E702
+    for v in (116, 119, 122, 125):
+        opens.append(v - 0.3); closes.append(v); highs.append(v + 0.5); lows.append(v - 0.5)  # noqa: E702
+
+    cfg = SMCConfig(swing_lookback=2, major_swing_lookback=2, ob_lookback_bars=10, fvg_min_gap_mult=0.3)
+    feat = compute_features(_df(opens, highs, lows, closes), cfg)
+    events = detect_events(feat, cfg)
+
+    assert len(_by_type(events, SWING_BOS_BULL)) == 1
+    assert len(_by_type(events, SWING_BULLISH_OB)) == 1
 
 
 # --- Equal Highs / Equal Lows: two consecutive same-type swing pivots

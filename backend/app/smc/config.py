@@ -8,6 +8,17 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class SMCConfig:
     swing_lookback: int = 2  # bars on each side required to confirm a swing high/low (fractal)
+    # Second, longer-horizon structure tier (see app.smc.events' module
+    # docstring): LuxAlgo runs two independent structure passes -- a fast
+    # "internal" one (its own default: 5) and a much slower "swing"/major one
+    # (its own default: 50). This app's EXISTING swing_lookback=2 default is
+    # already closer to LuxAlgo's internal tier than to a real major-structure
+    # one, so rather than change its long-tested meaning, this adds the
+    # missing MAJOR tier on top -- 20 matches this app's own established
+    # "swing lookback" convention used elsewhere (trade_scenario.
+    # LEVELS_LOOKBACK, app.wyckoff.indicators.RANGE_LOOKBACK, this module's
+    # own _SWING_LOOKBACK_LEVELS), not LuxAlgo's 50.
+    major_swing_lookback: int = 20
     ob_lookback_bars: int = 10  # max bars to look back for the order-block candle at a BOS
     fvg_min_gap_mult: float = 0.3  # a fair value gap must be >= x * average spread to count
     # An order-block anchor candle whose own (high-low) spread is >= this many

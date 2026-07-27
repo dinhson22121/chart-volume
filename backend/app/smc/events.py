@@ -1,10 +1,19 @@
-"""SMC (Smart Money Concept) event detectors: market structure (BOS/CHoCH),
-Order Blocks, and Fair Value Gaps.
+"""SMC (Smart Money Concept) event detectors: market structure (BOS/CHoCH,
+two tiers), Order Blocks, Fair Value Gaps, and Equal Highs/Lows.
 
-Scope deliberately excludes liquidity sweeps / premium-discount zones --
-Wyckoff's Spring/Upthrust already cover the "sweep then reverse" idea, so
-adding an SMC-flavored duplicate would just be the same signal under a
-different name.
+Two independent structure tiers, matching LuxAlgo's reference indicator:
+"internal" (the original detector, swing_lookback -- despite the name, this
+app's long-tested default of 2 bars is closer to LuxAlgo's fast "internal"
+tier than to a real major-structure one) and "swing"/major (new,
+major_swing_lookback, matching this app's own established 20-bar
+convention). Both run the exact same BOS/CHoCH/Order-Block logic, just
+parameterized on which swing_high/swing_low columns and event-type
+constants to use -- see _detect_structure_tier/_detect_order_blocks_tier.
+
+Premium/Discount/Equilibrium zones (see app.smc.zones) were previously
+excluded here as "duplicative of Wyckoff Spring/Upthrust" -- re-added as a
+display-only reference (support/resistance-style context, not a gate on
+entries), not a duplicate signal.
 """
 
 from __future__ import annotations
@@ -27,6 +36,17 @@ BEARISH_FVG = "BearishFVG"
 EQUAL_HIGH = "EqualHigh"
 EQUAL_LOW = "EqualLow"
 
+# Major/"swing" structure tier -- see module docstring. Distinct event-type
+# strings (not a reuse of the tier above) so BOTH tiers can coexist in the
+# same event stream and signal_outcomes/trade_scenario history without one
+# silently overwriting what the other means.
+SWING_BOS_BULL = "SwingBOS_Bull"
+SWING_BOS_BEAR = "SwingBOS_Bear"
+SWING_CHOCH_BULL = "SwingCHoCH_Bull"
+SWING_CHOCH_BEAR = "SwingCHoCH_Bear"
+SWING_BULLISH_OB = "SwingBullishOB"
+SWING_BEARISH_OB = "SwingBearishOB"
+
 
 @dataclass
 class SMCEvent:
@@ -47,16 +67,29 @@ def _ts_at(df: pd.DataFrame, i: int):
     return ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
 
 
-def _detect_structure(df: pd.DataFrame, language: str = "vi") -> list[SMCEvent]:
+def _detect_structure_tier(
+    df: pd.DataFrame,
+    swing_high_col: str,
+    swing_low_col: str,
+    bos_bull: str,
+    bos_bear: str,
+    choch_bull: str,
+    choch_bear: str,
+    language: str = "vi",
+) -> list[SMCEvent]:
     """Walks confirmed swing highs/lows in chronological order, emitting BOS
     (break of structure -- continuation) or CHoCH (change of character --
     reversal) whenever price closes beyond the most recently "active" swing
     level. A broken level is consumed immediately so the same break can't
-    keep re-triggering before a new swing point forms."""
+    keep re-triggering before a new swing point forms.
+
+    Parameterized on which swing_high/swing_low columns to read and which
+    event-type strings to emit -- see module docstring on the two structure
+    tiers this drives (``_detect_structure``/``_detect_major_structure``)."""
     en = language == "en"
     events: list[SMCEvent] = []
-    swing_highs = [(i, df["high"].iloc[i]) for i in range(len(df)) if df["swing_high"].iloc[i]]
-    swing_lows = [(i, df["low"].iloc[i]) for i in range(len(df)) if df["swing_low"].iloc[i]]
+    swing_highs = [(i, df["high"].iloc[i]) for i in range(len(df)) if df[swing_high_col].iloc[i]]
+    swing_lows = [(i, df["low"].iloc[i]) for i in range(len(df)) if df[swing_low_col].iloc[i]]
 
     structure_trend: str | None = None  # None | "bullish" | "bearish"
     next_high_idx = 0
@@ -82,14 +115,14 @@ def _detect_structure(df: pd.DataFrame, language: str = "vi") -> list[SMCEvent]:
                     if en
                     else "Phá vỡ đỉnh swing gần nhất trong khi xu hướng đang giảm/chưa rõ -- đổi chiều xu hướng"
                 )
-                events.append(SMCEvent(CHOCH_BULL, i, _ts_at(df, i), float(close), note))
+                events.append(SMCEvent(choch_bull, i, _ts_at(df, i), float(close), note))
             else:
                 note = (
                     f"Closes above the last swing high {active_high:.2f} -- uptrend continues"
                     if en
                     else f"Đóng cửa vượt đỉnh swing gần nhất {active_high:.2f} -- xu hướng tăng tiếp diễn"
                 )
-                events.append(SMCEvent(BOS_BULL, i, _ts_at(df, i), float(close), note))
+                events.append(SMCEvent(bos_bull, i, _ts_at(df, i), float(close), note))
             structure_trend = "bullish"
             active_high = None  # consumed -- wait for the next confirmed swing high
 
@@ -100,18 +133,29 @@ def _detect_structure(df: pd.DataFrame, language: str = "vi") -> list[SMCEvent]:
                     if en
                     else "Phá vỡ đáy swing gần nhất trong khi xu hướng đang tăng/chưa rõ -- đổi chiều xu hướng"
                 )
-                events.append(SMCEvent(CHOCH_BEAR, i, _ts_at(df, i), float(close), note))
+                events.append(SMCEvent(choch_bear, i, _ts_at(df, i), float(close), note))
             else:
                 note = (
                     f"Closes below the last swing low {active_low:.2f} -- downtrend continues"
                     if en
                     else f"Đóng cửa phá đáy swing gần nhất {active_low:.2f} -- xu hướng giảm tiếp diễn"
                 )
-                events.append(SMCEvent(BOS_BEAR, i, _ts_at(df, i), float(close), note))
+                events.append(SMCEvent(bos_bear, i, _ts_at(df, i), float(close), note))
             structure_trend = "bearish"
             active_low = None
 
     return events
+
+
+def _detect_structure(df: pd.DataFrame, language: str = "vi") -> list[SMCEvent]:
+    return _detect_structure_tier(df, "swing_high", "swing_low", BOS_BULL, BOS_BEAR, CHOCH_BULL, CHOCH_BEAR, language)
+
+
+def _detect_major_structure(df: pd.DataFrame, language: str = "vi") -> list[SMCEvent]:
+    return _detect_structure_tier(
+        df, "major_swing_high", "major_swing_low",
+        SWING_BOS_BULL, SWING_BOS_BEAR, SWING_CHOCH_BULL, SWING_CHOCH_BEAR, language,
+    )
 
 
 def _is_high_volatility_bar(df: pd.DataFrame, i: int, cfg: SMCConfig) -> bool:
@@ -156,16 +200,27 @@ def _is_mitigated(df: pd.DataFrame, ob_idx: int, low: float, high: float, bullis
     return bool((subsequent_closes > high).any())
 
 
-def _detect_order_blocks(
-    df: pd.DataFrame, structure_events: list[SMCEvent], cfg: SMCConfig, language: str = "vi"
+def _detect_order_blocks_tier(
+    df: pd.DataFrame,
+    structure_events: list[SMCEvent],
+    cfg: SMCConfig,
+    source_bos_bull: str,
+    source_bos_bear: str,
+    bullish_ob: str,
+    bearish_ob: str,
+    language: str = "vi",
 ) -> list[SMCEvent]:
     """Order blocks are anchored to BOS (continuation), not CHoCH -- CHoCH is
     the reversal point itself; the order block is the supply/demand zone left
-    behind by the impulsive move that then confirms the new trend (BOS)."""
+    behind by the impulsive move that then confirms the new trend (BOS).
+
+    Parameterized so both structure tiers (see module docstring) can each get
+    their own order blocks from their own BOS events, tagged with their own
+    distinct event-type strings."""
     en = language == "en"
     events: list[SMCEvent] = []
     for e in structure_events:
-        if e.type == BOS_BULL:
+        if e.type == source_bos_bull:
             ob_idx = _find_order_block_index(df, e.index, cfg, bullish=True)
             if ob_idx is None:
                 continue
@@ -177,9 +232,9 @@ def _detect_order_blocks(
                 else f"Nến giảm cuối cùng trước cú bứt phá -- vùng {low:.2f}-{high:.2f} hay được test lại"
             )
             events.append(
-                SMCEvent(BULLISH_OB, ob_idx, _ts_at(df, ob_idx), float(df["close"].iloc[ob_idx]), note, mitigated)
+                SMCEvent(bullish_ob, ob_idx, _ts_at(df, ob_idx), float(df["close"].iloc[ob_idx]), note, mitigated)
             )
-        elif e.type == BOS_BEAR:
+        elif e.type == source_bos_bear:
             ob_idx = _find_order_block_index(df, e.index, cfg, bullish=False)
             if ob_idx is None:
                 continue
@@ -191,9 +246,23 @@ def _detect_order_blocks(
                 else f"Nến tăng cuối cùng trước cú gãy -- vùng {low:.2f}-{high:.2f} hay được test lại"
             )
             events.append(
-                SMCEvent(BEARISH_OB, ob_idx, _ts_at(df, ob_idx), float(df["close"].iloc[ob_idx]), note, mitigated)
+                SMCEvent(bearish_ob, ob_idx, _ts_at(df, ob_idx), float(df["close"].iloc[ob_idx]), note, mitigated)
             )
     return events
+
+
+def _detect_order_blocks(
+    df: pd.DataFrame, structure_events: list[SMCEvent], cfg: SMCConfig, language: str = "vi"
+) -> list[SMCEvent]:
+    return _detect_order_blocks_tier(df, structure_events, cfg, BOS_BULL, BOS_BEAR, BULLISH_OB, BEARISH_OB, language)
+
+
+def _detect_major_order_blocks(
+    df: pd.DataFrame, structure_events: list[SMCEvent], cfg: SMCConfig, language: str = "vi"
+) -> list[SMCEvent]:
+    return _detect_order_blocks_tier(
+        df, structure_events, cfg, SWING_BOS_BULL, SWING_BOS_BEAR, SWING_BULLISH_OB, SWING_BEARISH_OB, language,
+    )
 
 
 def _detect_fvg(df: pd.DataFrame, cfg: SMCConfig, language: str = "vi") -> list[SMCEvent]:
@@ -270,8 +339,12 @@ def _detect_equal_highs_lows(df: pd.DataFrame, cfg: SMCConfig, language: str = "
 def detect_events(df: pd.DataFrame, cfg: SMCConfig = DEFAULT_CONFIG, language: str = "vi") -> list[SMCEvent]:
     structure_events = _detect_structure(df, language)
     ob_events = _detect_order_blocks(df, structure_events, cfg, language)
+    major_structure_events = _detect_major_structure(df, language)
+    major_ob_events = _detect_major_order_blocks(df, major_structure_events, cfg, language)
     fvg_events = _detect_fvg(df, cfg, language)
     eq_events = _detect_equal_highs_lows(df, cfg, language)
-    events = structure_events + ob_events + fvg_events + eq_events
+    events = (
+        structure_events + ob_events + major_structure_events + major_ob_events + fvg_events + eq_events
+    )
     events.sort(key=lambda e: e.index)
     return events

@@ -23,7 +23,6 @@ from app.services import activity_log
 from app.smc.config import SMCConfig
 from app.sonicr.config import SonicRConfig
 from app.strategies import registry as strategy_registry
-from app.wyckoff import accumulation
 from app.wyckoff.config import WyckoffConfig
 
 KEY_API = "anthropic_api_key"
@@ -258,10 +257,6 @@ def get_strategy_config(session: Session, strategy: str):
         return get_sonicr_config(session)
     if strategy == "smc":
         return get_smc_config(session)
-    if strategy == "accumulation":
-        # Not yet exposed for tuning via Settings -- see
-        # app.wyckoff.accumulation.AccumulationConfig's own docstring.
-        return accumulation.DEFAULT_CONFIG
     return get_wyckoff_config(session)
 
 

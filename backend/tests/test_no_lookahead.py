@@ -44,7 +44,6 @@ _STRATEGY_CONFIGS = {
     "wyckoff": WyckoffConfig(),
     "smc": SMCConfig(),
     "sonicr": SonicRConfig(),
-    "accumulation": None,  # unused -- see app.wyckoff.accumulation.analyze()
 }
 
 

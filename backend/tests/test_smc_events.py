@@ -15,6 +15,8 @@ from app.smc.events import (
     CHOCH_BULL,
     EQUAL_HIGH,
     EQUAL_LOW,
+    LIQUIDITY_SWEEP_BEAR,
+    LIQUIDITY_SWEEP_BULL,
     SWING_BOS_BULL,
     SWING_BULLISH_OB,
     SWING_CHOCH_BULL,
@@ -398,3 +400,81 @@ def test_language_switches_note_text():
     choch_en = _by_type(events_en, CHOCH_BULL)[0]
     assert "đổi chiều" in choch_vi.note
     assert "reversal" in choch_en.note
+
+
+# --- Liquidity Sweeps (LuxAlgo's separate "Liquidity Sweeps" indicator,
+# "Wicks + Outbreaks & Retest" mode) -- own pivot pass (sweep_lookback),
+# unrelated to the swing_lookback/major_swing_lookback structure tiers above.
+SWEEP_CFG = SMCConfig(swing_lookback=2, sweep_lookback=2, ob_lookback_bars=10, fvg_min_gap_mult=0.3)
+
+
+def test_liquidity_sweep_bullish_from_a_wick_below_a_swing_low():
+    values = [110, 108, 105, 108, 110]  # swing low confirmed at index 2, price 104.5 (low = close-0.5)
+    opens, highs, lows, closes = _zigzag(values)
+    # Wicks below the swing low (104.5) but closes back above it.
+    opens.append(105.0); closes.append(105.5); highs.append(106.0); lows.append(104.0)  # noqa: E702
+
+    feat = compute_features(_df(opens, highs, lows, closes), SWEEP_CFG)
+    events = detect_events(feat, SWEEP_CFG)
+
+    sweeps = _by_type(events, LIQUIDITY_SWEEP_BULL)
+    assert len(sweeps) == 1
+    assert sweeps[0].index == 5
+
+
+def test_liquidity_sweep_bearish_from_a_wick_above_a_swing_high():
+    values = [100, 105, 110, 105, 100]  # swing high confirmed at index 2, price 110.5 (high = close+0.5)
+    opens, highs, lows, closes = _zigzag(values)
+    # Wicks above the swing high (110.5) but closes back below it.
+    opens.append(110.0); closes.append(109.5); highs.append(111.0); lows.append(109.0)  # noqa: E702
+
+    feat = compute_features(_df(opens, highs, lows, closes), SWEEP_CFG)
+    events = detect_events(feat, SWEEP_CFG)
+
+    sweeps = _by_type(events, LIQUIDITY_SWEEP_BEAR)
+    assert len(sweeps) == 1
+    assert sweeps[0].index == 5
+
+
+def test_liquidity_sweep_bullish_from_a_retest_holding_above_a_broken_swing_high():
+    values = [100, 105, 110, 105, 100]  # swing high confirmed at index 2, price 110.5
+    opens, highs, lows, closes = _zigzag(values)
+    opens.append(110.0); closes.append(112.0); highs.append(112.5); lows.append(109.5)  # noqa: E702  breakout
+    opens.append(111.0); closes.append(111.5); highs.append(112.0); lows.append(110.0)  # noqa: E702  retest holds
+
+    feat = compute_features(_df(opens, highs, lows, closes), SWEEP_CFG)
+    events = detect_events(feat, SWEEP_CFG)
+
+    sweeps = _by_type(events, LIQUIDITY_SWEEP_BULL)
+    assert len(sweeps) == 1
+    assert sweeps[0].index == 6
+
+
+def test_liquidity_sweep_bearish_from_a_retest_holding_below_a_broken_swing_low():
+    values = [110, 108, 105, 108, 110]  # swing low confirmed at index 2, price 104.5
+    opens, highs, lows, closes = _zigzag(values)
+    opens.append(105.0); closes.append(103.0); highs.append(105.5); lows.append(102.5)  # noqa: E702  breakdown
+    opens.append(104.0); closes.append(103.5); highs.append(105.0); lows.append(103.0)  # noqa: E702  retest holds
+
+    feat = compute_features(_df(opens, highs, lows, closes), SWEEP_CFG)
+    events = detect_events(feat, SWEEP_CFG)
+
+    sweeps = _by_type(events, LIQUIDITY_SWEEP_BEAR)
+    assert len(sweeps) == 1
+    assert sweeps[0].index == 6
+
+
+def test_no_retest_sweep_once_a_broken_level_is_mitigated():
+    # Breakout above the swing high, then price closes BACK BELOW it (the
+    # breakout fails/is mitigated) -- the pivot is dropped, so a later
+    # dip-and-hold must NOT fire a retest sweep for an already-abandoned level.
+    values = [100, 105, 110, 105, 100]  # swing high confirmed at index 2, price 110.5
+    opens, highs, lows, closes = _zigzag(values)
+    opens.append(110.0); closes.append(112.0); highs.append(112.5); lows.append(109.5)  # noqa: E702  breakout
+    opens.append(111.0); closes.append(109.0); highs.append(111.5); lows.append(108.5)  # noqa: E702  mitigated (closes below 110.5)
+    opens.append(111.0); closes.append(111.5); highs.append(112.0); lows.append(110.0)  # noqa: E702  would-be retest -- pivot already dropped
+
+    feat = compute_features(_df(opens, highs, lows, closes), SWEEP_CFG)
+    events = detect_events(feat, SWEEP_CFG)
+
+    assert not _by_type(events, LIQUIDITY_SWEEP_BULL)

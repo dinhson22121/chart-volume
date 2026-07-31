@@ -42,6 +42,13 @@ class SMCConfig:
     # shorter-window pivot pass + true ATR(200) -- one fewer independent
     # parameter pair, at the cost of not being a perfectly faithful port.
     eq_threshold_mult: float = 0.1
+    # Liquidity Sweeps (LuxAlgo's separate "Liquidity Sweeps" indicator, not
+    # the main Structure one): bars on each side to confirm a swing pivot for
+    # sweep detection -- LuxAlgo's own default is 5. A SEPARATE lookback from
+    # swing_lookback/major_swing_lookback above (which were independently
+    # tuned for this app's own structure detection) since this pivot pass
+    # feeds an unrelated detector.
+    sweep_lookback: int = 5
 
 
 DEFAULT_CONFIG = SMCConfig()

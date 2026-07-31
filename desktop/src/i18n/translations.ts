@@ -524,6 +524,8 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "signal.BearishOB": "Order Block giảm — vùng cung hay được test lại",
     "signal.BullishFVG": "Fair Value Gap tăng — khoảng trống giá hay được lấp",
     "signal.BearishFVG": "Fair Value Gap giảm — khoảng trống giá hay được lấp",
+    "signal.LiquiditySweep_Bull": "Quét thanh khoản Tăng — bấc/test lại xác nhận đảo chiều hoặc tiếp diễn tăng",
+    "signal.LiquiditySweep_Bear": "Quét thanh khoản Giảm — bấc/test lại xác nhận đảo chiều hoặc tiếp diễn giảm",
   },
 
   en: {
@@ -1043,5 +1045,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "signal.BearishOB": "Bearish Order Block — supply zone often retested",
     "signal.BullishFVG": "Bullish Fair Value Gap — price gap often filled",
     "signal.BearishFVG": "Bearish Fair Value Gap — price gap often filled",
+    "signal.LiquiditySweep_Bull": "Bullish Liquidity Sweep — wick/retest confirms a bullish reversal or continuation",
+    "signal.LiquiditySweep_Bear": "Bearish Liquidity Sweep — wick/retest confirms a bearish reversal or continuation",
   },
 };

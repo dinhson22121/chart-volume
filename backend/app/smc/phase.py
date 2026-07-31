@@ -61,6 +61,14 @@ BEARISH_EVENTS = _BEARISH_SUPPORT | {CHOCH_BEAR, SWING_CHOCH_BEAR}
 # trending (Bullish/Bearish Structure).
 RANGING_PHASES = {PHASE_RANGING}
 
+# A Liquidity Sweep confirmation gate (require a same-direction sweep within
+# N bars before a structure/OB event) was tried and removed --
+# scripts/backtest_liquidity_sweep_gate.py showed every tested lookback
+# window (5/10/15/20 bars) underperformed taking every qualifying event
+# ungated, on VN30 holdout. LiquiditySweep_Bull/Bear (app.smc.events) are
+# still detected and recorded via signal_outcomes for reference; see git
+# history for the removed LIQUIDITY_SWEEP_CONFIRMATION mapping.
+
 _PHASE_TREND = {
     PHASE_BULLISH: TREND_BULLISH,
     PHASE_BEARISH: TREND_BEARISH,

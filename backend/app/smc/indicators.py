@@ -64,4 +64,16 @@ def compute_features(df: pd.DataFrame, cfg: SMCConfig = DEFAULT_CONFIG) -> pd.Da
     out["major_swing_high"] = major_swing_high
     out["major_swing_low"] = major_swing_low
 
+    # Separate pivot pass for Liquidity Sweep detection (see
+    # app.smc.events._detect_liquidity_sweeps) -- its own lookback,
+    # independent of swing_lookback/major_swing_lookback above.
+    sweep_lookback = cfg.sweep_lookback
+    sweep_swing_high = [False] * n
+    sweep_swing_low = [False] * n
+    for i in range(sweep_lookback, n - sweep_lookback):
+        sweep_swing_high[i] = _is_swing_high(out["high"], i, sweep_lookback)
+        sweep_swing_low[i] = _is_swing_low(out["low"], i, sweep_lookback)
+    out["sweep_swing_high"] = sweep_swing_high
+    out["sweep_swing_low"] = sweep_swing_low
+
     return out

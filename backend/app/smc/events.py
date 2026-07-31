@@ -1,5 +1,6 @@
 """SMC (Smart Money Concept) event detectors: market structure (BOS/CHoCH,
-two tiers), Order Blocks, Fair Value Gaps, and Equal Highs/Lows.
+two tiers), Order Blocks, Fair Value Gaps, Equal Highs/Lows, and Liquidity
+Sweeps.
 
 Two independent structure tiers, matching LuxAlgo's reference indicator:
 "internal" (the original detector, swing_lookback -- despite the name, this
@@ -14,6 +15,16 @@ Premium/Discount/Equilibrium zones (see app.smc.zones) were previously
 excluded here as "duplicative of Wyckoff Spring/Upthrust" -- re-added as a
 display-only reference (support/resistance-style context, not a gate on
 entries), not a duplicate signal.
+
+Liquidity Sweeps (_detect_liquidity_sweeps) ports LuxAlgo's SEPARATE
+"Liquidity Sweeps" indicator ("Wicks + Outbreaks & Retest" mode) -- its own
+pivot pass (sweep_lookback), unrelated to the two structure tiers above.
+Tried as a confirmation GATE on BOS/CHoCH/Order-Block trade creation, shipped
+without a prior backtest per explicit user direction -- a backtest
+afterward (scripts/backtest_liquidity_sweep_gate.py) showed every tested
+lookback window underperformed no gate at all, so the gate was removed
+(see app.smc.phase's history). LiquiditySweep_Bull/Bear are still detected
+and recorded via signal_outcomes, display-only like Equal Highs/Lows.
 """
 
 from __future__ import annotations
@@ -35,6 +46,16 @@ BULLISH_FVG = "BullishFVG"
 BEARISH_FVG = "BearishFVG"
 EQUAL_HIGH = "EqualHigh"
 EQUAL_LOW = "EqualLow"
+
+# Liquidity Sweeps (LuxAlgo's separate "Liquidity Sweeps" indicator -- see
+# _detect_liquidity_sweeps): a bullish sweep is either a wick below a swing
+# low that closes back above it (a stop-hunt reversal, the SMC equivalent of
+# Wyckoff's Spring), OR a retest that holds above a previously-broken swing
+# high (continuation confirmation). Bearish is the mirror. Both mechanisms
+# collapse to these 2 event types, matching LuxAlgo's own "Wicks + Outbreaks
+# & Retest" mode (both colored the same regardless of which mechanism fired).
+LIQUIDITY_SWEEP_BULL = "LiquiditySweep_Bull"
+LIQUIDITY_SWEEP_BEAR = "LiquiditySweep_Bear"
 
 # Major/"swing" structure tier -- see module docstring. Distinct event-type
 # strings (not a reuse of the tier above) so BOTH tiers can coexist in the
@@ -348,6 +369,116 @@ def _detect_equal_highs_lows(df: pd.DataFrame, cfg: SMCConfig, language: str = "
     return events
 
 
+class _SweepPivot:
+    """Tracks one swing pivot's state as later bars are scanned -- mirrors
+    LuxAlgo's per-pivot `piv` UDT (this port only needs the two booleans that
+    matter for "Wicks + Outbreaks & Retest" mode: whether a real breakout has
+    already been confirmed, and whether the wick-sweep has already fired once
+    for this pivot, since it should only ever fire once per pivot)."""
+
+    __slots__ = ("index", "price", "broken", "wick_fired")
+
+    def __init__(self, index: int, price: float):
+        self.index = index
+        self.price = price
+        self.broken = False
+        self.wick_fired = False
+
+
+def _detect_liquidity_sweeps(df: pd.DataFrame, language: str = "vi") -> list[SMCEvent]:
+    """Port of LuxAlgo's "Liquidity Sweeps" indicator, "Wicks + Outbreaks &
+    Retest" mode (both sweep mechanisms active): for each swing high/low
+    pivot, scans forward bar by bar tracking whether it has been broken (a
+    later close crosses through it) and, once broken, whether that breakout
+    later fails (mitigated -- pivot dropped) or holds on a retest (fires the
+    continuation-confirmation sweep). Before a breakout, a wick beyond the
+    pivot that closes back on the other side fires the reversal (stop-hunt)
+    sweep once per pivot.
+
+    Uses its own ``sweep_swing_high``/``sweep_swing_low`` pivot columns (see
+    app.smc.indicators), independent of the Structure detector's swing
+    columns -- LuxAlgo's Liquidity Sweeps and Structure are separate
+    indicators with their own pivot lookbacks."""
+    en = language == "en"
+    events: list[SMCEvent] = []
+    n = len(df)
+
+    high_pivots: list[_SweepPivot] = []
+    low_pivots: list[_SweepPivot] = []
+
+    for i in range(n):
+        close = df["close"].iloc[i]
+        high = df["high"].iloc[i]
+        low = df["low"].iloc[i]
+
+        remaining_high_pivots: list[_SweepPivot] = []
+        for piv in high_pivots:
+            if not piv.broken:
+                if close > piv.price:
+                    piv.broken = True
+                elif not piv.wick_fired and high > piv.price and close < piv.price:
+                    note = (
+                        f"Wick above {piv.price:.2f} closes back below -- liquidity swept, reversal"
+                        if en
+                        else f"Bấc chọc qua {piv.price:.2f} rồi đóng cửa trở lại dưới -- quét thanh khoản, đảo chiều"
+                    )
+                    events.append(SMCEvent(LIQUIDITY_SWEEP_BEAR, i, _ts_at(df, i), float(close), note))
+                    piv.wick_fired = True
+                remaining_high_pivots.append(piv)
+            else:
+                if close < piv.price:
+                    continue  # mitigated -- breakout failed, drop the pivot
+                if low < piv.price and close > piv.price:
+                    note = (
+                        f"Retest of broken {piv.price:.2f} holds -- continuation confirmed"
+                        if en
+                        else f"Test lại mức {piv.price:.2f} vừa vỡ vẫn giữ được -- xác nhận tiếp diễn"
+                    )
+                    events.append(SMCEvent(LIQUIDITY_SWEEP_BULL, i, _ts_at(df, i), float(close), note))
+                    continue  # taken -- drop the pivot, it already confirmed
+                remaining_high_pivots.append(piv)
+        high_pivots = remaining_high_pivots
+
+        remaining_low_pivots: list[_SweepPivot] = []
+        for piv in low_pivots:
+            if not piv.broken:
+                if close < piv.price:
+                    piv.broken = True
+                elif not piv.wick_fired and low < piv.price and close > piv.price:
+                    note = (
+                        f"Wick below {piv.price:.2f} closes back above -- liquidity swept, reversal"
+                        if en
+                        else f"Bấc chọc xuống {piv.price:.2f} rồi đóng cửa trở lại trên -- quét thanh khoản, đảo chiều"
+                    )
+                    events.append(SMCEvent(LIQUIDITY_SWEEP_BULL, i, _ts_at(df, i), float(close), note))
+                    piv.wick_fired = True
+                remaining_low_pivots.append(piv)
+            else:
+                if close > piv.price:
+                    continue  # mitigated -- breakdown failed, drop the pivot
+                if high > piv.price and close < piv.price:
+                    note = (
+                        f"Retest of broken {piv.price:.2f} holds -- continuation confirmed"
+                        if en
+                        else f"Test lại mức {piv.price:.2f} vừa gãy vẫn giữ được -- xác nhận tiếp diễn"
+                    )
+                    events.append(SMCEvent(LIQUIDITY_SWEEP_BEAR, i, _ts_at(df, i), float(close), note))
+                    continue  # taken -- drop the pivot, it already confirmed
+                remaining_low_pivots.append(piv)
+        low_pivots = remaining_low_pivots
+
+        # A pivot only confirms cfg.sweep_lookback bars after its own bar (a
+        # fractal needs bars on both sides) -- this is exactly when
+        # sweep_swing_high/low go True for it, so start tracking it from here.
+        if df["sweep_swing_high"].iloc[i]:
+            high_pivots.append(_SweepPivot(i, float(high)))
+        if df["sweep_swing_low"].iloc[i]:
+            low_pivots.append(_SweepPivot(i, float(low)))
+
+    events.sort(key=lambda e: e.index)
+    return events
+
+
 def detect_events(df: pd.DataFrame, cfg: SMCConfig = DEFAULT_CONFIG, language: str = "vi") -> list[SMCEvent]:
     structure_events = _detect_structure(df, language)
     ob_events = _detect_order_blocks(df, structure_events, cfg, language)
@@ -355,8 +486,10 @@ def detect_events(df: pd.DataFrame, cfg: SMCConfig = DEFAULT_CONFIG, language: s
     major_ob_events = _detect_major_order_blocks(df, major_structure_events, cfg, language)
     fvg_events = _detect_fvg(df, cfg, language)
     eq_events = _detect_equal_highs_lows(df, cfg, language)
+    sweep_events = _detect_liquidity_sweeps(df, language)
     events = (
-        structure_events + ob_events + major_structure_events + major_ob_events + fvg_events + eq_events
+        structure_events + ob_events + major_structure_events + major_ob_events
+        + fvg_events + eq_events + sweep_events
     )
     events.sort(key=lambda e: e.index)
     return events

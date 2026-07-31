@@ -36,7 +36,7 @@ const COLORS = {
   poc: "#ce93d8",
   valueArea: "#78909c",
   premium: "#e0574b",
-  discount: "#2ebd85",
+  discount: "#f0c419",
 };
 
 // Translucent fills for zone bands (addZoneBand) -- separate from the
@@ -46,7 +46,7 @@ const ZONE_FILL = {
   support: "rgba(46, 189, 133, 0.22)",
   resistance: "rgba(224, 165, 78, 0.22)",
   premium: "rgba(224, 87, 75, 0.18)",
-  discount: "rgba(46, 189, 133, 0.18)",
+  discount: "rgba(240, 196, 25, 0.18)",
   valueArea: "rgba(120, 144, 156, 0.25)",
   bullOb: "rgba(79, 195, 247, 0.22)",
   bearOb: "rgba(224, 87, 75, 0.22)",

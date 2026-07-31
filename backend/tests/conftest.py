@@ -39,22 +39,3 @@ def session() -> Session:
         yield sess
 
 
-@pytest.fixture(autouse=True)
-def _neutral_entry_quality_filters(monkeypatch):
-    """Turn OFF the entry-quality filters (POI zone, minimum RR -- see
-    app.services.trade_scenario) for every test by default.
-
-    Those two gates decide WHETHER a setup is worth taking; almost every
-    scenario test here is about something else entirely (entry/SL/TP
-    formulas, max_bars, the trailing-stop exit, backtest replay ordering,
-    idempotency) and builds a minimal synthetic fixture -- a flat 90/110
-    range entered near 100 -- that the production defaults reject outright,
-    which would leave those tests asserting on a scenario that was never
-    created. Neutralizing the gates keeps each test exercising the one thing
-    it names; the gates themselves are covered directly by their own tests
-    (see test_trade_scenario.py's POI/RR section), which set the knobs
-    explicitly rather than relying on this fixture."""
-    from app.services import trade_scenario
-
-    monkeypatch.setattr(trade_scenario, "POI_ZONE_THRESHOLD_PCT", 0.0)
-    monkeypatch.setattr(trade_scenario, "MIN_RR_RATIO", 0.0)

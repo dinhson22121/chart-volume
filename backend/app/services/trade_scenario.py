@@ -82,49 +82,19 @@ MIN_RELIABLE_SAMPLE_SIZE = 30
 # take_profit's own docstring note on what it means now.
 TRAIL_ATR_MULT = 1.5
 
-# --- Entry-quality filters from the SMC execution spec ------------------
-# Two rules from that spec, both validated on VN30 before being enabled
-# (scripts/backtest_smc_entry_filters.py, 14 variants across 2 rounds). All
-# 13 filtered variants beat the unfiltered baseline, and the improvement was
-# monotonic in filter strength on holdout MEDIAN r-multiple, not just mean
-# (-0.05 unfiltered -> +1.21 here) -- a median that moves like that can't be
-# one lucky outlier, which is what separates this from the liquidity-sweep
-# gate tried earlier this session and reverted when its backtest came back
-# worse. Measured at these settings, VN30 holdout: n=65 mean_r=+3.82
-# median_r=+1.21 win_rate=73.8% bootstrap_ci=[0.328, 0.651]
-# walk_forward=1.00, vs baseline n=201 mean_r=+1.20 median_r=-0.05
-# win_rate=47.8% ci=[0.158, 0.321]. The tradeoff is real: roughly a third as
-# many trades survive.
+# --- Entry-quality filters -----------------------------------------------
+# Owned by the STRATEGY, not by this module: read off strategy_module via
+# getattr with a neutral default, so a strategy that doesn't declare them is
+# gated exactly as it was before they existed. Only app.smc declares them
+# (see app.smc.phase, which carries the measurements and the reasoning);
+# they were validated against SMC's own baseline and nothing says they
+# transfer to Wyckoff's or Sonic R's very different entry semantics.
 #
-# Deliberately NOT the best-scoring variant (a 0.33 threshold scored
-# slightly higher still). Both numbers below are doctrine, not fitted: 0.5
-# is the textbook discount/premium split and 3.0 is the spec's own stated
-# minimum, so neither was tuned against the data it's evaluated on -- only
-# the SCOPE (below) was, and 0.33-vs-0.5 was well inside the noise at n<70.
-
-# Classic SMC "don't buy in premium, don't sell in discount": the entry must
-# sit in the favorable fraction of the current [support, resistance] range.
-# 0.0 disables the filter.
-POI_ZONE_THRESHOLD_PCT = 0.5
-# Which event types the filter applies to; empty = every qualifying type.
-# The spec names Order Blocks and Fair Value Gaps specifically, but applying
-# it to every entry type measured strictly better (holdout mean_r +3.82 vs
-# +2.72, median +1.21 vs +0.43) -- "don't buy at the top of the range"
-# turns out to hold for breakout entries too, not just pullbacks into a zone.
-POI_ZONE_FILTER_TYPES: frozenset[str] = frozenset()
-
-# Reject a setup whose measured-move take-profit isn't at least this many
-# times its own stop distance. 0.0 disables the filter.
-MIN_RR_RATIO = 3.0
-
-# The spec's third rule -- "place the stop at the refined Order Block" -- is
-# already satisfied and needs no flag: an Order Block event's own index IS
-# its anchor candle (see app.smc.events._detect_order_blocks_tier, which
-# builds SMCEvent(bullish_ob, ob_idx, ..., zone_low=df.low[ob_idx],
-# zone_high=df.high[ob_idx])), and the stop below is taken from
-# candles[event.index].low/high -- the same bar, so the same prices. A
-# SL_FROM_OB_ZONE variant was implemented and backtested anyway to confirm
-# it: byte-identical to the baseline on every VN30 metric, as expected.
+# Same defensive-attribute shape as TREND_CONTINUATION_EVENTS below and
+# SMCEvent.mitigated -- one strategy's concept, kept out of every other
+# strategy's path rather than made global.
+_NO_POI_ZONE_FILTER = 0.0
+_NO_MIN_RR = 0.0
 
 # NoDemand/NoSupply (app.wyckoff.events) are "supporting" signals that fire
 # *inside* an already-established trend (an absorption bar showing a lack of
@@ -401,17 +371,18 @@ def _pre_event_range_height(candles: list[Candle], event_index: int, levels: Lev
     return max(c.high for c in window) - min(c.low for c in window)
 
 
-def _entry_is_in_favorable_zone(entry: float, levels: Levels, is_bullish: bool) -> bool:
-    """Classic SMC discount/premium check (see POI_ZONE_THRESHOLD_PCT): a buy
-    should sit in the lower part of the active range, a sell in the upper
-    part. A degenerate (zero-width) range can't say anything either way, so
-    it passes rather than blocking every entry on a flat series."""
+def _entry_is_in_favorable_zone(entry: float, levels: Levels, is_bullish: bool, threshold_pct: float) -> bool:
+    """Classic SMC discount/premium check (see app.smc.phase's
+    POI_ZONE_THRESHOLD_PCT): a buy should sit in the lower part of the active
+    range, a sell in the upper part. A degenerate (zero-width) range can't say
+    anything either way, so it passes rather than blocking every entry on a
+    flat series."""
     range_size = levels.resistance - levels.support
     if range_size <= 0:
         return True
     if is_bullish:
-        return entry <= levels.support + POI_ZONE_THRESHOLD_PCT * range_size
-    return entry >= levels.resistance - POI_ZONE_THRESHOLD_PCT * range_size
+        return entry <= levels.support + threshold_pct * range_size
+    return entry >= levels.resistance - threshold_pct * range_size
 
 
 def _atr(candles: list[Candle], period: int = ATR_PERIOD) -> float | None:
@@ -545,9 +516,13 @@ def _build_scenario_candidate(
     # above.
     entry = candles[event.index + 1].open
 
-    # POI zone filter (see POI_ZONE_THRESHOLD_PCT) -- disabled by default.
-    if POI_ZONE_THRESHOLD_PCT > 0 and (not POI_ZONE_FILTER_TYPES or event.type in POI_ZONE_FILTER_TYPES):
-        if not _entry_is_in_favorable_zone(entry, levels, is_bullish):
+    # Entry-quality filters -- SMC-only, declared on the strategy module (see
+    # the _NO_POI_ZONE_FILTER note above); every other strategy takes the
+    # neutral defaults and is gated exactly as before.
+    poi_threshold = getattr(strategy_module, "POI_ZONE_THRESHOLD_PCT", _NO_POI_ZONE_FILTER)
+    poi_types = getattr(strategy_module, "POI_ZONE_FILTER_TYPES", frozenset())
+    if poi_threshold > 0 and (not poi_types or event.type in poi_types):
+        if not _entry_is_in_favorable_zone(entry, levels, is_bullish, poi_threshold):
             return None
 
     range_height = min(_pre_event_range_height(candles, event.index, levels), entry * MAX_RANGE_HEIGHT_PCT)
@@ -555,10 +530,10 @@ def _build_scenario_candidate(
     stop_loss = bar.low * (1 - SL_BUFFER_PCT) if is_bullish else bar.high * (1 + SL_BUFFER_PCT)
     take_profit = entry + range_height if is_bullish else entry - range_height
 
-    # Minimum reward:risk (see MIN_RR_RATIO) -- disabled by default.
-    if MIN_RR_RATIO > 0:
+    min_rr = getattr(strategy_module, "MIN_RR_RATIO", _NO_MIN_RR)
+    if min_rr > 0:
         risk_distance = abs(entry - stop_loss)
-        if not risk_distance or abs(take_profit - entry) / risk_distance < MIN_RR_RATIO:
+        if not risk_distance or abs(take_profit - entry) / risk_distance < min_rr:
             return None
 
     max_bars = _compute_max_bars(candles[: event.index], abs(take_profit - entry))

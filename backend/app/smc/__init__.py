@@ -14,7 +14,16 @@ from __future__ import annotations
 from app.smc.config import DEFAULT_CONFIG, SMCConfig
 from app.smc.events import SMCEvent, detect_events
 from app.smc.indicators import compute_features
-from app.smc.phase import BEARISH_EVENTS, BULLISH_EVENTS, RANGING_PHASES, classify_structure, phase_trend
+from app.smc.phase import (
+    BEARISH_EVENTS,
+    BULLISH_EVENTS,
+    MIN_RR_RATIO,
+    POI_ZONE_FILTER_TYPES,
+    POI_ZONE_THRESHOLD_PCT,
+    RANGING_PHASES,
+    classify_structure,
+    phase_trend,
+)
 from app.smc.zones import compute_zones
 from app.wyckoff import MIN_BARS, AnalysisResult, Levels, candles_to_dataframe
 
@@ -24,6 +33,11 @@ __all__ = [
     "BULLISH_EVENTS",
     "BEARISH_EVENTS",
     "RANGING_PHASES",
+    # Read by app.services.trade_scenario via getattr on this module -- see
+    # app.smc.phase's own note on why these are SMC-scoped, not global.
+    "POI_ZONE_THRESHOLD_PCT",
+    "POI_ZONE_FILTER_TYPES",
+    "MIN_RR_RATIO",
     "phase_trend",
     "analyze",
 ]

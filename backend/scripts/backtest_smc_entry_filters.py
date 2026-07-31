@@ -1,17 +1,21 @@
 """One-off backtest: do the SMC execution spec's entry-quality rules beat
 this app's validated SMC baseline? (The answer, measured: yes -- see
-trade_scenario.POI_ZONE_THRESHOLD_PCT / MIN_RR_RATIO, now enabled by
+app.smc.phase's POI_ZONE_THRESHOLD_PCT / MIN_RR_RATIO, now enabled by
 default at the settings this script picked.)
 
 The spec prescribed three rules the app didn't have:
   1. POI within Discount/Premium -- only buy in the lower part of the active
-     range, only sell in the upper (trade_scenario.POI_ZONE_THRESHOLD_PCT).
-  2. Minimum 1:3 reward:risk (trade_scenario.MIN_RR_RATIO).
+     range, only sell in the upper (POI_ZONE_THRESHOLD_PCT).
+  2. Minimum 1:3 reward:risk (MIN_RR_RATIO).
   3. Stop at the refined Order Block's own zone edge. NOT swept here: the
      app already did exactly this, since an Order Block event's index IS its
      anchor candle, so candles[event.index].low/high are that zone's edges.
      A flag for it was implemented and measured byte-identical to baseline,
-     then removed as redundant -- see trade_scenario's own note.
+     then removed as redundant -- see app.smc.phase's own note.
+
+Both knobs live on the SMC module and are read by trade_scenario through
+getattr, so this sweep patches them on `smc` -- Wyckoff and Sonic R declare
+neither and are unaffected by anything measured here.
 
 Both surviving rules shipped disabled and were swept against a genuine
 no-filter baseline before their defaults flipped -- the liquidity-sweep
@@ -36,7 +40,7 @@ from sqlmodel import Session  # noqa: E402
 from app import smc  # noqa: E402
 from app.db import get_engine  # noqa: E402
 from app.models import Symbol, Timeframe  # noqa: E402
-from app.services import scenario_backtest, settings_service, trade_scenario  # noqa: E402
+from app.services import scenario_backtest, settings_service  # noqa: E402
 from scripts.optimize_wyckoff import (  # noqa: E402
     N_TIME_SLICES,
     OPT_HOLDOUT_CUTOFF,
@@ -71,7 +75,7 @@ _ALL_TYPES: frozenset[str] = frozenset()  # empty == "apply to every qualifying 
 #   POI-half-ALL +RR2  n= 87  mean_r=+2.88  median=+0.67  ci=[0.266, 0.534]
 #   spec combined      n= 86  mean_r=+2.72  median=+0.43  ci=[0.258, 0.520]
 #   baseline           n=201  mean_r=+1.20  median=-0.05  ci=[0.158, 0.321]
-# The shipped pick is deliberately not the top row -- see trade_scenario's
+# The shipped pick is deliberately not the top row -- see app.smc.phase's
 # note on why 0.5/3.0 (both doctrine, neither fitted) was preferred over a
 # 0.33 threshold whose edge over 0.5 was inside the noise at n<70.
 VARIANTS: dict[str, tuple] = {
@@ -99,9 +103,9 @@ def main() -> None:
         }
 
         originals = (
-            trade_scenario.POI_ZONE_THRESHOLD_PCT,
-            trade_scenario.POI_ZONE_FILTER_TYPES,
-            trade_scenario.MIN_RR_RATIO,
+            smc.POI_ZONE_THRESHOLD_PCT,
+            smc.POI_ZONE_FILTER_TYPES,
+            smc.MIN_RR_RATIO,
         )
 
         for i, ticker in enumerate(tickers, 1):
@@ -129,9 +133,9 @@ def main() -> None:
                 result = smc.analyze(candles, smc.DEFAULT_CONFIG, None, "vi")
 
                 for name, (poi_pct, poi_types, min_rr) in VARIANTS.items():
-                    trade_scenario.POI_ZONE_THRESHOLD_PCT = poi_pct
-                    trade_scenario.POI_ZONE_FILTER_TYPES = poi_types
-                    trade_scenario.MIN_RR_RATIO = min_rr
+                    smc.POI_ZONE_THRESHOLD_PCT = poi_pct
+                    smc.POI_ZONE_FILTER_TYPES = poi_types
+                    smc.MIN_RR_RATIO = min_rr
                     try:
                         scenarios = scenario_backtest.walk_events(
                             ticker, Timeframe.DAILY, STRATEGY, candles, result.events,
@@ -140,9 +144,9 @@ def main() -> None:
                         )
                     finally:
                         (
-                            trade_scenario.POI_ZONE_THRESHOLD_PCT,
-                            trade_scenario.POI_ZONE_FILTER_TYPES,
-                            trade_scenario.MIN_RR_RATIO,
+                            smc.POI_ZONE_THRESHOLD_PCT,
+                            smc.POI_ZONE_FILTER_TYPES,
+                            smc.MIN_RR_RATIO,
                         ) = originals
 
                     bucket = buckets[name]

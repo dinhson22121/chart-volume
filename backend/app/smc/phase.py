@@ -69,6 +69,56 @@ RANGING_PHASES = {PHASE_RANGING}
 # still detected and recorded via signal_outcomes for reference; see git
 # history for the removed LIQUIDITY_SWEEP_CONFIRMATION mapping.
 
+# --- Entry-quality filters (SMC only) ------------------------------------
+# Two rules from an SMC execution spec, read by
+# app.services.trade_scenario._build_scenario_candidate via getattr on this
+# strategy module -- deliberately NOT global constants there. They were
+# measured against SMC's own baseline only; Wyckoff and Sonic R have quite
+# different entry semantics (a Spring is by construction near the bottom of
+# its range, so a discount gate means something else entirely for it), and
+# nothing tested says these transfer. Those two strategies get the neutral
+# defaults and behave exactly as they did before this existed.
+#
+# Validated on VN30 (scripts/backtest_smc_entry_filters.py, 14 variants over
+# 2 rounds) before being enabled: all 13 filtered variants beat the
+# unfiltered baseline, and the improvement was monotonic in filter strength
+# on holdout MEDIAN r-multiple, not just mean (-0.05 unfiltered -> +1.21 at
+# these settings) -- a median that moves like that can't be one lucky
+# outlier, which is what separates this from the liquidity-sweep gate above.
+# Measured here: n=65 mean_r=+3.82 median_r=+1.21 win_rate=73.8%
+# bootstrap_ci=[0.328, 0.651] walk_forward=1.00, vs baseline n=201
+# mean_r=+1.20 median_r=-0.05 win_rate=47.8% ci=[0.158, 0.321]. The tradeoff
+# is real: roughly a third as many setups survive. Not yet re-confirmed on
+# the full HOSE/HNX universe.
+#
+# Deliberately NOT the best-scoring variant (a 0.33 threshold scored a
+# little higher). Both numbers are doctrine, not fitted: 0.5 is the textbook
+# discount/premium split and 3.0 is the spec's own stated minimum, so
+# neither was tuned against the data judging it -- only the SCOPE below was,
+# and 0.33-vs-0.5 sat well inside the noise at n<70.
+
+# Classic "don't buy in premium, don't sell in discount": the entry must sit
+# in the favorable fraction of the current [support, resistance] range.
+POI_ZONE_THRESHOLD_PCT = 0.5
+# Which event types the filter applies to; empty = every qualifying type.
+# The spec names Order Blocks and Fair Value Gaps specifically, but applying
+# it to every entry type measured strictly better (holdout mean_r +3.82 vs
+# +2.72, median +1.21 vs +0.43) -- "don't buy at the top of the range" holds
+# for breakout entries too, not just pullbacks into a zone.
+POI_ZONE_FILTER_TYPES: frozenset[str] = frozenset()
+# Reject a setup whose measured move isn't at least this many times its own
+# stop distance.
+MIN_RR_RATIO = 3.0
+
+# The spec's third rule -- "place the stop at the refined Order Block" --
+# needs no flag: an Order Block event's index IS its anchor candle (see
+# app.smc.events._detect_order_blocks_tier, which builds
+# SMCEvent(bullish_ob, ob_idx, ..., zone_low=df.low[ob_idx],
+# zone_high=df.high[ob_idx])), and trade_scenario takes the stop from
+# candles[event.index].low/high -- the same bar, so the same prices. A flag
+# for it was implemented and backtested anyway: byte-identical to baseline
+# on every VN30 metric, then dropped as redundant.
+
 _PHASE_TREND = {
     PHASE_BULLISH: TREND_BULLISH,
     PHASE_BEARISH: TREND_BEARISH,

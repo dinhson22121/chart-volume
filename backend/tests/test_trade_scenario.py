@@ -517,6 +517,84 @@ def test_trend_continuation_event_skips_the_phase_before_event_gate(session):
     assert session.exec(_select_scenario()).one() is not None
 
 
+# --- Entry-quality filters: POI zone + minimum RR -----------------------
+# conftest's _neutral_entry_quality_filters turns both OFF for every other
+# test (they'd reject those tests' synthetic mid-range fixtures outright);
+# these set the knobs explicitly so the production defaults are still
+# covered. LEVELS is support=90/resistance=110, so with a 0.5 threshold a
+# bullish entry must be at or below 100 to sit in the "discount" half.
+
+def _sync_with_filters(session, candles, events, *, poi_pct=0.0, min_rr=0.0, monkeypatch):
+    monkeypatch.setattr(trade_scenario, "POI_ZONE_THRESHOLD_PCT", poi_pct)
+    monkeypatch.setattr(trade_scenario, "POI_ZONE_FILTER_TYPES", frozenset())
+    monkeypatch.setattr(trade_scenario, "MIN_RR_RATIO", min_rr)
+    provider_cfg = ProviderConfig(provider=PROVIDER_ANTHROPIC, model="claude-sonnet-4-5", api_key="", language="vi")
+    trade_scenario.sync_scenarios(
+        session, "FPT", Timeframe.DAILY, STRATEGY, candles, events, BULLISH_EVENTS, LEVELS,
+        provider_cfg, _fake_strategy_module(), None, None, RANGING_PHASES,
+    )
+
+
+def _poi_fixture(entry_open: float):
+    """6 flat bars + a Spring, then an entry bar opening at `entry_open` --
+    the only thing the POI filter looks at for a bullish setup."""
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    candles.append(_candle(6, open=entry_open, low=entry_open - 1, high=entry_open + 1, close=entry_open))
+    return candles, [_event(SPRING, 5, candles[5])]
+
+
+def test_poi_filter_blocks_a_bullish_entry_in_the_premium_half(session, monkeypatch):
+    candles, events = _poi_fixture(entry_open=108.0)  # well above the 100 midpoint
+    _sync_with_filters(session, candles, events, poi_pct=0.5, monkeypatch=monkeypatch)
+    assert session.exec(_select_scenario()).first() is None
+
+
+def test_poi_filter_allows_a_bullish_entry_in_the_discount_half(session, monkeypatch):
+    candles, events = _poi_fixture(entry_open=93.0)  # below the 100 midpoint
+    _sync_with_filters(session, candles, events, poi_pct=0.5, monkeypatch=monkeypatch)
+    assert session.exec(_select_scenario()).one() is not None
+
+
+def test_poi_filter_is_off_at_zero_threshold(session, monkeypatch):
+    # Same premium-half entry the first test rejects -- passes with the
+    # filter disabled, proving the rejection came from the filter itself.
+    candles, events = _poi_fixture(entry_open=108.0)
+    _sync_with_filters(session, candles, events, poi_pct=0.0, monkeypatch=monkeypatch)
+    assert session.exec(_select_scenario()).one() is not None
+
+
+def test_poi_filter_passes_a_degenerate_zero_width_range(session, monkeypatch):
+    # A flat series has no range to be "cheap" or "expensive" within, so the
+    # filter must not block every entry on it.
+    assert trade_scenario._entry_is_in_favorable_zone(100.0, Levels(support=100.0, resistance=100.0), True)
+    assert trade_scenario._entry_is_in_favorable_zone(100.0, Levels(support=100.0, resistance=100.0), False)
+
+
+def test_min_rr_filter_blocks_a_setup_below_the_ratio(session, monkeypatch):
+    # Entry 93 with the event bar's low at 95 gives a tiny stop distance...
+    # so instead force a WIDE stop: the event bar's low sits far below entry,
+    # making reward:risk small against the 20-wide measured move.
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=80.0, high=101.0, close=100.0)  # stop ~80 -> risk ~13 vs reward 20
+    candles.append(_candle(6, open=93.0, low=92.0, high=94.0, close=93.0))
+    events = [_event(SPRING, 5, candles[5])]
+
+    _sync_with_filters(session, candles, events, min_rr=3.0, monkeypatch=monkeypatch)
+    assert session.exec(_select_scenario()).first() is None
+
+
+def test_min_rr_filter_allows_a_setup_meeting_the_ratio(session, monkeypatch):
+    # Tight stop just under the entry -> risk ~1, reward ~20 -> RR far above 3.
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=92.5, high=101.0, close=100.0)
+    candles.append(_candle(6, open=93.0, low=92.0, high=94.0, close=93.0))
+    events = [_event(SPRING, 5, candles[5])]
+
+    _sync_with_filters(session, candles, events, min_rr=3.0, monkeypatch=monkeypatch)
+    assert session.exec(_select_scenario()).one() is not None
+
+
 def test_no_scenario_when_volume_profile_does_not_confirm_a_gated_event_type(session):
     # SOS/SOW/Spring/Upthrust are the only event types Volume Profile has a
     # confirmation rule for -- explicitly unconfirmed (volume_confirmed=False)

@@ -1,4 +1,9 @@
-"""Database engine + session management (SQLite via SQLModel)."""
+"""Database engine + session management.
+
+Defaults to a local SQLite file (the desktop app's normal mode). Setting
+``DATABASE_URL`` (e.g. to a ``postgresql://...`` URL -- see backend/Dockerfile)
+switches to that instead, for a self-hosted/cloud deployment; this is opt-in
+only and never required for the desktop flow."""
 
 from __future__ import annotations
 
@@ -12,12 +17,16 @@ from app.config import get_settings
 from app import models  # noqa: F401
 
 _settings = get_settings()
+_DATABASE_URL = _settings.database_url or f"sqlite:///{_settings.db_path}"
+_IS_SQLITE = _DATABASE_URL.startswith("sqlite")
 _engine = create_engine(
-    f"sqlite:///{_settings.db_path}",
+    _DATABASE_URL,
     # timeout=30: safety margin for "database is locked" under concurrent
     # writes from the scheduler's thread-pooled batch jobs (default is
-    # sqlite3's 5s, too tight once several workers write around the same time).
-    connect_args={"check_same_thread": False, "timeout": 30},
+    # sqlite3's 5s, too tight once several workers write around the same
+    # time). SQLite-only -- Postgres has no such argument and handles
+    # concurrent writes at the server, not the client library, level.
+    connect_args={"check_same_thread": False, "timeout": 30} if _IS_SQLITE else {},
 )
 
 
@@ -53,6 +62,16 @@ _COLUMN_MIGRATIONS = {
 
 
 def _ensure_columns(engine) -> None:
+    # PRAGMA table_info is SQLite-only syntax -- a Postgres deployment is
+    # always a fresh database (create_all alone builds the complete
+    # up-to-date schema for it), so this incremental-migration step, which
+    # exists only to backfill columns onto an existing user's local SQLite
+    # file from before those columns existed, doesn't apply there at all.
+    # Checked on the engine actually passed in (not the module-level
+    # _IS_SQLITE) so a test engine's own dialect always decides this, not
+    # whatever DATABASE_URL happens to be set in the environment.
+    if engine.dialect.name != "sqlite":
+        return
     with engine.connect() as conn:
         for table, migrations in _COLUMN_MIGRATIONS.items():
             existing = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}

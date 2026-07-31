@@ -43,8 +43,14 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-5"
 
-    # SQLite file location.
+    # SQLite file location -- ignored when database_url is set.
     db_path: str = "chart_volume.db"
+
+    # Optional: a full SQLAlchemy URL (e.g. "postgresql://user:pass@host/db")
+    # for a self-hosted/cloud deployment (see backend/Dockerfile). Empty by
+    # default -- the desktop app always uses the local SQLite file above;
+    # this is opt-in only, never required for the normal desktop flow.
+    database_url: str = ""
 
     def resolved_token(self) -> str:
         """Return the configured token, generating a dev one if unset."""

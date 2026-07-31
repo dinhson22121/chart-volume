@@ -9,6 +9,7 @@ openai>=1.0,<3
 pydantic-settings>=2.5,<3
 cryptography>=43,<46
 httpx>=0.27,<0.29
+psycopg2-binary>=2.9,<3  # optional Postgres driver -- only used when DATABASE_URL is set (see app/db.py); matches SQLAlchemy's default "postgresql://" dialect
 
 # NOTE: google-antigravity was tried here behind a platform marker (skip on
 # Intel macOS, no wheel there) but reverted -- 0.1.6 requires uvicorn>=0.46,

@@ -2,6 +2,8 @@
 so columns added to Symbol after first release must be backfilled explicitly
 (see app.db._ensure_columns)."""
 
+from unittest.mock import MagicMock
+
 from sqlalchemy.pool import StaticPool
 from sqlmodel import create_engine
 
@@ -119,3 +121,15 @@ def test_adds_aligned_column_to_pre_existing_signaloutcome_table():
         assert "aligned" in cols
         row = conn.exec_driver_sql("SELECT ticker, aligned FROM signaloutcome").one()
     assert row == ("FPT", None)  # old row keeps null alignment
+
+
+def test_skips_entirely_for_a_non_sqlite_engine():
+    # PRAGMA table_info is SQLite-only syntax -- a Postgres deployment (see
+    # DATABASE_URL in app/db.py) is always a fresh DB that create_all alone
+    # builds completely, so this must never even try to connect for one.
+    engine = MagicMock()
+    engine.dialect.name = "postgresql"
+
+    _ensure_columns(engine)
+
+    engine.connect.assert_not_called()

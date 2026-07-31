@@ -41,11 +41,17 @@ def _select_scenario():
     return select(TradeScenario)
 
 
-def _fake_strategy_module(phase: str = PHASE_RANGING):
+def _fake_strategy_module(phase: str = PHASE_RANGING, continuation_events: set[str] = frozenset()):
     # Default phase is Ranging so pre-existing entry/SL/TP/lifecycle tests --
     # which don't care about the phase gate -- keep creating scenarios as
     # before. Tests that specifically exercise the gate pass a trending phase.
-    return types.SimpleNamespace(analyze=lambda *a, **k: types.SimpleNamespace(phase=phase))
+    # continuation_events mirrors app.sonicr's TREND_CONTINUATION_EVENTS --
+    # empty by default so this stub matches every OTHER strategy (getattr
+    # with a frozenset() fallback in _build_scenario_candidate).
+    return types.SimpleNamespace(
+        analyze=lambda *a, **k: types.SimpleNamespace(phase=phase),
+        TREND_CONTINUATION_EVENTS=continuation_events,
+    )
 
 
 def _sync(session, ticker, candles, events, language="vi", phase=PHASE_RANGING, daily_trend=None):
@@ -222,6 +228,28 @@ def test_no_demand_never_creates_a_scenario(session):
     event = _event(NO_DEMAND, 5, candles[5])
 
     _sync(session, "FPT", candles, [event])
+
+    assert session.exec(_select_scenario()).first() is None
+
+
+@pytest.mark.parametrize("raw_signal_type", ["DragonCrossUp", "SonicCrossUp"])
+def test_sonicr_raw_signals_never_create_a_scenario(session, raw_signal_type):
+    # scripts/backtest_sonicr.py (VN30, then a 100-ticker HOSE/HNX sample)
+    # found neither DragonCrossUp nor SonicCrossUp has a statistically
+    # significant edge on its own -- bootstrap CI crosses zero both times, no
+    # consistent chronological pattern. Only SonicEntryLong (the fully
+    # confirmed entry) is left as a real trade-scenario source; these two
+    # stay recorded via signal_outcomes for reference, same treatment as
+    # Wyckoff's NoDemand/NoSupply.
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    event = _event(raw_signal_type, 5, candles[5])
+    provider_cfg = ProviderConfig(provider=PROVIDER_ANTHROPIC, model="claude-sonnet-4-5", api_key="", language="vi")
+
+    trade_scenario.sync_scenarios(
+        session, "FPT", Timeframe.DAILY, "sonicr", candles, [event], {raw_signal_type}, LEVELS,
+        provider_cfg, _fake_strategy_module(), None, None, RANGING_PHASES,
+    )
 
     assert session.exec(_select_scenario()).first() is None
 
@@ -466,6 +494,27 @@ def test_no_scenario_when_phase_before_event_was_already_trending(session):
     _sync(session, "FPT", candles, [event], phase="Markup")
 
     assert session.exec(_select_scenario()).all() == []
+
+
+def test_trend_continuation_event_skips_the_phase_before_event_gate(session):
+    # SonicEntryLong-style continuation entries (see
+    # app.sonicr.phase.TREND_CONTINUATION_EVENTS) only fire once a trend is
+    # ALREADY established, so the phase just before one is always
+    # Uptrend/Downtrend, never Ranging -- the gate above would otherwise
+    # reject 100% of them. A strategy module that lists this event type in
+    # its own TREND_CONTINUATION_EVENTS must skip the gate for it.
+    candles = [_candle(i, low=90.0, high=110.0, close=100.0) for i in range(6)]
+    candles[5] = _candle(5, low=95.0, high=101.0, close=100.0)
+    candles.append(_candle(6, open=103.0, low=102.0, high=105.0, close=104.0))
+    event = _event(SPRING, 5, candles[5])
+
+    provider_cfg = ProviderConfig(provider=PROVIDER_ANTHROPIC, model="claude-sonnet-4-5", api_key="", language="vi")
+    trade_scenario.sync_scenarios(
+        session, "FPT", Timeframe.DAILY, STRATEGY, candles, [event], BULLISH_EVENTS, LEVELS,
+        provider_cfg, _fake_strategy_module(phase="Markup", continuation_events={SPRING}), None, None, RANGING_PHASES,
+    )
+
+    assert session.exec(_select_scenario()).one() is not None
 
 
 def test_no_scenario_when_volume_profile_does_not_confirm_a_gated_event_type(session):

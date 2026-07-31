@@ -51,6 +51,17 @@ BEARISH_EVENTS = {DRAGON_CROSS_DOWN, SONIC_CROSS_DOWN, SONIC_ENTRY_SHORT}
 # (Uptrend/Downtrend).
 RANGING_PHASES = {PHASE_RANGING}
 
+# SonicEntryLong/Short are pullback-continuation entries: they only fire
+# once a SonicCrossUp has already confirmed a trend (see
+# app.sonicr.events._detect_entry_signals), so by construction the phase
+# just before one of these events is Uptrend/Downtrend, never Ranging --
+# app.services.trade_scenario's phase-before-event gate (designed for
+# Wyckoff-style "breakout from a range" semantics) would reject 100% of
+# them otherwise. Read via getattr(strategy_module, "TREND_CONTINUATION_EVENTS",
+# frozenset()) in _build_scenario_candidate, same defensive-attribute
+# pattern as SMCEvent.mitigated -- every other strategy simply has none.
+TREND_CONTINUATION_EVENTS = {SONIC_ENTRY_LONG, SONIC_ENTRY_SHORT}
+
 _PHASE_TREND = {
     PHASE_UPTREND: TREND_BULLISH,
     PHASE_DOWNTREND: TREND_BEARISH,

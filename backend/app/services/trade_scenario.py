@@ -96,7 +96,19 @@ TRAIL_ATR_MULT = 1.5
 # stats), consistent with treating them as trend confirmation rather than
 # standalone entries. Harmless for other strategies' event vocabularies,
 # whose event.type never matches these.
-CONTINUATION_EVENT_TYPES = {"NoDemand", "NoSupply"}
+#
+# DragonCrossUp/Down and SonicCrossUp/Down (app.sonicr): dedicated
+# per-event-type backtests (scripts/backtest_sonicr.py, VN30 then a
+# 100-ticker HOSE/HNX sample) showed neither has a coherent, statistically
+# significant edge on its own -- bootstrap CI crosses zero both times, with
+# no consistent chronological pattern. SonicEntryLong (the fully
+# Dragon+CCI+MTF+pullback-confirmed entry -- see
+# app.sonicr.phase.TREND_CONTINUATION_EVENTS) came right up to the edge of
+# significance (100-ticker holdout CI=[-0.011, 0.162], walk_forward=0.80) and
+# is left as SonicR's only real entry point; these two raw/informational
+# signal pairs are still recorded via signal_outcomes for reference, same as
+# NoDemand/NoSupply, just not turned into trade plans.
+CONTINUATION_EVENT_TYPES = {"NoDemand", "NoSupply", "DragonCrossUp", "DragonCrossDown", "SonicCrossUp", "SonicCrossDown"}
 
 # Same set as app.wyckoff.volume_profile._VP_CHECKABLE/phase._VP_CHECKABLE --
 # the only 4 event types Volume Profile actually has a clean confirmation
@@ -433,10 +445,20 @@ def _build_scenario_candidate(
     # actually a breakout out of a real range, or did it fire once already
     # trending" -- the latter has no coherent range height to measure a move
     # against.
-    truncated = candles[: event.index]
-    phase_before_event = strategy_module.analyze(truncated, strategy_cfg, daily_trend, provider_cfg.language).phase
-    if phase_before_event not in ranging_phases:
-        return None
+    #
+    # Exempt for TREND_CONTINUATION_EVENTS (e.g. app.sonicr's
+    # SonicEntryLong/Short): those are pullback-continuation entries that only
+    # fire once a trend is ALREADY established, so the pre-event phase is
+    # always Uptrend/Downtrend, never Ranging -- this gate would otherwise
+    # reject 100% of them (getattr, not a hard attribute: every other
+    # strategy simply has none, same defensive pattern as SMCEvent.mitigated).
+    if event.type not in getattr(strategy_module, "TREND_CONTINUATION_EVENTS", frozenset()):
+        truncated = candles[: event.index]
+        phase_before_event = strategy_module.analyze(
+            truncated, strategy_cfg, daily_trend, provider_cfg.language
+        ).phase
+        if phase_before_event not in ranging_phases:
+            return None
 
     # Gate on Volume Profile confirmation for the 4 event types it can
     # actually evaluate (see _VP_GATED_EVENT_TYPES). volume_confirmed is

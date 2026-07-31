@@ -72,6 +72,11 @@ class AnalysisResult:
                 # have this attribute (their own dataclasses), and this method
                 # is shared across all 3 strategies.
                 "volume_confirmed": getattr(e, "volume_confirmed", None),
+                # Order Blocks only (see app.smc.events.SMCEvent) -- None/False
+                # for every other event type across every strategy.
+                "zone_low": getattr(e, "zone_low", None),
+                "zone_high": getattr(e, "zone_high", None),
+                "mitigated": getattr(e, "mitigated", False),
             }
             for e in self.events
         ]

@@ -36,6 +36,21 @@ export function signalLabel(type: string, language: Language = "vi"): string {
   return TRANSLATIONS[language][`signal.${type}`] ?? type;
 }
 
+// app.smc.zones always returns these 4 fixed English strings for
+// high_label/low_label (no language param on the backend) -- translate them
+// client-side, same "canonical string -> chart.* key" pattern as phaseLabel.
+const ZONE_LABEL_KEYS: Record<string, string> = {
+  "Strong High": "chart.strongHigh",
+  "Weak High": "chart.weakHigh",
+  "Strong Low": "chart.strongLow",
+  "Weak Low": "chart.weakLow",
+};
+
+export function zoneLabel(label: string, language: Language = "vi"): string {
+  const key = ZONE_LABEL_KEYS[label];
+  return key ? TRANSLATIONS[language][key] : label;
+}
+
 export function signalIsBullish(type: string): boolean {
   return BULLISH_SIGNALS.has(type);
 }

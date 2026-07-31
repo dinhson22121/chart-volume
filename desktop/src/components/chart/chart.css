@@ -18,3 +18,23 @@
   font-size: var(--text-xs);
   pointer-events: none;
 }
+
+.chart-toolbar {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-3);
+  z-index: 2;
+  display: flex;
+  gap: var(--space-2);
+}
+
+.chart-draw-btn {
+  padding: 4px 10px;
+  font-size: var(--text-xs);
+}
+
+.chart-draw-btn.active {
+  background: var(--accent);
+  border-color: transparent;
+  color: oklch(18% 0.02 250);
+}

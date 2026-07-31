@@ -368,3 +368,19 @@ class SystemActionLog(SQLModel, table=True):
     finished_at: Optional[datetime] = None
     status: str = "running"  # "running" | "success" | "error" | "cancelled"
     detail: Optional[str] = None
+
+
+class UserDrawing(SQLModel, table=True):
+    """User-drawn trend lines on a ticker's chart -- one row per
+    (ticker, timeframe), all of that chart's shapes stored together as one
+    JSON blob (a user typically draws a handful of lines at a time, not
+    enough to warrant a row-per-shape design). Overwritten in full on every
+    save, same as PotentialScreenResult -- no per-shape history kept."""
+
+    __table_args__ = (UniqueConstraint("ticker", "timeframe", name="uq_user_drawing"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    ticker: str
+    timeframe: str
+    shapes_json: str  # JSON list of {points: [{time, price}, {time, price}], color}
+    updated_at: datetime = Field(default_factory=_utcnow)

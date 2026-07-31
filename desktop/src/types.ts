@@ -40,6 +40,21 @@ export interface Signal {
   // Wyckoff-only (see app.wyckoff.volume_profile on the backend) -- null for
   // SMC/SonicR events and for Wyckoff event types the engine doesn't check.
   volume_confirmed?: boolean | null;
+  // SMC Order Blocks only (see app.smc.events.SMCEvent) -- the anchor
+  // candle's own low/high, and whether price has already closed back
+  // through the zone. null/false for every other event type.
+  zone_low?: number | null;
+  zone_high?: number | null;
+  mitigated?: boolean;
+}
+
+export interface SmcZones {
+  premium_low: number;
+  discount_high: number;
+  equilibrium_low: number;
+  equilibrium_high: number;
+  high_label: string;
+  low_label: string;
 }
 
 export interface Levels {
@@ -50,6 +65,18 @@ export interface Levels {
   poc?: number | null;
   value_area_high?: number | null;
   value_area_low?: number | null;
+  // SMC-only (see app.smc.zones on the backend) -- null for every other strategy.
+  smc_zones?: SmcZones | null;
+}
+
+export interface DrawingPoint {
+  time: string; // candle bucket_start ISO string, not a raw chart pixel
+  price: number;
+}
+
+export interface DrawingShape {
+  points: DrawingPoint[];
+  color: string;
 }
 
 export interface TradeScenario {

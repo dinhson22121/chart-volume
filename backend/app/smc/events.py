@@ -60,6 +60,12 @@ class SMCEvent:
     # (unfilled supply/demand) no longer holds. Always False for every other
     # event type, which has no equivalent "still valid?" concept.
     mitigated: bool = False
+    # Order Blocks only: the anchor candle's own low/high -- the actual price
+    # RANGE the zone spans (chart rendering draws this as a band, not just
+    # the single `price` point). None for every other event type, which has
+    # no zone-shaped concept of its own.
+    zone_low: float | None = None
+    zone_high: float | None = None
 
 
 def _ts_at(df: pd.DataFrame, i: int):
@@ -232,7 +238,10 @@ def _detect_order_blocks_tier(
                 else f"Nến giảm cuối cùng trước cú bứt phá -- vùng {low:.2f}-{high:.2f} hay được test lại"
             )
             events.append(
-                SMCEvent(bullish_ob, ob_idx, _ts_at(df, ob_idx), float(df["close"].iloc[ob_idx]), note, mitigated)
+                SMCEvent(
+                    bullish_ob, ob_idx, _ts_at(df, ob_idx), float(df["close"].iloc[ob_idx]), note, mitigated,
+                    zone_low=low, zone_high=high,
+                )
             )
         elif e.type == source_bos_bear:
             ob_idx = _find_order_block_index(df, e.index, cfg, bullish=False)
@@ -246,7 +255,10 @@ def _detect_order_blocks_tier(
                 else f"Nến tăng cuối cùng trước cú gãy -- vùng {low:.2f}-{high:.2f} hay được test lại"
             )
             events.append(
-                SMCEvent(bearish_ob, ob_idx, _ts_at(df, ob_idx), float(df["close"].iloc[ob_idx]), note, mitigated)
+                SMCEvent(
+                    bearish_ob, ob_idx, _ts_at(df, ob_idx), float(df["close"].iloc[ob_idx]), note, mitigated,
+                    zone_low=low, zone_high=high,
+                )
             )
     return events
 

@@ -7,11 +7,19 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class SMCConfig:
-    swing_lookback: int = 2  # bars on each side required to confirm a swing high/low (fractal)
+    # bars on each side required to confirm a swing high/low (fractal).
+    # Swept against this app's own train/holdout data (scripts/optimize_smc.py,
+    # VN30, 2026-07-31): every one of the top 5 opt-window candidates raised
+    # this from the original 2 to 3-4, each with a bootstrap CI entirely
+    # positive at BOTH opt and holdout windows (the 2-default's own opt-window
+    # CI crossed zero) -- consistent enough across candidates to not be one
+    # lucky combination. 4 (paired with major_swing_lookback=20 below) was the
+    # safer of the two similarly-strong picks, changing only one parameter.
+    swing_lookback: int = 4
     # Second, longer-horizon structure tier (see app.smc.events' module
     # docstring): LuxAlgo runs two independent structure passes -- a fast
     # "internal" one (its own default: 5) and a much slower "swing"/major one
-    # (its own default: 50). This app's EXISTING swing_lookback=2 default is
+    # (its own default: 50). This app's ORIGINAL swing_lookback=2 default was
     # already closer to LuxAlgo's internal tier than to a real major-structure
     # one, so rather than change its long-tested meaning, this adds the
     # missing MAJOR tier on top -- 20 matches this app's own established

@@ -15,6 +15,7 @@ from app.api import (
     analysis,
     candles,
     crypto,
+    drawings,
     logs,
     ollama,
     potential_screen,
@@ -91,6 +92,7 @@ app.include_router(logs.router)
 app.include_router(potential_screen.router)
 app.include_router(trade_history.router)
 app.include_router(stock_batch_analysis.router)
+app.include_router(drawings.router)
 
 
 @app.get("/health")

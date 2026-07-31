@@ -183,7 +183,7 @@ def test_get_strategy_config_returns_sonicr_config_when_strategy_is_sonicr(sessi
 
 def test_get_smc_config_defaults(session):
     cfg = settings_service.get_smc_config(session)
-    assert cfg.swing_lookback == 2
+    assert cfg.swing_lookback == 4
     assert cfg.ob_lookback_bars == 10
     assert cfg.fvg_min_gap_mult == 0.3
 

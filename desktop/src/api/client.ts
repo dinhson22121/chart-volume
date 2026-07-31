@@ -6,6 +6,7 @@ import type {
   CandidateSort,
   Candle,
   DashboardRow,
+  DrawingShape,
   IndicatorSeries,
   ConfigLogPage,
   OllamaPullEvent,
@@ -77,6 +78,13 @@ export const api = {
     req<BarTrace>(`/analysis/${ticker}/trace?timeframe=${timeframe}&bar_ts=${encodeURIComponent(barTs)}`),
   getIndicators: (ticker: string, timeframe: Timeframe) =>
     req<IndicatorSeries>(`/analysis/${ticker}/indicators?timeframe=${timeframe}`),
+  getDrawings: (ticker: string, timeframe: Timeframe) =>
+    req<{ shapes: DrawingShape[] }>(`/drawings/${ticker}?timeframe=${timeframe}`),
+  saveDrawings: (ticker: string, timeframe: Timeframe, shapes: DrawingShape[]) =>
+    req<{ shapes: DrawingShape[] }>(`/drawings/${ticker}?timeframe=${timeframe}`, {
+      method: "PUT",
+      body: JSON.stringify({ shapes }),
+    }),
   getDashboard: () => req<DashboardRow[]>("/analysis/dashboard"),
   getSignalStats: (
     ticker?: string,

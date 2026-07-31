@@ -52,6 +52,10 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
 
     // --- Chart ---
     "chart.hint": "Click vào nến để xem lý do",
+    "chart.draw": "✏ Vẽ",
+    "chart.drawingActive": "✏ Đang vẽ… (click 2 điểm)",
+    "chart.clearDrawings": "Xoá nét vẽ",
+    "chart.drawHint": "Click điểm đầu, rồi click điểm cuối để vẽ đường xu hướng",
     "chart.support": "Hỗ trợ",
     "chart.resistance": "Kháng cự",
     "chart.scenarioEntry": "Vào lệnh",
@@ -60,6 +64,12 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "chart.poc": "POC",
     "chart.valueAreaHigh": "Đỉnh vùng giá trị",
     "chart.valueAreaLow": "Đáy vùng giá trị",
+    "chart.premiumZone": "Vùng Premium",
+    "chart.discountZone": "Vùng Discount",
+    "chart.strongHigh": "Đỉnh mạnh",
+    "chart.weakHigh": "Đỉnh yếu",
+    "chart.strongLow": "Đáy mạnh",
+    "chart.weakLow": "Đáy yếu",
 
     // --- Analysis panel ---
     "analysis.loading": "Đang phân tích…",
@@ -561,6 +571,10 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
 
     // --- Chart ---
     "chart.hint": "Click a candle to see why",
+    "chart.draw": "✏ Draw",
+    "chart.drawingActive": "✏ Drawing… (click 2 points)",
+    "chart.clearDrawings": "Clear drawings",
+    "chart.drawHint": "Click a start point, then an end point to draw a trend line",
     "chart.support": "Support",
     "chart.resistance": "Resistance",
     "chart.scenarioEntry": "Entry",
@@ -569,6 +583,12 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     "chart.poc": "POC",
     "chart.valueAreaHigh": "Value Area High",
     "chart.valueAreaLow": "Value Area Low",
+    "chart.premiumZone": "Premium Zone",
+    "chart.discountZone": "Discount Zone",
+    "chart.strongHigh": "Strong High",
+    "chart.weakHigh": "Weak High",
+    "chart.strongLow": "Strong Low",
+    "chart.weakLow": "Weak Low",
 
     // --- Analysis panel ---
     "analysis.loading": "Analyzing…",

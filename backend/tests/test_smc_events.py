@@ -130,6 +130,8 @@ def test_bullish_order_block_anchors_to_last_down_candle_before_bos():
     down_candle_index = len(values)
     assert ob[0].index == down_candle_index
     assert ob[0].index < bos[0].index
+    assert ob[0].zone_low == 111.5
+    assert ob[0].zone_high == 113.5
 
 
 def test_bearish_order_block_anchors_to_last_up_candle_before_bos():
@@ -156,6 +158,8 @@ def test_bearish_order_block_anchors_to_last_up_candle_before_bos():
     up_candle_index = len(values)
     assert ob[0].index == up_candle_index
     assert ob[0].index < bos[0].index
+    assert ob[0].zone_low == 86.5
+    assert ob[0].zone_high == 88.5
 
 
 def test_bullish_order_block_skips_a_high_volatility_candle_for_the_anchor():

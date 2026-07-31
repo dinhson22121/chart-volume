@@ -58,7 +58,7 @@ DEFAULTS: dict[str, str] = {
     "sonicr_cci_fast_period": "6",
     "sonicr_cci_slow_period": "14",
     "sonicr_pullback_lookback_bars": "10",
-    "smc_swing_lookback": "2",
+    "smc_swing_lookback": "4",
     "smc_ob_lookback_bars": "10",
     "smc_fvg_min_gap_mult": "0.3",
     "screener_enabled": "false",

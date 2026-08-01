@@ -182,3 +182,81 @@ def test_trade_history_backtest_rejects_unknown_strategy(client, auth_header):
     resp = client.post("/trade-history/backtest?ticker=FPT&strategy=nope", headers=auth_header)
 
     assert resp.status_code == 400
+
+
+# --- active-tickers (drives the watchlist's "has a live buy plan" highlight) --
+
+
+def test_active_tickers_requires_token(client):
+    assert client.get("/trade-history/active-tickers").status_code == 401
+
+
+def test_active_tickers_returns_only_active_scenarios(session, client, auth_header):
+    _add_scenario(session, ticker="FPT", status="active")
+    _add_scenario(session, ticker="SSI", status="hit_tp")
+    _add_scenario(session, ticker="MWG", status="expired")
+
+    resp = client.get(
+        "/trade-history/active-tickers?strategy=wyckoff&timeframe=daily", headers=auth_header
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"tickers": ["FPT"]}
+
+
+def test_active_tickers_scopes_to_the_requested_strategy_and_timeframe(session, client, auth_header):
+    _add_scenario(session, ticker="FPT", status="active", strategy="wyckoff", timeframe=Timeframe.DAILY)
+    _add_scenario(session, ticker="SSI", status="active", strategy="smc", timeframe=Timeframe.DAILY)
+    _add_scenario(session, ticker="MWG", status="active", strategy="wyckoff", timeframe=Timeframe.HOUR_1)
+
+    resp = client.get(
+        "/trade-history/active-tickers?strategy=wyckoff&timeframe=daily", headers=auth_header
+    )
+
+    assert resp.json() == {"tickers": ["FPT"]}
+
+
+def test_active_tickers_excludes_backtest_rows(session, client, auth_header):
+    """A backtest replay writes active-looking rows too (source='backtest').
+    Highlighting a watchlist item off one would claim a live plan that isn't."""
+    _add_scenario(session, ticker="FPT", status="active", source="live")
+    _add_scenario(session, ticker="SSI", status="active", source="backtest")
+
+    resp = client.get(
+        "/trade-history/active-tickers?strategy=wyckoff&timeframe=daily", headers=auth_header
+    )
+
+    assert resp.json() == {"tickers": ["FPT"]}
+
+
+def test_active_tickers_returns_bullish_only(session, client, auth_header):
+    """Spot-only: _create_scenarios never spawns a bearish plan, but legacy
+    rows from before that rule are still sitting in the DB as 'active'. A
+    green "there is a buy plan" highlight must not fire on one."""
+    _add_scenario(session, ticker="FPT", status="active", is_bullish=True)
+    _add_scenario(session, ticker="SSI", status="active", is_bullish=False)
+
+    resp = client.get(
+        "/trade-history/active-tickers?strategy=wyckoff&timeframe=daily", headers=auth_header
+    )
+
+    assert resp.json() == {"tickers": ["FPT"]}
+
+
+def test_active_tickers_is_sorted_and_deduplicated(session, client, auth_header):
+    _add_scenario(session, ticker="SSI", status="active")
+    _add_scenario(session, ticker="FPT", status="active")
+
+    resp = client.get(
+        "/trade-history/active-tickers?strategy=wyckoff&timeframe=daily", headers=auth_header
+    )
+
+    assert resp.json() == {"tickers": ["FPT", "SSI"]}
+
+
+def test_active_tickers_rejects_invalid_timeframe(client, auth_header):
+    resp = client.get(
+        "/trade-history/active-tickers?strategy=wyckoff&timeframe=nope", headers=auth_header
+    )
+
+    assert resp.status_code == 400

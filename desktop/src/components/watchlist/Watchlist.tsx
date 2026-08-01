@@ -19,6 +19,11 @@ interface Props {
   activeTab: WatchlistTab;
   onTabChange: (tab: WatchlistTab) => void;
   busy: boolean;
+  /** Tickers with a live, still-open buy plan under the currently selected
+   *  strategy + timeframe -- highlighted so a setup is visible without
+   *  clicking through every symbol. Empty while it loads, so the list simply
+   *  renders unhighlighted rather than flashing a wrong state. */
+  tickersWithActiveScenario: ReadonlySet<string>;
 }
 
 interface SeedResult {
@@ -38,6 +43,7 @@ export function Watchlist({
   activeTab,
   onTabChange,
   busy,
+  tickersWithActiveScenario,
 }: Props) {
   const { t, language } = useI18n();
   const [input, setInput] = useState("");
@@ -122,8 +128,9 @@ export function Watchlist({
       <button
         className={`${card ? "wl-crypto-card wl-row-card" : "wl-row"} ${
           selected === s.ticker ? "is-selected" : ""
-        }`}
+        } ${tickersWithActiveScenario.has(s.ticker) ? "has-buy-setup" : ""}`}
         onClick={() => onSelect(s.ticker)}
+        title={tickersWithActiveScenario.has(s.ticker) ? t("watchlist.hasBuySetup") : undefined}
       >
         {card ? (
           <>

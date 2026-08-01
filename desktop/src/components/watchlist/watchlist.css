@@ -335,3 +335,40 @@
 .wl-crypto-card__add:disabled {
   opacity: 0.5;
 }
+
+/* --- "has a live buy plan" highlight ------------------------------------
+   Driven by /trade-history/active-tickers, scoped to the strategy and
+   timeframe currently selected. A filled row rather than a dot or badge:
+   the point is to spot a setup while scanning several hundred symbols.
+
+   The fill is the --bull token mixed down into the page background instead
+   of used at full strength -- on this dark terminal palette a raw
+   oklch(72%) green behind oklch(94%) text is unreadable. The blend keeps
+   the row obviously green while the ticker text stays legible.
+
+   Both shapes need their own rule: the VN30/Top100/HOSE-HNX tabs render
+   cards (.wl-row-card), only the tracked list renders plain rows. */
+.wl-row.has-buy-setup {
+  background: color-mix(in oklch, var(--bull) 20%, var(--bg));
+  border-left-color: var(--bull);
+}
+.wl-row.has-buy-setup:hover {
+  background: color-mix(in oklch, var(--bull) 28%, var(--bg));
+}
+.wl-crypto-card.has-buy-setup {
+  background: color-mix(in oklch, var(--bull) 20%, var(--surface));
+}
+.wl-crypto-card.has-buy-setup:hover {
+  border-color: var(--bull);
+}
+
+/* Selection has to keep winning over the highlight -- otherwise clicking a
+   green row gives no feedback that it's the one being charted. Listed after
+   the rules above so it takes precedence at equal specificity. */
+.wl-row.has-buy-setup.is-selected {
+  background: color-mix(in oklch, var(--bull) 32%, var(--surface));
+  border-left-color: var(--accent);
+}
+.wl-crypto-card.has-buy-setup.is-selected {
+  border-color: var(--accent);
+}

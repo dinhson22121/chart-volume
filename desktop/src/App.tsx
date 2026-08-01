@@ -53,6 +53,11 @@ export default function App({ onLicenseCleared }: Props) {
   const [sidebarTab, setSidebarTab] = useState<WatchlistTab>("vn30");
   const [strategies, setStrategies] = useState<StrategyOption[]>([]);
   const [strategy, setStrategy] = useState<string>("");
+  // Tickers the watchlist highlights as having a live buy plan, for the
+  // strategy/timeframe currently selected -- see Watchlist's own prop note.
+  const [tickersWithActiveScenario, setTickersWithActiveScenario] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   const selectedSymbol = useMemo(
     () => symbols.find((s) => s.ticker === selected) ?? null,
@@ -137,6 +142,22 @@ export default function App({ onLicenseCleared }: Props) {
     setTraceBarTs(null); // switching ticker/timeframe invalidates any open trace popup
   }, [selected, timeframe, loadData]);
 
+  const loadActiveScenarioTickers = useCallback(async () => {
+    if (!strategy) return; // strategies haven't loaded yet -- nothing to scope by
+    try {
+      const { tickers } = await api.getTickersWithActiveScenario(strategy, timeframe);
+      setTickersWithActiveScenario(new Set(tickers));
+    } catch {
+      // A highlight is a hint, not information the user is missing out on --
+      // failing quietly beats an error banner over the whole sidebar.
+      setTickersWithActiveScenario(new Set());
+    }
+  }, [strategy, timeframe]);
+
+  useEffect(() => {
+    void loadActiveScenarioTickers();
+  }, [loadActiveScenarioTickers]);
+
   const handleRefresh = useCallback(async () => {
     if (!selected) return;
     setRefreshing(true);
@@ -158,6 +179,9 @@ export default function App({ onLicenseCleared }: Props) {
       setAnalysis(await api.getAnalysis(selected, timeframe).catch(() => null));
       setCandles(await api.getCandles(selected, timeframe));
       await loadSymbols();
+      // A refresh can open (or close) a scenario, so the sidebar highlight
+      // has to be re-read rather than waiting for a strategy/timeframe change.
+      await loadActiveScenarioTickers();
 
       if (failedLabels.length > 0) {
         setDataError(t("app.error.analysisFailedTimeframes", { timeframes: failedLabels.join(", ") }));
@@ -167,7 +191,7 @@ export default function App({ onLicenseCleared }: Props) {
     } finally {
       setRefreshing(false);
     }
-  }, [selected, timeframe, availableTimeframes, loadSymbols, t]);
+  }, [selected, timeframe, availableTimeframes, loadSymbols, loadActiveScenarioTickers, t]);
 
   const withBusy = useCallback(async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -333,6 +357,7 @@ export default function App({ onLicenseCleared }: Props) {
             activeTab={sidebarTab}
             onTabChange={handleTabChange}
             busy={busy}
+            tickersWithActiveScenario={tickersWithActiveScenario}
           />
         </aside>
 

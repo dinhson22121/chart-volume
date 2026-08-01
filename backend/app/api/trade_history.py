@@ -5,7 +5,7 @@ summary win-rate/avg P&L stats -- unlike app.services.trade_scenario.get_scenari
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.auth import require_token
 from app.db import get_session
@@ -93,6 +93,45 @@ def get_trade_history_stats(
     return trade_scenario.get_scenario_stats(
         session, ticker, strategy, asset_class, current_config_version, _resolve_source(source), is_bullish
     )
+
+
+@router.get("/active-tickers")
+def get_active_tickers(
+    strategy: str,
+    timeframe: str = Query(Timeframe.DAILY),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Tickers with a LIVE, still-open buy plan, for the watchlist's
+    highlight. One query for the whole list rather than a per-row lookup.
+
+    Deliberately narrower than trade_scenario.get_scenario, which the
+    analysis panel uses: that one falls back to the most recently CLOSED
+    scenario so the panel can explain how the last plan ended, which is the
+    right call for a detail view and the wrong one here -- a ticker whose
+    only plan stopped out weeks ago would light up green forever.
+
+    Two more filters the status check alone wouldn't give:
+      - source='live': a backtest replay writes its own active-looking rows,
+        and those describe history, not a plan anyone can act on now.
+      - is_bullish: _create_scenarios is spot-only and no longer spawns
+        bearish plans at all, but rows predating that rule are still sitting
+        in the DB as active, and a green "there's a buy setup" badge on one
+        would be simply wrong.
+    """
+    if timeframe not in _VALID_TIMEFRAMES:
+        raise HTTPException(status_code=400, detail=f"invalid timeframe {timeframe}")
+    rows = session.exec(
+        select(TradeScenario.ticker)
+        .where(
+            TradeScenario.strategy == strategy,
+            TradeScenario.timeframe == timeframe,
+            TradeScenario.status == "active",
+            TradeScenario.source == "live",
+            TradeScenario.is_bullish == True,  # noqa: E712 -- SQLAlchemy column, not a bool
+        )
+        .distinct()
+    ).all()
+    return {"tickers": sorted(rows)}
 
 
 @router.post("/backtest")

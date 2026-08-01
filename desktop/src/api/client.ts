@@ -189,6 +189,12 @@ export const api = {
     const qs = params.toString();
     return req<TradeHistoryStats>(`/trade-history/stats${qs ? `?${qs}` : ""}`);
   },
+  /** Tickers with a live, still-open buy plan -- one call for the whole
+   *  watchlist instead of a per-symbol lookup. */
+  getTickersWithActiveScenario: (strategy: string, timeframe: string) => {
+    const params = new URLSearchParams({ strategy, timeframe });
+    return req<{ tickers: string[] }>(`/trade-history/active-tickers?${params.toString()}`);
+  },
   runBacktest: (ticker: string, timeframe: string, strategy?: string) => {
     const params = new URLSearchParams({ ticker, timeframe });
     if (strategy) params.set("strategy", strategy);

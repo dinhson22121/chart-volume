@@ -44,6 +44,7 @@ from app.db import get_engine  # noqa: E402
 from app.models import Symbol, Timeframe  # noqa: E402
 from app.services import scenario_backtest, settings_service  # noqa: E402
 from app.smc.config import SMCConfig  # noqa: E402
+from scripts import parallel_tickers  # noqa: E402
 from scripts.optimize_wyckoff import (  # noqa: E402
     OPT_HOLDOUT_CUTOFF,
     _format_window,
@@ -64,6 +65,35 @@ MAJOR_SWING_LOOKBACK_GRID = (15, 20, 30)
 DEFAULT_CANDIDATE = (2, 20)
 
 
+def _sweep_one_ticker(session, ticker: str) -> list[tuple]:
+    """One ticker across the whole lookback grid, as (candidate, event_ts, r)
+    -- the unit parallel_tickers farms out to a worker process. Every grid
+    point changes SMCConfig, so unlike the other sweeps this one genuinely
+    re-analyzes per candidate and can't memoize; it's the heaviest script
+    here and gains the most from running tickers side by side."""
+    risk_cfg = settings_service.get_risk_config(session)
+    candles = _load_daily_candles(session, ticker)
+    symbol = session.get(Symbol, ticker)
+
+    rows: list[tuple] = []
+    for swing_lookback, major_swing_lookback in product(SWING_LOOKBACK_GRID, MAJOR_SWING_LOOKBACK_GRID):
+        cfg = SMCConfig(swing_lookback=swing_lookback, major_swing_lookback=major_swing_lookback)
+        result = smc.analyze(candles, cfg, None, "vi")
+        scenarios = scenario_backtest.walk_events(
+            ticker, Timeframe.DAILY, STRATEGY, candles, result.events,
+            smc.BULLISH_EVENTS, smc.BEARISH_EVENTS, result.levels, smc,
+            cfg, None, smc.RANGING_PHASES, symbol, risk_cfg,
+        )
+
+        for s in scenarios:
+            if not s.is_bullish or s.status not in ("hit_tp", "hit_sl", "expired") or s.exit_price is None:
+                continue
+            r = _r_multiple(s, risk_cfg)
+            if r is not None:
+                rows.append(((swing_lookback, major_swing_lookback), s.event_ts, r))
+    return rows
+
+
 def main() -> None:
     engine = get_engine()
     with Session(engine) as session:
@@ -72,59 +102,42 @@ def main() -> None:
 
         vn30_only = "--full" not in sys.argv
         tickers = _stock_tickers_with_enough_history(session, vn30_only=vn30_only)
-        print(f"{len(tickers)} ticker(s)\n")
 
-        results: dict[tuple[int, int], dict[str, list[float]]] = {
-            (s, m): {"opt": [], "holdout": []}
-            for s, m in product(SWING_LOOKBACK_GRID, MAJOR_SWING_LOOKBACK_GRID)
-        }
+    results: dict[tuple[int, int], dict[str, list[float]]] = {
+        (s, m): {"opt": [], "holdout": []}
+        for s, m in product(SWING_LOOKBACK_GRID, MAJOR_SWING_LOOKBACK_GRID)
+    }
+    workers = parallel_tickers.default_workers()
+    print(f"{len(tickers)} ticker(s), {workers} process(es)\n")
 
-        for i, ticker in enumerate(tickers, 1):
-            candles = _load_daily_candles(session, ticker)
-            symbol = session.get(Symbol, ticker)
-            print(f"[{i}/{len(tickers)}] {ticker} ({len(candles)} bars)", file=sys.stderr)
+    for i, ticker, rows in parallel_tickers.map_tickers(tickers, _sweep_one_ticker, workers=workers):
+        print(f"[{i}/{len(tickers)}] {ticker}", file=sys.stderr)
+        for cand, event_ts, r in rows:
+            window = "opt" if event_ts < OPT_HOLDOUT_CUTOFF else "holdout"
+            results[cand][window].append(r)
 
-            for swing_lookback, major_swing_lookback in product(SWING_LOOKBACK_GRID, MAJOR_SWING_LOOKBACK_GRID):
-                cfg = SMCConfig(swing_lookback=swing_lookback, major_swing_lookback=major_swing_lookback)
-                result = smc.analyze(candles, cfg, None, "vi")
-                scenarios = scenario_backtest.walk_events(
-                    ticker, Timeframe.DAILY, STRATEGY, candles, result.events,
-                    smc.BULLISH_EVENTS, smc.BEARISH_EVENTS, result.levels, smc,
-                    cfg, None, smc.RANGING_PHASES, symbol, risk_cfg,
-                )
+    scored = {
+        cand: _score_window(data["opt"], risk_amount, risk_cfg["notional_capital"])
+        for cand, data in results.items()
+    }
+    ranked = sorted(
+        (c for c in scored if scored[c]["n_trades"] >= 10),
+        key=lambda c: (scored[c]["bootstrap_ci_lower"] is not None, scored[c]["bootstrap_ci_lower"] or -999),
+        reverse=True,
+    )
 
-                bucket = results[(swing_lookback, major_swing_lookback)]
-                for s in scenarios:
-                    if not s.is_bullish or s.status not in ("hit_tp", "hit_sl", "expired") or s.exit_price is None:
-                        continue
-                    r = _r_multiple(s, risk_cfg)
-                    if r is None:
-                        continue
-                    window = "opt" if s.event_ts < OPT_HOLDOUT_CUTOFF else "holdout"
-                    bucket[window].append(r)
+    print("\n=== Baseline (current live defaults) ===")
+    s, m = DEFAULT_CANDIDATE
+    print(f"swing_lookback={s} major_swing_lookback={m}")
+    print(_format_window("opt window    ", _score_window(results[DEFAULT_CANDIDATE]["opt"], risk_amount, risk_cfg["notional_capital"])))
+    print(_format_window("holdout window", _score_window(results[DEFAULT_CANDIDATE]["holdout"], risk_amount, risk_cfg["notional_capital"])))
 
-        scored = {
-            cand: _score_window(data["opt"], risk_amount, risk_cfg["notional_capital"])
-            for cand, data in results.items()
-        }
-        ranked = sorted(
-            (c for c in scored if scored[c]["n_trades"] >= 10),
-            key=lambda c: (scored[c]["bootstrap_ci_lower"] is not None, scored[c]["bootstrap_ci_lower"] or -999),
-            reverse=True,
-        )
-
-        print("\n=== Baseline (current live defaults) ===")
-        s, m = DEFAULT_CANDIDATE
-        print(f"swing_lookback={s} major_swing_lookback={m}")
-        print(_format_window("opt window    ", _score_window(results[DEFAULT_CANDIDATE]["opt"], risk_amount, risk_cfg["notional_capital"])))
-        print(_format_window("holdout window", _score_window(results[DEFAULT_CANDIDATE]["holdout"], risk_amount, risk_cfg["notional_capital"])))
-
-        print("\n=== Top candidates by opt-window bootstrap CI lower bound ===")
-        for cand in ranked[:5]:
-            s, m = cand
-            print(f"\nswing_lookback={s} major_swing_lookback={m}")
-            print(_format_window("opt window    ", scored[cand]))
-            print(_format_window("holdout window", _score_window(results[cand]["holdout"], risk_amount, risk_cfg["notional_capital"])))
+    print("\n=== Top candidates by opt-window bootstrap CI lower bound ===")
+    for cand in ranked[:5]:
+        s, m = cand
+        print(f"\nswing_lookback={s} major_swing_lookback={m}")
+        print(_format_window("opt window    ", scored[cand]))
+        print(_format_window("holdout window", _score_window(results[cand]["holdout"], risk_amount, risk_cfg["notional_capital"])))
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 *.db
 *.log
+*.log.*
 *.key
 .env
 .pytest_cache/

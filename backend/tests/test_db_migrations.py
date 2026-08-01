@@ -123,6 +123,32 @@ def test_adds_aligned_column_to_pre_existing_signaloutcome_table():
     assert row == ("FPT", None)  # old row keeps null alignment
 
 
+def test_adds_partial_exit_columns_to_pre_existing_tradescenario_table():
+    engine = _make_engine()
+    with engine.connect() as conn:
+        # Old-release schema: a scenario that closed in one go, no scale-out.
+        conn.exec_driver_sql(
+            "CREATE TABLE tradescenario (id INTEGER PRIMARY KEY, ticker VARCHAR, "
+            "entry FLOAT, stop_loss FLOAT, exit_price FLOAT)"
+        )
+        conn.exec_driver_sql(
+            "INSERT INTO tradescenario (ticker, entry, stop_loss, exit_price) VALUES ('FPT', 100.0, 95.0, 108.0)"
+        )
+        conn.commit()
+
+    _ensure_columns(engine)
+
+    with engine.connect() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(tradescenario)")}
+        assert {"partial_exit_price", "partial_exit_bar_ts"} <= cols
+        row = conn.exec_driver_sql(
+            "SELECT ticker, exit_price, partial_exit_price, partial_exit_bar_ts FROM tradescenario"
+        ).one()
+    # Pre-existing single-exit rows must stay readable and read as "never
+    # scaled out" -- get_scenario_stats relies on NULL to mean exactly that.
+    assert row == ("FPT", 108.0, None, None)
+
+
 def test_skips_entirely_for_a_non_sqlite_engine():
     # PRAGMA table_info is SQLite-only syntax -- a Postgres deployment (see
     # DATABASE_URL in app/db.py) is always a fresh DB that create_all alone

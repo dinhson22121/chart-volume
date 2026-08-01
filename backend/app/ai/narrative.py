@@ -18,10 +18,14 @@ import logging
 from dataclasses import dataclass
 
 import httpx
-from anthropic import Anthropic
-from openai import OpenAI
 
 from app.wyckoff import AnalysisResult
+
+# The anthropic/openai SDKs are imported inside _call_claude/_call_codex
+# instead of here: together they cost ~1.9s to import, and this module is
+# pulled in by app.services.scenario_backtest, so every backtest worker
+# process paid for two AI clients it never constructs. Deferring it also
+# takes that 1.9s off backend startup.
 
 logger = logging.getLogger("chart_volume.ai")
 
@@ -150,6 +154,8 @@ def build_prompt(
 
 
 def _call_claude(prompt: str, api_key: str, model: str) -> str:
+    from anthropic import Anthropic
+
     client = Anthropic(api_key=api_key)
     resp = client.messages.create(
         model=model,
@@ -162,6 +168,8 @@ def _call_claude(prompt: str, api_key: str, model: str) -> str:
 
 
 def _call_codex(prompt: str, api_key: str, model: str) -> str:
+    from openai import OpenAI
+
     client = OpenAI(api_key=api_key)
     resp = client.chat.completions.create(
         model=model,

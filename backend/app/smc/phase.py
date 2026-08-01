@@ -80,22 +80,29 @@ RANGING_PHASES = {PHASE_RANGING}
 # defaults and behave exactly as they did before this existed.
 #
 # Validated on VN30 (scripts/backtest_smc_entry_filters.py, 14 variants over
-# 2 rounds) before being enabled: all 13 filtered variants beat the
-# unfiltered baseline, and the improvement was monotonic in filter strength
-# on holdout MEDIAN r-multiple, not just mean (-0.05 unfiltered -> +1.21 at
-# these settings) -- a median that moves like that can't be one lucky
-# outlier, which is what separates this from the liquidity-sweep gate above.
-# Measured here: n=65 mean_r=+3.82 median_r=+1.21 win_rate=73.8%
-# bootstrap_ci=[0.328, 0.651] walk_forward=1.00, vs baseline n=201
-# mean_r=+1.20 median_r=-0.05 win_rate=47.8% ci=[0.158, 0.321]. The tradeoff
-# is real: roughly a third as many setups survive. Not yet re-confirmed on
-# the full HOSE/HNX universe.
+# 2 rounds) before being enabled, then re-confirmed on the full HOSE/HNX
+# universe at 5x the sample. All 13 filtered variants beat the unfiltered
+# baseline, and the improvement was monotonic in filter strength on holdout
+# MEDIAN r-multiple, not just mean -- a median that moves like that can't be
+# one lucky outlier, which is what separates this from the liquidity-sweep
+# gate above. Holdout, at these settings vs no filters:
+#
+#   universe        n     mean_r   median_r  win_rate  bootstrap_ci
+#   VN30 baseline   201   +1.20    -0.05     47.8%     [0.158, 0.321]
+#   VN30 shipped     65   +3.82    +1.21     73.8%     [0.328, 0.651]
+#   FULL baseline  1424   +0.79    -0.10     46.1%     [0.129, 0.196]
+#   FULL shipped    325   +3.50    +0.72     64.0%     [0.270, 0.448]
+#
+# walk_forward is 1.00 on holdout for both. On the full universe the two
+# confidence intervals don't even overlap, so this isn't sampling noise. The
+# tradeoff is equally real: roughly a quarter as many setups survive.
 #
 # Deliberately NOT the best-scoring variant (a 0.33 threshold scored a
 # little higher). Both numbers are doctrine, not fitted: 0.5 is the textbook
 # discount/premium split and 3.0 is the spec's own stated minimum, so
-# neither was tuned against the data judging it -- only the SCOPE below was,
-# and 0.33-vs-0.5 sat well inside the noise at n<70.
+# neither was tuned against the data judging it -- only the SCOPE below was.
+# The full-universe run vindicated that: at n=325 vs 296 the 0.33 variant's
+# edge shrank to +3.54 vs +3.50 (ci 0.275 vs 0.270), i.e. nothing.
 
 # Classic "don't buy in premium, don't sell in discount": the entry must sit
 # in the favorable fraction of the current [support, resistance] range.

@@ -57,6 +57,8 @@ _COLUMN_MIGRATIONS = {
         "config_version": "config_version TEXT NOT NULL DEFAULT ''",
         "price_limit_caution": "price_limit_caution BOOLEAN NOT NULL DEFAULT 0",
         "source": "source TEXT NOT NULL DEFAULT 'live'",
+        "partial_exit_price": "partial_exit_price FLOAT",
+        "partial_exit_bar_ts": "partial_exit_bar_ts DATETIME",
     },
 }
 

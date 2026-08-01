@@ -87,20 +87,18 @@ def _load_daily_candles(session: Session, ticker: str) -> list[Candle]:
 
 
 def _r_multiple(scenario, risk_cfg: dict) -> float | None:
-    """Same cost-adjusted R-multiple formula as trade_scenario.get_scenario_stats,
-    scoped to the stock cost model only (this sweep is stock-only) -- so
-    numbers here are directly comparable to what the Trade History dashboard
-    shows for real live/backtest scenarios."""
-    risk_distance = abs(scenario.entry - scenario.stop_loss)
-    if not risk_distance or scenario.exit_price is None:
-        return None
+    """Delegates to trade_scenario.realized_r_multiple -- the SAME function
+    get_scenario_stats uses, so a sweep's numbers can't drift from what the
+    Trade History dashboard reports (including how a scaled-out scenario's
+    two exit legs are blended). Only the cost model is specialized here:
+    every sweep in scripts/ is stock-only."""
     cost_pct = (
         risk_cfg["slippage_pct_stock"] + risk_cfg["broker_fee_pct_stock"] + risk_cfg["sell_tax_pct_stock"]
     ) / 100
-    cost_amount = cost_pct * scenario.entry
-    adjusted_exit = scenario.exit_price - cost_amount if scenario.is_bullish else scenario.exit_price + cost_amount
-    raw = (adjusted_exit - scenario.entry) / risk_distance
-    return raw if scenario.is_bullish else -raw
+    return trade_scenario.realized_r_multiple(
+        scenario.entry, scenario.stop_loss, scenario.exit_price,
+        scenario.is_bullish, cost_pct, scenario.partial_exit_price,
+    )
 
 
 def _score_window(r_multiples: list[float], risk_amount: float, notional_capital: float) -> dict:

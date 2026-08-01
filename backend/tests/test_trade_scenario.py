@@ -1774,3 +1774,103 @@ def test_edge_vs_buy_hold_only_counts_scenarios_with_a_computable_benchmark(sess
     assert stats["edge_vs_buy_hold_pct"] == pytest.approx(
         (2.0 * risk_amount - 0.20 * risk_amount) / 100_000
     )
+
+
+# --- Scale-out at a profit target ----------------------------------------
+# Off by default (see trade_scenario's scale-out block),
+# so every test above resolves through the trailing stop alone exactly as it
+# always did; these switch the knobs on explicitly.
+#
+# Shared numbers: 15 flat pre-event bars give ATR=10 exactly, entry=103.0 and
+# stop_loss=94.715 (the event bar's 95.0 low less SL_BUFFER_PCT), so
+# risk_distance=8.285 and a 2R target sits at 103 + 2*8.285 = 119.57.
+
+_R_ENTRY = 103.0
+_R_STOP = 95.0 * (1 - trade_scenario.SL_BUFFER_PCT)
+_R_RISK = _R_ENTRY - _R_STOP
+_R_TARGET_2R = _R_ENTRY + 2 * _R_RISK
+
+
+def _resolve_with_future(future_bars, *, take_profit=None, max_bars=20):
+    """15 flat pre-event bars + an event bar, then the caller's own future."""
+    candles = [_candle(i, low=95.0, high=105.0, close=100.0) for i in range(15)]
+    event_ts = candles[14].bucket_start
+    candles.extend(future_bars)
+    return trade_scenario._resolve_outcome(
+        event_ts, _R_ENTRY, _R_STOP, max_bars, True, candles, 0, take_profit=take_profit,
+    )
+
+
+def test_first_profit_target_picks_the_nearest_of_the_two(monkeypatch):
+    monkeypatch.setattr(trade_scenario, "PARTIAL_EXIT_R_MULTIPLE", 2.0)
+    monkeypatch.setattr(trade_scenario, "PARTIAL_EXIT_AT_TAKE_PROFIT", True)
+    # 2R sits at 119.57; a measured-move TP at 112 is nearer, so it wins.
+    assert trade_scenario._first_profit_target(_R_ENTRY, _R_RISK, True, 112.0) == 112.0
+    # ...and when the measured move is further out, the R target wins.
+    assert trade_scenario._first_profit_target(_R_ENTRY, _R_RISK, True, 150.0) == pytest.approx(_R_TARGET_2R)
+
+
+def test_first_profit_target_is_none_when_both_targets_are_off():
+    assert trade_scenario._first_profit_target(_R_ENTRY, _R_RISK, True, 120.0) is None
+
+
+def test_scale_out_records_the_partial_and_pulls_the_stop_to_breakeven(monkeypatch):
+    monkeypatch.setattr(trade_scenario, "PARTIAL_EXIT_FRACTION", 0.5)
+    monkeypatch.setattr(trade_scenario, "PARTIAL_EXIT_R_MULTIPLE", 1.0)  # target = 111.285
+    outcome = _resolve_with_future([
+        # Tags the 1R target. The trail also arms here (excursion >= 1R) but
+        # lands at 112 - 1.5*ATR = 97, below breakeven -- so breakeven is what
+        # actually protects the rest, which is the point being tested.
+        _candle(15, low=104.0, high=112.0, close=110.0),
+        _candle(16, low=100.0, high=112.0, close=105.0),  # falls back through breakeven
+    ])
+    assert outcome.partial_exit_price == pytest.approx(_R_ENTRY + _R_RISK)
+    # The remaining half exits at breakeven, not at the original 94.715 stop --
+    # taking profit off must protect what's left.
+    assert outcome.exit_price == pytest.approx(_R_ENTRY)
+    assert outcome.status == "hit_tp"
+
+
+def test_the_trail_keeps_protecting_the_remainder_above_breakeven_after_a_scale_out(monkeypatch):
+    monkeypatch.setattr(trade_scenario, "PARTIAL_EXIT_FRACTION", 0.5)
+    monkeypatch.setattr(trade_scenario, "PARTIAL_EXIT_R_MULTIPLE", 2.0)  # target = 119.57
+    outcome = _resolve_with_future([
+        # A bigger excursion puts the trail at 120 - 1.5*ATR = 105, ABOVE
+        # breakeven -- scaling out must not cap the rest at breakeven when the
+        # trail has already locked in more.
+        _candle(15, low=110.0, high=120.0, close=115.0),
+        _candle(16, low=100.0, high=112.0, close=105.0),
+    ])
+    assert outcome.partial_exit_price == pytest.approx(_R_TARGET_2R)
+    assert outcome.exit_price == pytest.approx(105.0)
+    assert outcome.status == "hit_tp"
+
+
+def test_a_target_closes_the_whole_position_when_scale_out_is_disabled(monkeypatch):
+    monkeypatch.setattr(trade_scenario, "PARTIAL_EXIT_FRACTION", 0.0)
+    monkeypatch.setattr(trade_scenario, "PARTIAL_EXIT_R_MULTIPLE", 2.0)
+    outcome = _resolve_with_future([_candle(15, low=110.0, high=120.0, close=115.0)])
+    assert outcome.partial_exit_price is None
+    assert outcome.exit_price == pytest.approx(_R_TARGET_2R)
+    assert outcome.status == "hit_tp"
+
+
+
+
+
+def test_blended_r_multiple_weights_both_exit_legs(monkeypatch):
+    monkeypatch.setattr(trade_scenario, "PARTIAL_EXIT_FRACTION", 0.5)
+    # Half out at exactly 2R, the rest at breakeven (0R) -> a blended 1R.
+    blended = trade_scenario.realized_r_multiple(
+        _R_ENTRY, _R_STOP, _R_ENTRY, True, cost_pct=0.0, partial_exit_price=_R_TARGET_2R
+    )
+    assert blended == pytest.approx(1.0)
+
+
+def test_r_multiple_falls_back_to_the_single_exit_formula_without_a_partial(monkeypatch):
+    monkeypatch.setattr(trade_scenario, "PARTIAL_EXIT_FRACTION", 0.5)
+    # partial_exit_price=None -- every scenario predating scale-out.
+    plain = trade_scenario.realized_r_multiple(_R_ENTRY, _R_STOP, _R_TARGET_2R, True, cost_pct=0.0)
+    assert plain == pytest.approx(2.0)
+
+

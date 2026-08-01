@@ -82,6 +82,47 @@ MIN_RELIABLE_SAMPLE_SIZE = 30
 # take_profit's own docstring note on what it means now.
 TRAIL_ATR_MULT = 1.5
 
+# --- Scale-out at a profit target (OFF -- measured, deliberately declined) -
+# Runs alongside the trail, bar by bar: whichever fires first wins. On a
+# profit target (an R multiple and/or the measured-move take_profit already
+# stored on every scenario) HALF the position comes off and the stop goes to
+# breakeven, leaving the rest to run.
+#
+# Swept on VN30/SMC (scripts/backtest_exit_conditions.py, 30 tickers, n=60 in
+# every variant -- scale-out changes how trades EXIT, never which are taken,
+# so the comparison is clean). It is a genuine tradeoff, not an improvement:
+#
+#   variant                   mean_r  median_r  ci_lower  win_rate
+#   trailing stop only (live)  +2.76    +1.21     0.277     65.0%
+#   scale 50% @ 2R             +1.72    +1.37     0.321     66.7%
+#   scale 50% @ 3R             +1.87    +1.21     0.338     65.0%
+#   scale 50% @ measured TP    +2.48    +1.21     0.314     65.0%
+#
+# Selling half at the target caps the rare huge winners that carry the mean
+# (the best chronological slice fell +5.14 -> +2.99) in exchange for a
+# steadier median and a better Sharpe CI. Left OFF by explicit choice:
+# maximum long-run growth was preferred over a smoother equity curve. The
+# machinery stays because that preference is reversible -- flip
+# PARTIAL_EXIT_FRACTION to 0.5 plus one of the targets below, no other change
+# needed, and realized_r_multiple already blends the two exit legs.
+#
+# A third condition -- close the remainder on a bearish event -- was built
+# and swept alongside these and came back byte-identical to the baseline on
+# all 30 tickers: it NEVER fired. A bearish signal only confirms at bar
+# close, while the stop is a resting order that fills intrabar, so by the
+# time structure breaks the stop has already taken the trade out. Removed
+# rather than shipped inert; see git history if it's ever worth revisiting
+# on a timeframe where that ordering differs.
+
+# Fraction taken off at the first profit target. 0.0 disables scale-out
+# entirely (a target then closes the whole position).
+PARTIAL_EXIT_FRACTION = 0.0
+# Scale out once unrealized profit reaches this many R (entry-to-stop
+# distances). 0.0 disables this particular target.
+PARTIAL_EXIT_R_MULTIPLE = 0.0
+# Also treat the scenario's own measured-move take_profit as a target.
+PARTIAL_EXIT_AT_TAKE_PROFIT = False
+
 # --- Entry-quality filters -----------------------------------------------
 # Owned by the STRATEGY, not by this module: read off strategy_module via
 # getattr with a neutral default, so a strategy that doesn't declare them is
@@ -159,6 +200,10 @@ def _close_reason(
     max_bars: int | None = None,
     language: str = "vi",
 ) -> str:
+    if status == "target":
+        if language == "en":
+            return f"Reached target {level:.2f} at candle {bar_ts:%Y-%m-%d %H:%M}"
+        return f"Chạm mục tiêu {level:.2f} tại nến {bar_ts:%Y-%m-%d %H:%M}"
     if status == "hit_sl":
         if language == "en":
             return f"Price {price:.2f} breached SL {level:.2f} at candle {bar_ts:%Y-%m-%d %H:%M}"
@@ -170,6 +215,24 @@ def _close_reason(
     if language == "en":
         return f"{max_bars} candles passed without hitting TP/SL, scenario expired"
     return f"Hết {max_bars} nến chưa đạt TP/SL, kịch bản hết hiệu lực"
+
+
+def _close_reason_for(outcome: "ResolvedOutcome", max_bars: int, language: str) -> str:
+    """Picks the right close_reason wording for a resolved outcome. Shared by
+    live tracking and the backtest replay so the two can't describe the same
+    close differently -- and so a new exit path can't be added to one without
+    the other. ``closed_by`` decides the wording; ``status`` stays purely the
+    win/loss classification."""
+    if outcome.closed_by == "target":
+        return _close_reason("target", level=outcome.exit_price, bar_ts=outcome.closed_bar_ts, language=language)
+    if outcome.status == "hit_sl":
+        return _close_reason(
+            "hit_sl", price=outcome.touch_price, level=outcome.exit_price,
+            bar_ts=outcome.closed_bar_ts, language=language,
+        )
+    if outcome.status == "hit_tp":
+        return _close_reason("hit_tp", level=outcome.exit_price, bar_ts=outcome.closed_bar_ts, language=language)
+    return _close_reason("expired", max_bars=max_bars, language=language)
 
 
 def _template_explanation(
@@ -239,6 +302,73 @@ class ResolvedOutcome:
     closed_bar_ts: datetime | None
     exit_price: float | None
     touch_price: float | None = None  # hit_sl only -- the actual low/high that pierced, for the close_reason message
+    # Set only when a profit target scaled half the position out before the
+    # final exit (see PARTIAL_EXIT_FRACTION). exit_price then refers to the
+    # REMAINING half. Both stay None on a scenario that closed in one go.
+    partial_exit_price: float | None = None
+    partial_exit_bar_ts: datetime | None = None
+    # WHICH racing condition closed it, for the human-readable close_reason
+    # only -- `status` stays the win/loss classification the stats use. A
+    # target close must not be described as a stop breach: nothing was
+    # breached, and it has no touch_price to quote.
+    closed_by: str = "stop"  # "stop" | "target" | "expiry"
+
+
+def realized_r_multiple(
+    entry: float,
+    stop_loss: float,
+    exit_price: float | None,
+    is_bullish: bool,
+    cost_pct: float,
+    partial_exit_price: float | None = None,
+) -> float | None:
+    """Cost-adjusted R-multiple, blending both legs when the scenario scaled
+    out (see PARTIAL_EXIT_FRACTION): half taken at the target, the rest at
+    the final exit, weighted by the fraction each leg represents. Costs are
+    charged on BOTH legs -- each is a real round-trip sale, not a paper
+    mark. Falls back to the plain single-exit formula when nothing was
+    scaled out, which is every scenario predating the feature.
+
+    The fraction is read from the current module constant rather than stored
+    per scenario -- same treatment TRAIL_ATR_MULT already gets, since both
+    are fixed properties of the exit model rather than per-trade data.
+
+    Shared by get_scenario_stats and every backtest script (via
+    scripts/optimize_wyckoff._r_multiple) so a sweep's numbers can never
+    drift from what the Trade History dashboard reports."""
+    risk_distance = abs(entry - stop_loss)
+    if not risk_distance or exit_price is None:
+        return None
+
+    def leg_r(price: float) -> float:
+        cost_amount = cost_pct * entry
+        adjusted = price - cost_amount if is_bullish else price + cost_amount
+        raw = (adjusted - entry) / risk_distance
+        return raw if is_bullish else -raw
+
+    if partial_exit_price is None or PARTIAL_EXIT_FRACTION <= 0:
+        return leg_r(exit_price)
+    fraction = min(PARTIAL_EXIT_FRACTION, 1.0)
+    return fraction * leg_r(partial_exit_price) + (1 - fraction) * leg_r(exit_price)
+
+
+def _first_profit_target(
+    entry: float, risk_distance: float, is_bullish: bool, take_profit: float | None
+) -> float | None:
+    """The NEAREST enabled profit target, or None when neither is on -- the
+    two (an R multiple of the stop distance, and the scenario's own
+    measured-move take_profit) are alternative ways of naming the same
+    thing, so racing them means taking whichever price comes first, not
+    scaling out twice."""
+    targets: list[float] = []
+    if PARTIAL_EXIT_R_MULTIPLE > 0 and risk_distance > 0:
+        offset = PARTIAL_EXIT_R_MULTIPLE * risk_distance
+        targets.append(entry + offset if is_bullish else entry - offset)
+    if PARTIAL_EXIT_AT_TAKE_PROFIT and take_profit is not None:
+        targets.append(take_profit)
+    if not targets:
+        return None
+    return min(targets) if is_bullish else max(targets)
 
 
 def _resolve_outcome(
@@ -249,15 +379,21 @@ def _resolve_outcome(
     is_bullish: bool,
     candles: list[Candle],
     min_settlement_bars: int = 0,
+    take_profit: float | None = None,
 ) -> ResolvedOutcome:
-    """Breakeven-at-1R + ATR trailing stop -- no fixed take-profit ceiling
-    (see TRAIL_ATR_MULT). Pure decision over plain values -- no DB, no
+    """Breakeven-at-1R + ATR trailing stop, optionally raced against a profit
+    target (see the PARTIAL_EXIT_* constants -- off by default, so with no
+    extra arguments this behaves exactly as it always did). Pure decision
+    over plain values -- no DB, no
     session. Shared by live tracking (_update_active_scenarios, which polls
     this against whatever candles have arrived so far) and
     app.services.scenario_backtest (which has the complete future candle
     series up front and resolves a scenario the instant it's created,
     instead of waiting for later runs) -- so a backtest can never see a
     resolution live tracking couldn't have.
+
+    ``take_profit`` feeds the profit-target condition: the scenario's own
+    measured-move level, ignored while that flag is off.
 
     Once the running favorable excursion reaches 1R (entry-to-stop
     distance), the stop moves to at least breakeven, then trails
@@ -280,6 +416,10 @@ def _resolve_outcome(
     risk_distance = abs(entry - stop_loss)
     current_stop = stop_loss
     best = entry
+    partial_price: float | None = None
+    partial_ts: datetime | None = None
+    target = _first_profit_target(entry, risk_distance, is_bullish, take_profit)
+
     subsequent = sorted((c for c in candles if c.bucket_start > event_ts), key=lambda c: c.bucket_start)
     for idx, bar in enumerate(subsequent, start=1):
         if idx <= min_settlement_bars:
@@ -291,7 +431,22 @@ def _resolve_outcome(
         if hit_stop:
             status = "hit_tp" if (current_stop >= entry if is_bullish else current_stop <= entry) else "hit_sl"
             touch_price = bar.low if is_bullish else bar.high
-            return ResolvedOutcome(status, bar.bucket_start, current_stop, touch_price)
+            return ResolvedOutcome(status, bar.bucket_start, current_stop, touch_price, partial_price, partial_ts)
+
+        # Profit target, raced against the stop above. Checked intrabar for
+        # the same reason: a limit order at the target fills on touch. Once
+        # it fires, half comes off and the stop goes to breakeven, so the
+        # rest can only close at a scratch or better from here.
+        if target is not None and partial_price is None:
+            reached = bar.high >= target if is_bullish else bar.low <= target
+            if reached:
+                if PARTIAL_EXIT_FRACTION <= 0:
+                    # Scale-out disabled -- a target closes the whole thing.
+                    return ResolvedOutcome(
+                        "hit_tp", bar.bucket_start, target, None, None, None, closed_by="target"
+                    )
+                partial_price, partial_ts = target, bar.bucket_start
+                current_stop = max(current_stop, entry) if is_bullish else min(current_stop, entry)
 
         best = max(best, bar.high) if is_bullish else min(best, bar.low)
         unrealized = (best - entry) if is_bullish else (entry - best)
@@ -302,8 +457,10 @@ def _resolve_outcome(
             )
 
         if idx >= max_bars:
-            return ResolvedOutcome("expired", bar.bucket_start, bar.close)
-    return ResolvedOutcome("active", None, None)
+            return ResolvedOutcome(
+                "expired", bar.bucket_start, bar.close, None, partial_price, partial_ts, closed_by="expiry"
+            )
+    return ResolvedOutcome("active", None, None, None, partial_price, partial_ts)
 
 
 def _settlement_bars_for(symbol: Symbol | None, timeframe: str) -> int:
@@ -313,7 +470,12 @@ def _settlement_bars_for(symbol: Symbol | None, timeframe: str) -> int:
 
 
 def _update_active_scenarios(
-    session: Session, ticker: str, timeframe: str, strategy: str, candles: list[Candle], language: str
+    session: Session,
+    ticker: str,
+    timeframe: str,
+    strategy: str,
+    candles: list[Candle],
+    language: str,
 ) -> None:
     active = session.exec(
         select(TradeScenario).where(
@@ -333,24 +495,21 @@ def _update_active_scenarios(
         outcome = _resolve_outcome(
             scenario.event_ts, scenario.entry, scenario.stop_loss, scenario.max_bars,
             scenario.is_bullish, candles, min_settlement_bars,
+            take_profit=scenario.take_profit,
         )
+        # A scale-out is recorded even while the rest of the position is
+        # still open -- half the profit is already realized, and the stats
+        # shouldn't have to wait for the final exit to see it.
+        scenario.partial_exit_price = outcome.partial_exit_price
+        scenario.partial_exit_bar_ts = outcome.partial_exit_bar_ts
         if outcome.status == "active":
+            session.add(scenario)
             continue
 
         scenario.status = outcome.status
         scenario.closed_bar_ts = outcome.closed_bar_ts
         scenario.exit_price = outcome.exit_price
-        if outcome.status == "hit_sl":
-            scenario.close_reason = _close_reason(
-                "hit_sl", price=outcome.touch_price, level=outcome.exit_price,
-                bar_ts=outcome.closed_bar_ts, language=language,
-            )
-        elif outcome.status == "hit_tp":
-            scenario.close_reason = _close_reason(
-                "hit_tp", level=outcome.exit_price, bar_ts=outcome.closed_bar_ts, language=language,
-            )
-        else:  # expired
-            scenario.close_reason = _close_reason("expired", max_bars=scenario.max_bars, language=language)
+        scenario.close_reason = _close_reason_for(outcome, scenario.max_bars, language)
         scenario.closed_at = _utcnow()
         session.add(scenario)
 
@@ -949,13 +1108,9 @@ def get_scenario_stats(
         ) / 100
 
     def _r_multiple(s: TradeScenario) -> float | None:
-        risk_distance = abs(s.entry - s.stop_loss)
-        if not risk_distance or s.exit_price is None:
-            return None
-        cost_amount = _cost_pct(s.ticker) * s.entry
-        adjusted_exit = s.exit_price - cost_amount if s.is_bullish else s.exit_price + cost_amount
-        raw = (adjusted_exit - s.entry) / risk_distance
-        return raw if s.is_bullish else -raw
+        return realized_r_multiple(
+            s.entry, s.stop_loss, s.exit_price, s.is_bullish, _cost_pct(s.ticker), s.partial_exit_price
+        )
 
     scored = [(s, r) for s in closed if (r := _r_multiple(s)) is not None]
     r_multiples = [r for _, r in scored]

@@ -36,7 +36,7 @@ from app.services import settings_service
 from app.services.trade_scenario import (
     CONTINUATION_EVENT_TYPES,
     _build_scenario_candidate,
-    _close_reason,
+    _close_reason_for,
     _resolve_outcome,
     _settlement_bars_for,
     _utcnow,
@@ -174,24 +174,17 @@ def walk_events(
         outcome = _resolve_outcome(
             candidate.event_ts, candidate.entry, candidate.stop_loss, candidate.max_bars,
             candidate.is_bullish, candles, _settlement_bars_for(symbol, timeframe),
+            take_profit=candidate.take_profit,
         )
+        candidate.partial_exit_price = outcome.partial_exit_price
+        candidate.partial_exit_bar_ts = outcome.partial_exit_bar_ts
         if outcome.status == "active":
             still_open = True
         else:
             candidate.status = outcome.status
             candidate.closed_bar_ts = outcome.closed_bar_ts
             candidate.exit_price = outcome.exit_price
-            if outcome.status == "hit_sl":
-                candidate.close_reason = _close_reason(
-                    "hit_sl", price=outcome.touch_price, level=outcome.exit_price,
-                    bar_ts=outcome.closed_bar_ts, language=language,
-                )
-            elif outcome.status == "hit_tp":
-                candidate.close_reason = _close_reason(
-                    "hit_tp", level=outcome.exit_price, bar_ts=outcome.closed_bar_ts, language=language,
-                )
-            else:
-                candidate.close_reason = _close_reason("expired", max_bars=candidate.max_bars, language=language)
+            candidate.close_reason = _close_reason_for(outcome, candidate.max_bars, language)
             candidate.closed_at = _utcnow()
             blocked_until = outcome.closed_bar_ts
 

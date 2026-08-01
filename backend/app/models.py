@@ -257,6 +257,16 @@ class TradeScenario(SQLModel, table=True):
     # get_scenario_stats compute R-multiple/P&L uniformly across every closed
     # status instead of excluding "expired" for lack of an exit price.
     exit_price: Optional[float] = None
+    # Scale-out: price and bar at which HALF the position was taken off,
+    # while the rest kept running (see trade_scenario._resolve_outcome's
+    # racing exit conditions). None when the scenario closed in one go --
+    # the case for every scenario predating the feature and for any that
+    # stops out before a profit target is reached. When set, exit_price is
+    # the REMAINING half's exit, and the scenario's realized R-multiple is
+    # the blend of the two (see PARTIAL_EXIT_FRACTION and
+    # get_scenario_stats' own note).
+    partial_exit_price: Optional[float] = None
+    partial_exit_bar_ts: Optional[datetime] = None
     # Same fingerprint/semantics as SignalOutcome.config_version above.
     config_version: str = ""
     # True when the SL/TP distance from entry exceeds the stock exchange's

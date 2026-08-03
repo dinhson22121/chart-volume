@@ -304,6 +304,13 @@ export function SettingsModal({ onClose, strategy, onLicenseCleared }: Props) {
 
   const [stockBatchStatus, setStockBatchStatus] = useState<StockBatchAnalysisStatus | null>(null);
   const [stockBatchRunError, setStockBatchRunError] = useState<string | null>(null);
+  // Cancellation is cooperative on the backend (a threading.Event only
+  // checked between completed tickers, with up to MAX_WORKERS already
+  // in flight -- see stock_batch_analysis.run_full_universe_analysis), so
+  // `running` can stay true for a while after a cancel click actually takes.
+  // This tracks "a cancel was requested" separately so the button gives
+  // immediate feedback and can't be spammed while one is already pending.
+  const [stockBatchCancelling, setStockBatchCancelling] = useState(false);
   const stockBatchPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopStockBatchPolling = useCallback(() => {
@@ -316,7 +323,13 @@ export function SettingsModal({ onClose, strategy, onLicenseCleared }: Props) {
   const pollStockBatchStatus = useCallback(() => {
     api.getStockBatchAnalysisStatus().then((s) => {
       setStockBatchStatus(s);
-      if (!s.running) stopStockBatchPolling();
+      if (!s.running) {
+        stopStockBatchPolling();
+        // Confirmed stopped (cancelled or finished on its own) -- clear the
+        // "cancelling" flag so the Cancel button doesn't stay stuck disabled
+        // past the run it was disabled for.
+        setStockBatchCancelling(false);
+      }
     });
   }, [stopStockBatchPolling]);
 
@@ -348,8 +361,8 @@ export function SettingsModal({ onClose, strategy, onLicenseCleared }: Props) {
         // stale running:false and flip the button back to "not running" for
         // a moment -- looking like the click did nothing and prompting a
         // second click. Reflect "running" right away instead of racing that
-        // poll; the next poll (below, and the interval) overwrites it with
-        // the real total/progress once the run actually populates it.
+        // poll; the interval below (not an immediate poll -- see why) picks
+        // up the real total/progress once the run actually populates it.
         setStockBatchStatus((prev) => ({
           running: true,
           total: prev?.total ?? null,
@@ -361,18 +374,37 @@ export function SettingsModal({ onClose, strategy, onLicenseCleared }: Props) {
           last_completed_at: prev?.last_completed_at ?? null,
         }));
         startStockBatchPolling();
+        // Deliberately NOT polling immediately here (this used to call
+        // pollStockBatchStatus() unconditionally right after the optimistic
+        // update above): the background task can still not have started yet
+        // at this exact instant, so an immediate GET /status could resolve
+        // with a stale running:false and stomp the optimistic update right
+        // back to "not running" -- which is exactly what made this look like
+        // the click needed to happen twice. The 2s interval already started
+        // gives the task time to actually begin before the first real poll.
+      } else {
+        // e.g. "already_running" -- nothing optimistic to set, just resync
+        // (shouldn't normally be reachable since the button disables itself
+        // while running, but the backend can still say so if it raced).
+        pollStockBatchStatus();
       }
-      pollStockBatchStatus();
     } catch (e) {
       setStockBatchRunError(e instanceof Error ? e.message : t("stockBatch.status.error", { error: "" }));
     }
   };
 
   const handleCancelStockBatch = async () => {
+    setStockBatchRunError(null);
+    // Optimistic + disables the button (see stockBatchCancelling's own
+    // note): cancellation is cooperative on the backend, so `running` can
+    // legitimately stay true for a while after this -- without this, the
+    // button gave no feedback at all and invited repeat clicks.
+    setStockBatchCancelling(true);
     try {
       await api.cancelStockBatchAnalysis();
     } catch (e) {
       setStockBatchRunError(e instanceof Error ? e.message : t("stockBatch.status.error", { error: "" }));
+      setStockBatchCancelling(false);
     }
   };
 
@@ -1045,8 +1077,12 @@ export function SettingsModal({ onClose, strategy, onLicenseCleared }: Props) {
                   {stockBatchStatus?.running ? t("stockBatch.buttonRunning") : t("stockBatch.button")}
                 </button>
                 {stockBatchStatus?.running && (
-                  <button className="btn" onClick={() => void handleCancelStockBatch()}>
-                    {t("stockBatch.cancel")}
+                  <button
+                    className="btn"
+                    onClick={() => void handleCancelStockBatch()}
+                    disabled={stockBatchCancelling}
+                  >
+                    {stockBatchCancelling ? t("stockBatch.cancelling") : t("stockBatch.cancel")}
                   </button>
                 )}
                 <span className="faint">{stockBatchStatusLine}</span>

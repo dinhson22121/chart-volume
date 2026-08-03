@@ -74,9 +74,25 @@ export function PotentialScreenModal({ onClose, onSelect }: Props) {
     try {
       const result = await api.runPotentialScreen();
       if (result.status === "started") {
+        // Optimistic update: the backend's BackgroundTasks job only starts
+        // running AFTER this response is sent, so an immediate status poll
+        // right here can still read a stale running:false and flip the
+        // button back to "not running" for a moment -- looking like the
+        // click did nothing and prompting a second one. Reflect "running"
+        // right away instead; startPolling's 2s interval (not an immediate
+        // poll) picks up real progress once the run actually starts.
+        setStatus((prev) => ({
+          running: true,
+          total: prev?.total ?? null,
+          scored: prev?.scored ?? null,
+          last_completed_at: prev?.last_completed_at ?? null,
+          last_error: prev?.last_error ?? null,
+        }));
         startPolling();
+      } else {
+        // e.g. "already_running" -- nothing optimistic to set, just resync.
+        pollStatus();
       }
-      pollStatus();
     } catch (e) {
       setError(e instanceof Error ? e.message : t("potential.error"));
     }

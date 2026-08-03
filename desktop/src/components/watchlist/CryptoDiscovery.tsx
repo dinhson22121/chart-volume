@@ -198,7 +198,21 @@ export function CryptoDiscovery({ onPromoted }: Props) {
     setError(null);
     try {
       await api.triggerScreenerScan();
-      await refreshStatus();
+      // Optimistic update: the backend's BackgroundTasks job only starts
+      // running AFTER this response is sent, so an immediate status refresh
+      // right here can still read a stale running:false -- the Scan button
+      // wouldn't swap to Cancel, looking like the click did nothing. Mirrors
+      // the fields crypto_screener actually resets when a scan starts.
+      setStatus((prev) => ({
+        running: true,
+        last_completed_at: prev?.last_completed_at ?? null,
+        last_hits: prev?.last_hits ?? null,
+        last_error: null,
+        last_cancelled: false,
+        phase: null,
+        current_page: null,
+        hits_so_far: null,
+      }));
     } catch (e) {
       setError(e instanceof Error ? e.message : t("crypto.error.scanTrigger"));
     }

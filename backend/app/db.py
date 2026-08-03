@@ -27,6 +27,20 @@ _engine = create_engine(
     # time). SQLite-only -- Postgres has no such argument and handles
     # concurrent writes at the server, not the client library, level.
     connect_args={"check_same_thread": False, "timeout": 30} if _IS_SQLITE else {},
+    # SQLAlchemy's QueuePool defaults (pool_size=5, max_overflow=10 -- 15
+    # connections total) are sized for a typical web app's request volume,
+    # not this app's own concurrency: app.scheduler's MAX_WORKERS=5 batch
+    # jobs each hold a session open across a full ingest+analyze+record
+    # cycle (including slow, retrying external exchange calls), so the
+    # scheduler alone can approach the default limit, leaving no headroom
+    # for the UI's own concurrent requests (dashboard, chart, symbols, ...).
+    # Measured: this starved the pool and surfaced as HTTP 500
+    # ("QueuePool limit of size 5 overflow 10 reached") under real
+    # concurrent load, not just slowness. A sqlite3 connection is a cheap
+    # file handle, not a network round-trip, so a generous pool costs
+    # little -- SQLite-only (matching connect_args above); Postgres keeps
+    # SQLAlchemy's own defaults rather than a hardcoded copy of them here.
+    **({"pool_size": 20, "max_overflow": 20} if _IS_SQLITE else {}),
 )
 
 

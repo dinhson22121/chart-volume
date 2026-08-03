@@ -35,6 +35,7 @@ from app.models import AssetClass, Candle, Symbol, Timeframe  # noqa: E402
 from app.services import scenario_backtest, settings_service, stats_significance, trade_scenario  # noqa: E402
 from app.wyckoff import BEARISH_EVENTS, BULLISH_EVENTS, RANGING_PHASES  # noqa: E402
 from app.wyckoff.config import WyckoffConfig  # noqa: E402
+from scripts import parallel_tickers  # noqa: E402
 
 STRATEGY = "wyckoff"
 
@@ -168,96 +169,122 @@ def _chronological_breakdown(dated_r: list[tuple], n_slices: int = N_TIME_SLICES
         )
 
 
+def _sweep_one_ticker(session: Session, ticker: str) -> dict[tuple[float, float, float], dict[str, list[float]]]:
+    """One ticker across every (climax, sos, sl_buffer) candidate -- the unit
+    parallel_tickers farms out to a worker process. Returns a slice shaped
+    exactly like ``results``: candidate -> {"opt": [r, ...], "holdout": [...]}.
+
+    Deliberately NOT a flat (event_ts, r) list re-sorted by the parent (the
+    shape scripts/backtest_smc.py and its siblings use): this sweep never
+    sorted by event_ts before scoring -- r_multiples land in ticker-then-
+    candidate order, not calendar order -- and walk_forward_analysis's own
+    window-consistency check is documented as requiring chronological input,
+    so reshuffling that order now would silently change this script's own
+    numbers. The parent must extend per-ticker in the same order
+    parallel_tickers.map_tickers yields tickers (its own documented
+    guarantee) to stay byte-identical with the serial version."""
+    risk_cfg = settings_service.get_risk_config(session)
+    candles = _load_daily_candles(session, ticker)
+    symbol = session.get(Symbol, ticker)
+
+    ticker_results: dict[tuple[float, float, float], dict[str, list[float]]] = {
+        (c, s, b): {"opt": [], "holdout": []}
+        for c, s, b in product(CLIMAX_VOL_MULT_GRID, SOS_VOL_MULT_GRID, SL_BUFFER_PCT_GRID)
+    }
+
+    for climax, sos in product(CLIMAX_VOL_MULT_GRID, SOS_VOL_MULT_GRID):
+        cfg = WyckoffConfig(climax_vol_mult=climax, sos_vol_mult=sos)
+        result = wyckoff_module.analyze(candles, cfg, None, "vi")
+
+        # _build_scenario_candidate's phase-before-event gate re-runs
+        # analyze() on the truncated pre-event window for EVERY qualifying
+        # event -- the single most expensive step in the whole walk. That
+        # gate result doesn't depend on SL_BUFFER_PCT at all, so redoing it
+        # fresh for each of the 3 SL variants below is pure waste. Memoize
+        # it here (keyed by truncated length, which is exactly event.index
+        # and therefore unique per event for this fixed candles list) so
+        # only the first SL variant pays for it.
+        analyze_cache: dict[int, object] = {}
+        original_analyze = wyckoff_module.analyze
+
+        def _cached_analyze(candles_arg, *a, **k):
+            key = len(candles_arg)
+            if key not in analyze_cache:
+                analyze_cache[key] = original_analyze(candles_arg, *a, **k)
+            return analyze_cache[key]
+
+        wyckoff_module.analyze = _cached_analyze
+        try:
+            for sl_buffer in SL_BUFFER_PCT_GRID:
+                original_sl_buffer = trade_scenario.SL_BUFFER_PCT
+                trade_scenario.SL_BUFFER_PCT = sl_buffer
+                try:
+                    scenarios = scenario_backtest.walk_events(
+                        ticker, Timeframe.DAILY, STRATEGY, candles, result.events,
+                        BULLISH_EVENTS, BEARISH_EVENTS, result.levels, wyckoff_module,
+                        cfg, None, RANGING_PHASES, symbol, risk_cfg,
+                    )
+                finally:
+                    trade_scenario.SL_BUFFER_PCT = original_sl_buffer
+
+                bucket = ticker_results[(climax, sos, sl_buffer)]
+                for scenario in scenarios:
+                    if scenario.status not in ("hit_tp", "hit_sl", "expired") or scenario.exit_price is None:
+                        continue
+                    r = _r_multiple(scenario, risk_cfg)
+                    if r is None:
+                        continue
+                    window = "opt" if scenario.event_ts < OPT_HOLDOUT_CUTOFF else "holdout"
+                    bucket[window].append(r)
+        finally:
+            wyckoff_module.analyze = original_analyze
+
+    return ticker_results
+
+
 def main() -> None:
     engine = get_engine()
     with Session(engine) as session:
         risk_cfg = settings_service.get_risk_config(session)
         risk_amount = risk_cfg["notional_capital"] * risk_cfg["risk_pct_per_trade"] / 100
-
         tickers = _stock_tickers_with_enough_history(session)
-        print(f"{len(tickers)} stock ticker(s) with >= {MIN_DAILY_BARS} daily bars\n")
 
-        # candidate -> {"opt": [r, ...], "holdout": [r, ...]}
-        results: dict[tuple[float, float, float], dict[str, list[float]]] = {
-            (c, s, b): {"opt": [], "holdout": []}
-            for c, s, b in product(CLIMAX_VOL_MULT_GRID, SOS_VOL_MULT_GRID, SL_BUFFER_PCT_GRID)
-        }
+    # candidate -> {"opt": [r, ...], "holdout": [r, ...]}
+    results: dict[tuple[float, float, float], dict[str, list[float]]] = {
+        (c, s, b): {"opt": [], "holdout": []}
+        for c, s, b in product(CLIMAX_VOL_MULT_GRID, SOS_VOL_MULT_GRID, SL_BUFFER_PCT_GRID)
+    }
+    workers = parallel_tickers.default_workers()
+    print(f"{len(tickers)} stock ticker(s) with >= {MIN_DAILY_BARS} daily bars, {workers} process(es)\n")
 
-        for i, ticker in enumerate(tickers, 1):
-            candles = _load_daily_candles(session, ticker)
-            symbol = session.get(Symbol, ticker)
-            print(f"[{i}/{len(tickers)}] {ticker} ({len(candles)} bars)", file=sys.stderr)
+    for i, ticker, ticker_results in parallel_tickers.map_tickers(tickers, _sweep_one_ticker, workers=workers):
+        print(f"[{i}/{len(tickers)}] {ticker}", file=sys.stderr)
+        for candidate, windows in ticker_results.items():
+            for window, rs in windows.items():
+                results[candidate][window].extend(rs)
 
-            for climax, sos in product(CLIMAX_VOL_MULT_GRID, SOS_VOL_MULT_GRID):
-                cfg = WyckoffConfig(climax_vol_mult=climax, sos_vol_mult=sos)
-                result = wyckoff_module.analyze(candles, cfg, None, "vi")
+    scored = {
+        cand: _score_window(data["opt"], risk_amount, risk_cfg["notional_capital"])
+        for cand, data in results.items()
+    }
+    ranked = sorted(
+        (c for c in scored if scored[c]["n_trades"] >= 10),
+        key=lambda c: (scored[c]["bootstrap_ci_lower"] is not None, scored[c]["bootstrap_ci_lower"] or -999),
+        reverse=True,
+    )
 
-                # _build_scenario_candidate's phase-before-event gate re-runs
-                # analyze() on the truncated pre-event window for EVERY
-                # qualifying event -- the single most expensive step in the
-                # whole walk. That gate result doesn't depend on
-                # SL_BUFFER_PCT at all, so redoing it fresh for each of the 3
-                # SL variants below is pure waste. Memoize it here (keyed by
-                # truncated length, which is exactly event.index and
-                # therefore unique per event for this fixed candles list) so
-                # only the first SL variant pays for it.
-                analyze_cache: dict[int, object] = {}
-                original_analyze = wyckoff_module.analyze
+    print("\n=== Baseline (current live defaults) ===")
+    c, s, b = DEFAULT_CANDIDATE
+    print(f"climax_vol_mult={c} sos_vol_mult={s} SL_BUFFER_PCT={b}")
+    print(_format_window("opt window    ", _score_window(results[DEFAULT_CANDIDATE]["opt"], risk_amount, risk_cfg["notional_capital"])))
+    print(_format_window("holdout window", _score_window(results[DEFAULT_CANDIDATE]["holdout"], risk_amount, risk_cfg["notional_capital"])))
 
-                def _cached_analyze(candles_arg, *a, **k):
-                    key = len(candles_arg)
-                    if key not in analyze_cache:
-                        analyze_cache[key] = original_analyze(candles_arg, *a, **k)
-                    return analyze_cache[key]
-
-                wyckoff_module.analyze = _cached_analyze
-                try:
-                    for sl_buffer in SL_BUFFER_PCT_GRID:
-                        original_sl_buffer = trade_scenario.SL_BUFFER_PCT
-                        trade_scenario.SL_BUFFER_PCT = sl_buffer
-                        try:
-                            scenarios = scenario_backtest.walk_events(
-                                ticker, Timeframe.DAILY, STRATEGY, candles, result.events,
-                                BULLISH_EVENTS, BEARISH_EVENTS, result.levels, wyckoff_module,
-                                cfg, None, RANGING_PHASES, symbol, risk_cfg,
-                            )
-                        finally:
-                            trade_scenario.SL_BUFFER_PCT = original_sl_buffer
-
-                        bucket = results[(climax, sos, sl_buffer)]
-                        for scenario in scenarios:
-                            if scenario.status not in ("hit_tp", "hit_sl", "expired") or scenario.exit_price is None:
-                                continue
-                            r = _r_multiple(scenario, risk_cfg)
-                            if r is None:
-                                continue
-                            window = "opt" if scenario.event_ts < OPT_HOLDOUT_CUTOFF else "holdout"
-                            bucket[window].append(r)
-                finally:
-                    wyckoff_module.analyze = original_analyze
-
-        scored = {
-            cand: _score_window(data["opt"], risk_amount, risk_cfg["notional_capital"])
-            for cand, data in results.items()
-        }
-        ranked = sorted(
-            (c for c in scored if scored[c]["n_trades"] >= 10),
-            key=lambda c: (scored[c]["bootstrap_ci_lower"] is not None, scored[c]["bootstrap_ci_lower"] or -999),
-            reverse=True,
-        )
-
-        print("\n=== Baseline (current live defaults) ===")
-        c, s, b = DEFAULT_CANDIDATE
-        print(f"climax_vol_mult={c} sos_vol_mult={s} SL_BUFFER_PCT={b}")
-        print(_format_window("opt window    ", _score_window(results[DEFAULT_CANDIDATE]["opt"], risk_amount, risk_cfg["notional_capital"])))
-        print(_format_window("holdout window", _score_window(results[DEFAULT_CANDIDATE]["holdout"], risk_amount, risk_cfg["notional_capital"])))
-
-        print("\n=== Top 5 candidates by opt-window bootstrap CI lower bound ===")
-        for cand in ranked[:5]:
-            c, s, b = cand
-            print(f"\nclimax_vol_mult={c} sos_vol_mult={s} SL_BUFFER_PCT={b}")
-            print(_format_window("opt window    ", scored[cand]))
-            print(_format_window("holdout window", _score_window(results[cand]["holdout"], risk_amount, risk_cfg["notional_capital"])))
+    print("\n=== Top 5 candidates by opt-window bootstrap CI lower bound ===")
+    for cand in ranked[:5]:
+        c, s, b = cand
+        print(f"\nclimax_vol_mult={c} sos_vol_mult={s} SL_BUFFER_PCT={b}")
+        print(_format_window("opt window    ", scored[cand]))
+        print(_format_window("holdout window", _score_window(results[cand]["holdout"], risk_amount, risk_cfg["notional_capital"])))
 
 
 if __name__ == "__main__":

@@ -140,20 +140,25 @@ def _pooled_baseline(
     different sample sizes."""
     from app.services import baseline as baseline_svc  # local: baseline imports from this module
 
-    query = select(Candle)
+    # Column-projected: compute_baseline only ever reads .close, so selecting
+    # the full mapped Candle (every column, ORM-instantiated per row) here
+    # was pure overhead -- on the full candle table this alone was multiple
+    # seconds of nothing but SQLAlchemy object construction. order_by can
+    # still reference Candle.bucket_start even though it isn't selected.
+    query = select(Candle.ticker, Candle.close)
     if ticker:
         query = query.where(Candle.ticker == ticker.upper())
     if timeframe:
         query = query.where(Candle.timeframe == timeframe)
     if asset_class:
         query = query.join(Symbol, Symbol.ticker == Candle.ticker).where(Symbol.asset_class == asset_class)
-    candles = session.exec(query.order_by(Candle.ticker, Candle.bucket_start)).all()
-    if not candles:
+    rows = session.exec(query.order_by(Candle.ticker, Candle.bucket_start)).all()
+    if not rows:
         return None
 
-    by_ticker: dict[str, list[Candle]] = defaultdict(list)
-    for c in candles:
-        by_ticker[c.ticker].append(c)
+    by_ticker: dict[str, list] = defaultdict(list)
+    for row in rows:
+        by_ticker[row.ticker].append(row)
 
     totals = {h: {"long_wins": 0, "short_wins": 0, "n": 0} for h in HORIZONS}
     for series in by_ticker.values():
@@ -173,7 +178,7 @@ def _pooled_baseline(
     }
 
 
-def _effective_n_for_horizon(rows: list[SignalOutcome], horizon: int) -> int:
+def _effective_n_for_horizon(rows: list, horizon: int) -> int:  # rows: list[Row], see get_stats' query
     """Declustered observation count for this horizon's significance test (see
     app.services.stats_significance.effective_n) -- rows sharing a
     (ticker, timeframe) can have overlapping forward-return windows, but
@@ -232,7 +237,17 @@ def get_stats(
     its baseline, corrected across every entry this call returns together --
     the more event types/strategies get compared side by side, the more of
     them will look "significant" by chance alone if left uncorrected."""
-    query = select(SignalOutcome)
+    # Column-projected, not the full mapped SignalOutcome: the loop below
+    # only ever reads these 9 fields (event_price/is_win_N/aligned/
+    # updated_at/id/strategy are never touched once the WHERE clause has
+    # done its filtering). At the full-table scale this call can run at,
+    # skipping ORM instantiation for the other 7 columns is the difference
+    # between multiple seconds and a fraction of one.
+    query = select(
+        SignalOutcome.ticker, SignalOutcome.timeframe, SignalOutcome.event_type, SignalOutcome.event_ts,
+        SignalOutcome.is_bullish, SignalOutcome.config_version,
+        SignalOutcome.return_5, SignalOutcome.return_10, SignalOutcome.return_20,
+    )
     if ticker:
         query = query.where(SignalOutcome.ticker == ticker.upper())
     if timeframe:
@@ -245,7 +260,7 @@ def get_stats(
         query = query.join(Symbol, Symbol.ticker == SignalOutcome.ticker).where(Symbol.asset_class == asset_class)
     rows = session.exec(query).all()
 
-    by_type: dict[str, list[SignalOutcome]] = defaultdict(list)
+    by_type: dict[str, list] = defaultdict(list)  # Row, not SignalOutcome -- see the column-projected query above
     for row in rows:
         by_type[row.event_type].append(row)
 

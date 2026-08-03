@@ -31,10 +31,11 @@ from sqlmodel import Session  # noqa: E402
 
 import app.wyckoff as wyckoff_module  # noqa: E402
 from app.db import get_engine  # noqa: E402
-from app.models import Timeframe  # noqa: E402
-from app.services import settings_service, trade_scenario  # noqa: E402
+from app.models import Symbol, Timeframe  # noqa: E402
+from app.services import scenario_backtest, settings_service, trade_scenario  # noqa: E402
 from app.wyckoff import BEARISH_EVENTS, BULLISH_EVENTS, RANGING_PHASES  # noqa: E402
 from app.wyckoff.config import WyckoffConfig  # noqa: E402
+from scripts import parallel_tickers  # noqa: E402
 from scripts.optimize_wyckoff import (  # noqa: E402
     OPT_HOLDOUT_CUTOFF,
     _format_window,
@@ -164,97 +165,120 @@ def _walk_approach_b(ticker, candles, events, levels, cfg, symbol, risk_cfg, tra
     return results
 
 
+def _sweep_one_ticker(
+    session: Session, ticker: str
+) -> tuple[dict[float, dict[str, list[tuple]]], dict[float, dict[str, list[tuple]]]]:
+    """One ticker through every Approach-A max_bars multiplier and every
+    Approach-B trail multiple -- the unit parallel_tickers farms out to a
+    worker process. Returns (a_ticker, b_ticker), each shaped exactly like
+    a_results/b_results: variant -> {"opt": [(event_ts, r), ...], "holdout": [...]}.
+
+    Rows keep event_ts (unlike optimize_wyckoff.py/optimize_wyckoff_tp.py's
+    own workers): THIS script's original report loop sorted
+    ``sorted(a_results[mult][key], key=lambda p: p[0])`` before scoring, so
+    walk_forward_analysis's chronological-input requirement was already being
+    met here -- the parent must keep doing that same sort, not drop event_ts
+    and rely on ticker-insertion order the way the other two scripts do."""
+    risk_cfg = settings_service.get_risk_config(session)
+    candles = _load_daily_candles(session, ticker)
+    symbol = session.get(Symbol, ticker)
+    cfg = WyckoffConfig()
+
+    result = wyckoff_module.analyze(candles, cfg, None, "vi")
+
+    # _build_scenario_candidate's phase-before-event gate re-runs analyze()
+    # on the truncated pre-event window for every qualifying event -- the
+    # single most expensive step in this walk (see optimize_wyckoff.py's own
+    # docstring on this). Both approaches below share the exact same
+    # qualifying-event set for this ticker, so memoize it once per ticker
+    # (keyed by truncated length == event.index, unique per event) instead
+    # of paying for it 7 times (4 max_bars multipliers + 3 trail multiples).
+    analyze_cache: dict[int, object] = {}
+    original_analyze = wyckoff_module.analyze
+
+    def _cached_analyze(candles_arg, *a, **k):
+        key = len(candles_arg)
+        if key not in analyze_cache:
+            analyze_cache[key] = original_analyze(candles_arg, *a, **k)
+        return analyze_cache[key]
+
+    a_ticker: dict[float, dict[str, list[tuple]]] = {m: {"opt": [], "holdout": []} for m in MAX_BARS_MULT_GRID}
+    b_ticker: dict[float, dict[str, list[tuple]]] = {m: {"opt": [], "holdout": []} for m in TRAIL_ATR_MULT_GRID}
+
+    wyckoff_module.analyze = _cached_analyze
+    try:
+        for mult in MAX_BARS_MULT_GRID:
+            wrapped, original_max_bars = _make_max_bars_with_mult(mult)
+            trade_scenario._compute_max_bars = wrapped
+            try:
+                scenarios = scenario_backtest.walk_events(
+                    ticker, Timeframe.DAILY, STRATEGY, candles, result.events,
+                    BULLISH_EVENTS, BEARISH_EVENTS, result.levels, wyckoff_module,
+                    cfg, None, RANGING_PHASES, symbol, risk_cfg,
+                )
+            finally:
+                trade_scenario._compute_max_bars = original_max_bars
+
+            for s in scenarios:
+                if not s.is_bullish or s.status not in ("hit_tp", "hit_sl", "expired") or s.exit_price is None:
+                    continue
+                r = _r_multiple(s, risk_cfg)
+                if r is None:
+                    continue
+                window = "opt" if s.event_ts < OPT_HOLDOUT_CUTOFF else "holdout"
+                a_ticker[mult][window].append((s.event_ts, r))
+
+        for trail_mult in TRAIL_ATR_MULT_GRID:
+            dated = _walk_approach_b(
+                ticker, candles, result.events, result.levels, cfg, symbol, risk_cfg, trail_mult
+            )
+            for ts, r in dated:
+                window = "opt" if ts < OPT_HOLDOUT_CUTOFF else "holdout"
+                b_ticker[trail_mult][window].append((ts, r))
+    finally:
+        wyckoff_module.analyze = original_analyze
+
+    return a_ticker, b_ticker
+
+
 def main() -> None:
     engine = get_engine()
     with Session(engine) as session:
         risk_cfg = settings_service.get_risk_config(session)
         risk_amount = risk_cfg["notional_capital"] * risk_cfg["risk_pct_per_trade"] / 100
-
         tickers = _stock_tickers_with_enough_history(session, vn30_only=False)
-        print(f"{len(tickers)} HOSE/HNX ticker(s)\n")
 
-        cfg = WyckoffConfig()
+    # --- Approach A: sweep max_bars multipliers via the real walk_events/_resolve_outcome path ---
+    a_results: dict[float, dict[str, list[tuple]]] = {m: {"opt": [], "holdout": []} for m in MAX_BARS_MULT_GRID}
+    # --- Approach B: sweep trailing-stop ATR multiples via the custom resolver above ---
+    b_results: dict[float, dict[str, list[tuple]]] = {m: {"opt": [], "holdout": []} for m in TRAIL_ATR_MULT_GRID}
+    workers = parallel_tickers.default_workers()
+    print(f"{len(tickers)} HOSE/HNX ticker(s), {workers} process(es)\n")
 
-        # --- Approach A: sweep max_bars multipliers via the real walk_events/_resolve_outcome path ---
-        a_results: dict[float, dict[str, list[tuple]]] = {m: {"opt": [], "holdout": []} for m in MAX_BARS_MULT_GRID}
-        # --- Approach B: sweep trailing-stop ATR multiples via the custom resolver above ---
-        b_results: dict[float, dict[str, list[tuple]]] = {m: {"opt": [], "holdout": []} for m in TRAIL_ATR_MULT_GRID}
+    for i, ticker, (a_ticker, b_ticker) in parallel_tickers.map_tickers(tickers, _sweep_one_ticker, workers=workers):
+        print(f"[{i}/{len(tickers)}] {ticker}", file=sys.stderr)
+        for mult, windows in a_ticker.items():
+            for window, rs in windows.items():
+                a_results[mult][window].extend(rs)
+        for trail_mult, windows in b_ticker.items():
+            for window, rs in windows.items():
+                b_results[trail_mult][window].extend(rs)
 
-        from app.models import Symbol
-        from app.services import scenario_backtest
+    print("\n=== Approach A: max_bars multiplier on current ATR-based formula (1.0 = live baseline) ===")
+    for mult in MAX_BARS_MULT_GRID:
+        print(f"\nmax_bars_mult={mult}")
+        for label, key in (("opt window    ", "opt"), ("holdout window", "holdout")):
+            dated = sorted(a_results[mult][key], key=lambda p: p[0])
+            r_multiples = [r for _, r in dated]
+            print(_format_window(label, _score_window(r_multiples, risk_amount, risk_cfg["notional_capital"])))
 
-        for i, ticker in enumerate(tickers, 1):
-            candles = _load_daily_candles(session, ticker)
-            symbol = session.get(Symbol, ticker)
-            print(f"[{i}/{len(tickers)}] {ticker} ({len(candles)} bars)", file=sys.stderr)
-
-            result = wyckoff_module.analyze(candles, cfg, None, "vi")
-
-            # _build_scenario_candidate's phase-before-event gate re-runs
-            # analyze() on the truncated pre-event window for every
-            # qualifying event -- the single most expensive step in this
-            # walk (see optimize_wyckoff.py's own docstring on this). Both
-            # approaches below share the exact same qualifying-event set for
-            # this ticker, so memoize it once per ticker (keyed by truncated
-            # length == event.index, unique per event) instead of paying for
-            # it 7 times (4 max_bars multipliers + 3 trail multiples).
-            analyze_cache: dict[int, object] = {}
-            original_analyze = wyckoff_module.analyze
-
-            def _cached_analyze(candles_arg, *a, **k):
-                key = len(candles_arg)
-                if key not in analyze_cache:
-                    analyze_cache[key] = original_analyze(candles_arg, *a, **k)
-                return analyze_cache[key]
-
-            wyckoff_module.analyze = _cached_analyze
-            try:
-                for mult in MAX_BARS_MULT_GRID:
-                    wrapped, original_max_bars = _make_max_bars_with_mult(mult)
-                    trade_scenario._compute_max_bars = wrapped
-                    try:
-                        scenarios = scenario_backtest.walk_events(
-                            ticker, Timeframe.DAILY, STRATEGY, candles, result.events,
-                            BULLISH_EVENTS, BEARISH_EVENTS, result.levels, wyckoff_module,
-                            cfg, None, RANGING_PHASES, symbol, risk_cfg,
-                        )
-                    finally:
-                        trade_scenario._compute_max_bars = original_max_bars
-
-                    for s in scenarios:
-                        if not s.is_bullish or s.status not in ("hit_tp", "hit_sl", "expired") or s.exit_price is None:
-                            continue
-                        r = _r_multiple(s, risk_cfg)
-                        if r is None:
-                            continue
-                        window = "opt" if s.event_ts < OPT_HOLDOUT_CUTOFF else "holdout"
-                        a_results[mult][window].append((s.event_ts, r))
-
-                for trail_mult in TRAIL_ATR_MULT_GRID:
-                    dated = _walk_approach_b(
-                        ticker, candles, result.events, result.levels, cfg, symbol, risk_cfg, trail_mult
-                    )
-                    for ts, r in dated:
-                        window = "opt" if ts < OPT_HOLDOUT_CUTOFF else "holdout"
-                        b_results[trail_mult][window].append((ts, r))
-            finally:
-                wyckoff_module.analyze = original_analyze
-
-        print("\n=== Approach A: max_bars multiplier on current ATR-based formula (1.0 = live baseline) ===")
-        for mult in MAX_BARS_MULT_GRID:
-            print(f"\nmax_bars_mult={mult}")
-            for label, key in (("opt window    ", "opt"), ("holdout window", "holdout")):
-                dated = sorted(a_results[mult][key], key=lambda p: p[0])
-                r_multiples = [r for _, r in dated]
-                print(_format_window(label, _score_window(r_multiples, risk_amount, risk_cfg["notional_capital"])))
-
-        print("\n=== Approach B: breakeven-at-1R + ATR trailing stop (no fixed TP) ===")
-        for trail_mult in TRAIL_ATR_MULT_GRID:
-            print(f"\ntrail_atr_mult={trail_mult}")
-            for label, key in (("opt window    ", "opt"), ("holdout window", "holdout")):
-                dated = sorted(b_results[trail_mult][key], key=lambda p: p[0])
-                r_multiples = [r for _, r in dated]
-                print(_format_window(label, _score_window(r_multiples, risk_amount, risk_cfg["notional_capital"])))
+    print("\n=== Approach B: breakeven-at-1R + ATR trailing stop (no fixed TP) ===")
+    for trail_mult in TRAIL_ATR_MULT_GRID:
+        print(f"\ntrail_atr_mult={trail_mult}")
+        for label, key in (("opt window    ", "opt"), ("holdout window", "holdout")):
+            dated = sorted(b_results[trail_mult][key], key=lambda p: p[0])
+            r_multiples = [r for _, r in dated]
+            print(_format_window(label, _score_window(r_multiples, risk_amount, risk_cfg["notional_capital"])))
 
 
 if __name__ == "__main__":

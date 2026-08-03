@@ -422,7 +422,9 @@ export type SystemAction =
   | "half_session_afternoon"
   | "daily_close"
   | "crypto_analysis_refresh"
-  | "potential_screen";
+  | "potential_screen"
+  | "hose_hnx_seed"
+  | "stock_batch_analysis";
 
 export interface SystemActionLogEntry {
   id: number;

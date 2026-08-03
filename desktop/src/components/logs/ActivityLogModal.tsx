@@ -22,6 +22,8 @@ const ACTION_KEY: Record<SystemAction, string> = {
   daily_close: "logs.action.daily_close",
   crypto_analysis_refresh: "logs.action.crypto_analysis_refresh",
   potential_screen: "logs.action.potential_screen",
+  hose_hnx_seed: "logs.action.hose_hnx_seed",
+  stock_batch_analysis: "logs.action.stock_batch_analysis",
 };
 
 const TRIGGER_KEY: Record<SystemActionLogEntry["trigger"], string> = {

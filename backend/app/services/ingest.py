@@ -6,7 +6,7 @@ import logging
 from datetime import date, datetime, timedelta
 
 import pandas as pd
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from app.crawler import binance_client, coingecko_client, geckoterminal_client, kucoin_client, mexc_client, vnstock_client
 from app.crawler.resample import resample_half_session, resample_weekly
@@ -20,6 +20,13 @@ logger = logging.getLogger("chart_volume.ingest")
 DAILY_LOOKBACK_DAYS = 730
 HALF_SESSION_LOOKBACK_DAYS = 60
 
+# How many calendar days of overlap a delta-fetch re-requests before the
+# latest candle already stored, to catch a source-side correction to a very
+# recently published bar (e.g. a same-day close vs. a next-day settled
+# figure). Deliberately small relative to the lookback windows above -- see
+# _delta_start_date's own note on what this does and doesn't protect against.
+DELTA_OVERLAP_DAYS = 10
+
 # Our internal timeframe names -> Binance's own interval strings.
 _BINANCE_INTERVAL = {Timeframe.HOUR_1: "1h", Timeframe.HOUR_4: "4h", Timeframe.DAILY: "1d"}
 
@@ -30,43 +37,91 @@ def _date_range(lookback_days: int, start: str | None, end: str | None) -> tuple
     return start_d, end_d
 
 
-def _upsert_candle(
+def _upsert_candles(
     session: Session,
     ticker: str,
     timeframe: str,
-    bucket_start: datetime,
-    row: pd.Series,
-    session_part: str | None,
+    rows: list[tuple[datetime, pd.Series, str | None]],
 ) -> None:
-    existing = session.exec(
-        select(Candle).where(
-            Candle.ticker == ticker,
-            Candle.timeframe == timeframe,
-            Candle.bucket_start == bucket_start,
+    """Same idempotent upsert semantics as before, but ONE query for the
+    whole batch instead of a per-row SELECT: ingest_daily's lookback window
+    is ~523 trading days, so upserting one candle at a time meant 523
+    individual round-trips on every single run, nearly all of them just
+    confirming a row that hadn't changed. IN() over ~500-700 bucket_starts is
+    well within SQLite's parameter limit (999+), so this stays one query
+    even on a first-time ticker's full-history fetch."""
+    if not rows:
+        return
+    starts = [bucket_start for bucket_start, _, _ in rows]
+    existing = {
+        c.bucket_start: c
+        for c in session.exec(
+            select(Candle).where(
+                Candle.ticker == ticker,
+                Candle.timeframe == timeframe,
+                Candle.bucket_start.in_(starts),
+            )
+        ).all()
+    }
+    for bucket_start, row, session_part in rows:
+        values = dict(
+            open=float(row["open"]),
+            high=float(row["high"]),
+            low=float(row["low"]),
+            close=float(row["close"]),
+            volume=float(row["volume"]),
+            session_part=session_part,
+        )
+        existing_row = existing.get(bucket_start)
+        if existing_row:
+            for key, val in values.items():
+                setattr(existing_row, key, val)
+            session.add(existing_row)
+        else:
+            session.add(
+                Candle(
+                    ticker=ticker,
+                    timeframe=timeframe,
+                    bucket_start=bucket_start,
+                    **values,
+                )
+            )
+
+
+def _delta_start_date(session: Session, ticker: str, timeframe: str, lookback_days: int) -> str:
+    """Fetching the full lookback window on every run is wasteful once a
+    ticker already has history stored: the vast majority of that window
+    hasn't changed since the last ingest. Starts from the latest stored
+    candle's date minus DELTA_OVERLAP_DAYS (to catch a source-side
+    correction to a recently published bar), falling back to the full
+    lookback window when nothing is stored yet -- e.g. a newly seeded
+    ticker's very first fetch.
+
+    Also falls back to the full window when the EARLIEST stored candle
+    doesn't already reach back that far: analysis reads every stored candle
+    for the ticker (app.services.analysis._load_candles has no date filter),
+    so a narrow forward-only delta never loses context for a ticker that's
+    always been ingested under the same lookback -- but if the user just
+    raised daily_lookback_days (e.g. 730 -> 1500) in Settings, the extra
+    history further back was never fetched at all, and only checking the
+    latest candle would keep silently ignoring that increase forever.
+
+    ASSUMPTION worth flagging explicitly: this does not protect against the
+    source silently rewriting bars far outside the overlap window (e.g. a
+    stock-split/dividend back-adjustment touching the whole historical
+    series) -- a bounded overlap can't catch that regardless of size. Revisit
+    if vnstock turns out to do this for VN equities; nothing in this
+    codebase currently confirms or rules it out."""
+    earliest, latest = session.exec(
+        select(func.min(Candle.bucket_start), func.max(Candle.bucket_start)).where(
+            Candle.ticker == ticker, Candle.timeframe == timeframe
         )
     ).first()
-
-    values = dict(
-        open=float(row["open"]),
-        high=float(row["high"]),
-        low=float(row["low"]),
-        close=float(row["close"]),
-        volume=float(row["volume"]),
-        session_part=session_part,
-    )
-    if existing:
-        for key, val in values.items():
-            setattr(existing, key, val)
-        session.add(existing)
-    else:
-        session.add(
-            Candle(
-                ticker=ticker,
-                timeframe=timeframe,
-                bucket_start=bucket_start,
-                **values,
-            )
-        )
+    full_start = date.today() - timedelta(days=lookback_days)
+    if latest is None or earliest.date() > full_start:
+        return full_start.isoformat()
+    delta_start = latest.date() - timedelta(days=DELTA_OVERLAP_DAYS)
+    return max(delta_start, full_start).isoformat()
 
 
 def ingest_daily(
@@ -74,16 +129,16 @@ def ingest_daily(
 ) -> int:
     ticker = ticker.upper()
     daily_lookback, _ = settings_service.get_lookbacks(session)
+    if start is None:
+        start = _delta_start_date(session, ticker, Timeframe.DAILY, daily_lookback)
     start_d, end_d = _date_range(daily_lookback, start, end)
     df = vnstock_client.fetch_daily(ticker, start_d, end_d)
     if df is None or df.empty:
         return 0
     df = df.copy()
     df["time"] = pd.to_datetime(df["time"])
-    for _, row in df.iterrows():
-        _upsert_candle(
-            session, ticker, Timeframe.DAILY, row["time"].to_pydatetime(), row, None
-        )
+    rows = [(row["time"].to_pydatetime(), row, None) for _, row in df.iterrows()]
+    _upsert_candles(session, ticker, Timeframe.DAILY, rows)
     session.commit()
     logger.info("ingested %d daily candles for %s", len(df), ticker)
     return len(df)
@@ -99,15 +154,11 @@ def ingest_half_session(
     resampled = resample_half_session(df)
     if resampled.empty:
         return 0
-    for _, row in resampled.iterrows():
-        _upsert_candle(
-            session,
-            ticker,
-            Timeframe.HALF_SESSION,
-            row["bucket_start"].to_pydatetime(),
-            row,
-            row["session_part"],
-        )
+    rows = [
+        (row["bucket_start"].to_pydatetime(), row, row["session_part"])
+        for _, row in resampled.iterrows()
+    ]
+    _upsert_candles(session, ticker, Timeframe.HALF_SESSION, rows)
     session.commit()
     logger.info("ingested %d half-session candles for %s", len(resampled), ticker)
     return len(resampled)
@@ -134,8 +185,8 @@ def ingest_weekly(session: Session, ticker: str) -> int:
     resampled = resample_weekly(df)
     if resampled.empty:
         return 0
-    for _, row in resampled.iterrows():
-        _upsert_candle(session, ticker, Timeframe.WEEK, row["bucket_start"].to_pydatetime(), row, None)
+    rows = [(row["bucket_start"].to_pydatetime(), row, None) for _, row in resampled.iterrows()]
+    _upsert_candles(session, ticker, Timeframe.WEEK, rows)
     session.commit()
     logger.info("ingested %d weekly candles for %s", len(resampled), ticker)
     return len(resampled)
@@ -259,8 +310,8 @@ def ingest_crypto(
         logger.warning("%s has no candle source among enabled exchanges %s", lookup_symbol, exchanges)
         return 0
 
-    for _, row in df.iterrows():
-        _upsert_candle(session, coin_symbol, timeframe, row["time"].to_pydatetime(), row, None)
+    rows = [(row["time"].to_pydatetime(), row, None) for _, row in df.iterrows()]
+    _upsert_candles(session, coin_symbol, timeframe, rows)
     session.commit()
     logger.info("ingested %d %s candles for %s", len(df), timeframe, coin_symbol)
     return len(df)

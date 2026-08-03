@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 import pandas as pd
 from sqlmodel import select
 
@@ -40,6 +42,134 @@ def test_ingest_daily_is_idempotent_and_updates(session, mocker):
     assert len(rows) == 2  # no duplicates
     jul1 = [r for r in rows if r.bucket_start == pd.Timestamp("2025-07-01").to_pydatetime()][0]
     assert jul1.close == 108
+
+
+# --- delta-fetch: don't re-request the full lookback once history exists ---
+
+
+def test_delta_start_date_uses_full_lookback_when_no_candles_exist(session):
+    start = ingest._delta_start_date(session, "FPT", Timeframe.DAILY, lookback_days=730)
+
+    assert start == (date.today() - timedelta(days=730)).isoformat()
+
+
+def test_delta_start_date_uses_latest_candle_minus_overlap_when_candles_exist(session):
+    lookback_days = 730
+    full_start = date.today() - timedelta(days=lookback_days)
+    latest = date.today() - timedelta(days=30)
+    # Two rows: one confirming history already reaches back to the full
+    # lookback window (so this exercises the delta path, not the "lookback
+    # was just raised" backfill path below), one recent -- the date the
+    # delta should actually resume from.
+    session.add(Candle(
+        ticker="FPT", timeframe=Timeframe.DAILY, bucket_start=full_start,
+        open=100, high=101, low=99, close=100, volume=1,
+    ))
+    session.add(Candle(
+        ticker="FPT", timeframe=Timeframe.DAILY, bucket_start=latest,
+        open=100, high=101, low=99, close=100, volume=1,
+    ))
+    session.commit()
+
+    start = ingest._delta_start_date(session, "FPT", Timeframe.DAILY, lookback_days=lookback_days)
+
+    assert start == (latest - timedelta(days=ingest.DELTA_OVERLAP_DAYS)).isoformat()
+
+
+def test_delta_start_date_backfills_when_lookback_increased_after_earlier_ingest(session):
+    # Ticker was ingested under a SMALLER daily_lookback_days -- its earliest
+    # stored candle doesn't reach back far enough to satisfy a since-INCREASED
+    # setting (e.g. 200 -> 730 in Settings). Resuming from just the latest
+    # candle would silently ignore that increase forever; must backfill.
+    session.add(Candle(
+        ticker="FPT", timeframe=Timeframe.DAILY, bucket_start=date.today() - timedelta(days=200),
+        open=100, high=101, low=99, close=100, volume=1,
+    ))
+    session.add(Candle(
+        ticker="FPT", timeframe=Timeframe.DAILY, bucket_start=date.today() - timedelta(days=1),
+        open=100, high=101, low=99, close=100, volume=1,
+    ))
+    session.commit()
+
+    start = ingest._delta_start_date(session, "FPT", Timeframe.DAILY, lookback_days=730)
+
+    assert start == (date.today() - timedelta(days=730)).isoformat()
+
+
+def test_delta_start_date_never_goes_earlier_than_the_full_lookback_window(session):
+    # A stale/corrupted row from far in the past shouldn't push the delta
+    # start EARLIER than a full-lookback fetch would have gone anyway.
+    ancient = date.today() - timedelta(days=2000)
+    session.add(Candle(
+        ticker="FPT", timeframe=Timeframe.DAILY, bucket_start=ancient,
+        open=100, high=101, low=99, close=100, volume=1,
+    ))
+    session.commit()
+
+    start = ingest._delta_start_date(session, "FPT", Timeframe.DAILY, lookback_days=730)
+
+    assert start == (date.today() - timedelta(days=730)).isoformat()
+
+
+def test_ingest_daily_first_call_fetches_the_full_lookback_window(session, mocker):
+    fetch = mocker.patch.object(ingest.vnstock_client, "fetch_daily", return_value=_daily_df())
+
+    ingest.ingest_daily(session, "FPT")  # no history yet
+
+    assert fetch.call_args.args[1] == (date.today() - timedelta(days=730)).isoformat()
+
+
+def test_ingest_daily_uses_delta_range_when_history_already_covers_the_lookback(session, mocker):
+    # Simulate a ticker that's already been fully backfilled: its earliest
+    # stored candle already reaches back to the lookback window, so this
+    # call should resume from the latest stored candle instead of
+    # re-requesting the whole window (the ONLY realistic case the original,
+    # now-removed two-call version of this test meant to exercise -- a
+    # static mock returning the same 2 rows on both calls never actually
+    # simulated "already has full history").
+    session.add(Candle(
+        ticker="FPT", timeframe=Timeframe.DAILY, bucket_start=date.today() - timedelta(days=730),
+        open=100, high=101, low=99, close=100, volume=1,
+    ))
+    session.add(Candle(
+        ticker="FPT", timeframe=Timeframe.DAILY, bucket_start=pd.Timestamp("2025-07-01").to_pydatetime(),
+        open=104, high=106, low=103, close=105, volume=1_200_000,
+    ))
+    session.commit()
+    fetch = mocker.patch.object(ingest.vnstock_client, "fetch_daily", return_value=_daily_df())
+
+    ingest.ingest_daily(session, "FPT")
+
+    expected = (date.fromisoformat("2025-07-01") - timedelta(days=ingest.DELTA_OVERLAP_DAYS)).isoformat()
+    assert fetch.call_args.args[1] == expected
+
+
+def test_upsert_candles_mixed_batch_updates_existing_and_inserts_new(session, mocker):
+    # The realistic delta-fetch shape: a small batch where the overlap days
+    # already exist (must update, not duplicate) alongside genuinely new
+    # days (must insert) -- in the SAME call, unlike the separate-calls
+    # idempotency test above.
+    ingest._upsert_candles(session, "FPT", Timeframe.DAILY, [
+        (pd.Timestamp("2025-07-01").to_pydatetime(),
+         pd.Series({"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1}), None),
+    ])
+    session.commit()
+
+    mixed_rows = [
+        (pd.Timestamp("2025-07-01").to_pydatetime(),  # overlap day -- correction
+         pd.Series({"open": 100, "high": 101, "low": 99, "close": 108, "volume": 1}), None),
+        (pd.Timestamp("2025-07-02").to_pydatetime(),  # genuinely new day
+         pd.Series({"open": 108, "high": 110, "low": 107, "close": 109, "volume": 2}), None),
+    ]
+    ingest._upsert_candles(session, "FPT", Timeframe.DAILY, mixed_rows)
+    session.commit()
+
+    rows = session.exec(select(Candle).where(Candle.timeframe == Timeframe.DAILY)).all()
+    assert len(rows) == 2  # no duplicate for the overlap day
+    jul1 = [r for r in rows if r.bucket_start == pd.Timestamp("2025-07-01").to_pydatetime()][0]
+    assert jul1.close == 108  # corrected, not left stale
+    jul2 = [r for r in rows if r.bucket_start == pd.Timestamp("2025-07-02").to_pydatetime()][0]
+    assert jul2.close == 109  # new row present
 
 
 def test_ingest_half_session_from_hourly(session, mocker):

@@ -113,33 +113,78 @@ def _symbol_gets_ai(symbol: Symbol, ai_groups: dict) -> bool:
     )
 
 
-def run_stock_symbol(engine, ticker: str, timeframe: str, use_ai: bool) -> bool:
-    """Runs on its own DB session bound to the SAME engine as the caller's
-    session (SQLite is opened with check_same_thread=False precisely so each
-    worker thread can do this) so ingest+analysis for one ticker never blocks
-    or shares state with another running concurrently. Takes the engine
-    rather than the caller's live Session/ORM objects because a SQLAlchemy
-    session (and objects attached to it) isn't safe to hand to another
-    thread's session."""
+def ingest_for_ticker(engine, ticker: str, timeframe: str) -> bool:
+    """Ingest phase only (crawl + upsert candles) for one stock ticker --
+    network-bound: vnstock's HTTP calls release the GIL while waiting, so
+    threads parallelize this fine, and MAX_WORKERS' cap exists specifically
+    to avoid tripping vnstock's own rate limit, unrelated to CPU/core count.
+
+    Takes the engine explicitly (like run_stock_symbol used to) rather than
+    resolving its own -- this stays on THREADS (see
+    stock_batch_analysis.run_full_universe_analysis), and a SQLAlchemy Engine
+    is safe to share across threads in the same process (that's what
+    check_same_thread=False is for) but not across separate processes, unlike
+    analyze_for_ticker below."""
     try:
         with Session(engine) as session:
             if timeframe == Timeframe.DAILY:
                 ingest.ingest_daily(session, ticker)
+                # Weekly rides the daily close -- it's a resample of daily
+                # candles just ingested above, not a separate crawl, so it
+                # stays in the ingest phase rather than the analyze phase.
+                ingest.ingest_weekly(session, ticker)
             else:
                 ingest.ingest_half_session(session, ticker)
+        return True
+    except Exception as exc:  # noqa: BLE001 - isolate per-ticker failures
+        logger.warning("ingest %s failed for %s: %s", timeframe, ticker, exc)
+        return False
+
+
+def analyze_for_ticker(ticker: str, timeframe: str, use_ai: bool, engine=None) -> bool:
+    """Analysis phase only (analyze() + shadow strategies) for one ticker,
+    assuming ingest already completed -- CPU-bound (holds the GIL for the
+    whole analyze() call), so only separate PROCESSES actually run this
+    concurrently; threads can't, no matter how many (see
+    stock_batch_analysis.run_full_universe_analysis's own note).
+
+    ``engine=None`` resolves get_engine() fresh instead of taking one from
+    the caller: unlike ingest_for_ticker, this needs to stay safe to submit
+    to a ProcessPoolExecutor, where a caller's Engine object can't be passed
+    across the process boundary at all (not picklable, and unsafe to share
+    even if it were). The explicit-engine path stays available for the
+    sequential (analyze_workers<=1) fallback, which runs in the SAME process
+    as the caller and is what the test suite uses -- a real spawned child's
+    own get_engine() would resolve the app's global DB, not necessarily a
+    test's own isolated one."""
+    engine = engine or get_engine()
+    try:
+        with Session(engine) as session:
             active_strategy = settings_service.get_strategy(session)
             run_analysis(session, ticker, timeframe, use_ai=use_ai, strategy=active_strategy)
             run_shadow_strategies(session, ticker, timeframe, active_strategy)
             if timeframe == Timeframe.DAILY:
-                # Weekly rides the daily close -- it's a resample of daily
-                # candles already just ingested above, not a separate crawl.
-                ingest.ingest_weekly(session, ticker)
                 run_analysis(session, ticker, Timeframe.WEEK, use_ai=use_ai, strategy=active_strategy)
                 run_shadow_strategies(session, ticker, Timeframe.WEEK, active_strategy)
         return True
     except Exception as exc:  # noqa: BLE001 - isolate per-ticker failures
-        logger.warning("batch %s failed for %s: %s", timeframe, ticker, exc)
+        logger.warning("analysis %s failed for %s: %s", timeframe, ticker, exc)
         return False
+
+
+def run_stock_symbol(engine, ticker: str, timeframe: str, use_ai: bool) -> bool:
+    """Ingest then analyse one ticker, sequentially, in one call -- unchanged
+    shape, used by run_batch's single ThreadPoolExecutor below (both phases
+    mixed together on threads, since that job's own per-ticker cost is
+    dominated by the ingest side, not analysis, and isn't the target of the
+    two-pool split stock_batch_analysis.run_full_universe_analysis uses
+    instead). Runs on its own DB session bound to the SAME engine as the
+    caller's session (SQLite is opened with check_same_thread=False
+    precisely so each worker thread can do this) so ingest+analysis for one
+    ticker never blocks or shares state with another running concurrently."""
+    if not ingest_for_ticker(engine, ticker, timeframe):
+        return False
+    return analyze_for_ticker(ticker, timeframe, use_ai, engine=engine)
 
 
 def run_batch(session: Session, timeframe: str, use_ai: bool = True) -> int:

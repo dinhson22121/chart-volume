@@ -64,6 +64,18 @@ def request_cancel() -> dict:
 
 
 def run_full_universe_analysis(session: Session, trigger: str = "manual") -> dict:
+    """Single ThreadPoolExecutor, capped by MAX_WORKERS -- same shape as
+    scheduler.run_batch. A ProcessPoolExecutor split (analysis is CPU-bound
+    and threads can't parallelize it, unlike ingest) was tried and measured
+    to reproducibly hang ~1/3 of the time once ingest_for_ticker's real
+    network calls preceded it in the same process -- a real, not fully
+    understood interaction between threaded network I/O and spawning a new
+    process afterward, not something safe to ship for a button a user
+    expects to just work. Reverted; see git history for the two-pool
+    version if this is worth retrying later. scheduler.ingest_for_ticker/
+    analyze_for_ticker stay split (run_stock_symbol below just composes
+    them in order) since the split itself is harmless and reads clearly,
+    independent of the abandoned parallelization attempt."""
     if not _lock.acquire(blocking=False):
         logger.info("stock batch analysis already running, ignoring duplicate trigger")
         return get_status()

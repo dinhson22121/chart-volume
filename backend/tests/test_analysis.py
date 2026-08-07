@@ -14,7 +14,9 @@ from app.wyckoff.events import WyckoffEvent
 
 BASE = dict(open=100.0, high=101.0, low=99.0, close=100.0, volume=1000.0)
 SPRING_BAR = dict(open=98.0, high=99.8, low=97.0, close=99.3, volume=1500.0)
-SOS_BAR = dict(open=101.2, high=103.0, low=101.0, close=102.8, volume=1800.0)
+# Wide spread (spread_ratio >= wide_spread_mult) is required alongside
+# volume + close position -- see app.wyckoff.events._classify_bar's SOS check.
+SOS_BAR = dict(open=100.0, high=103.5, low=99.5, close=103.2, volume=1800.0)
 
 CANNED = "NHẬN ĐỊNH:\nCổ phiếu đang trong giai đoạn tích lũy.\n\nLỜI KHUYÊN:\n- Theo dõi vùng hỗ trợ."
 

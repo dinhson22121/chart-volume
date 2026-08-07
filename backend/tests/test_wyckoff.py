@@ -51,8 +51,11 @@ SPRING_BAR = dict(open=98.0, high=99.8, low=97.0, close=99.3, volume=1500.0)
 SC_BAR = dict(open=99.0, high=100.0, low=95.0, close=97.5, volume=2600.0)
 UPTHRUST_BAR = dict(open=101.0, high=103.0, low=100.2, close=100.5, volume=1500.0)
 BC_BAR = dict(open=101.0, high=106.0, low=101.0, close=102.5, volume=2600.0)
-SOS_BAR = dict(open=101.2, high=103.0, low=101.0, close=102.8, volume=1800.0)
-SOW_BAR = dict(open=98.9, high=99.0, low=97.0, close=97.3, volume=1800.0)
+# Wide spread (spread_ratio >= wide_spread_mult=1.5x) is required alongside
+# volume + close position -- a genuine SOS/SOW is a decisive, range-expanding
+# breakout, not just a close a hair beyond the level.
+SOS_BAR = dict(open=100.0, high=103.5, low=99.5, close=103.2, volume=1800.0)
+SOW_BAR = dict(open=100.0, high=100.0, low=96.0, close=96.3, volume=1800.0)
 NODEMAND_BAR = dict(open=100.2, high=100.6, low=100.1, close=100.5, volume=500.0)
 NOSUPPLY_BAR = dict(open=99.8, high=99.9, low=99.4, close=99.5, volume=500.0)
 
@@ -63,6 +66,18 @@ LPSY_PULLBACK_BAR = dict(open=98.0, high=98.5, low=97.7, close=98.2, volume=700.
 
 def base_bars(n=25):
     return [dict(BASE) for _ in range(n)]
+
+
+def trending_bars(n=30, start=90.0, step=1.0):
+    """Monotonic uptrend (each bar's level rises by ``step``, spread/volume
+    otherwise flat) -- unlike ``base_bars()``, the window never oscillates, so
+    ``efficiency_ratio`` should read high (not ranging) rather than the ~0 a
+    flat/choppy window produces."""
+    bars = []
+    for i in range(n):
+        level = start + i * step
+        bars.append(dict(open=level, high=level + 1.0, low=level - 1.0, close=level + 0.5, volume=1000.0))
+    return bars
 
 
 def _to_df(bars):
@@ -131,6 +146,58 @@ def test_flat_base_emits_no_events():
     assert last_event(base_bars(25)) is None
 
 
+# --- Trend-efficiency gate: the 8 base detectors require an established
+# range (see app.wyckoff.indicators.compute_features's efficiency_ratio) --
+# without it, a naive rolling 20-bar min/max fires on ordinary trend
+# continuation, not just genuine accumulation/distribution.
+
+def test_efficiency_ratio_near_zero_for_flat_ranging_window():
+    feat = compute_features(_to_df(base_bars(30)))
+    assert feat["efficiency_ratio"].iloc[-1] == 0.0
+
+
+def test_efficiency_ratio_high_for_monotonic_trend():
+    feat = compute_features(_to_df(trending_bars()))
+    assert feat["efficiency_ratio"].iloc[-1] > DEFAULT_CONFIG.trend_efficiency_max
+
+
+def test_climax_volume_bar_labeled_selling_climax_not_spring():
+    # Same raw price shape as a Spring (pierces support, closes back above it
+    # in the upper half) but ALSO carries climactic volume + wide spread --
+    # i.e. it satisfies both SC's and Spring's conditions at once. Spring has
+    # no volume condition of its own, so before the priority reorder this bar
+    # was checked against Spring first and labeled Spring, hiding the volume
+    # evidence that it was really the initial Selling Climax.
+    ambiguous_bar = dict(open=98.0, high=100.5, low=95.0, close=99.5, volume=2600.0)
+    ev = last_event(base_bars() + [ambiguous_bar])
+    assert ev is not None and ev.type == SELLING_CLIMAX
+
+
+def test_upthrust_shaped_bar_with_climax_volume_labeled_buying_climax():
+    ambiguous_bar = dict(open=102.0, high=105.0, low=99.5, close=100.5, volume=2600.0)
+    ev = last_event(base_bars() + [ambiguous_bar])
+    assert ev is not None and ev.type == BUYING_CLIMAX
+
+
+def test_narrow_spread_sos_shaped_bar_not_detected():
+    # Close/volume/cloc all satisfy SOS's other conditions, but the bar barely
+    # pokes past resistance without expanding range -- not the decisive,
+    # range-expanding breakout a real SOS represents.
+    narrow_breakout = dict(open=101.0, high=101.3, low=101.0, close=101.25, volume=2000.0)
+    assert last_event(base_bars() + [narrow_breakout]) is None
+
+
+def test_sos_shaped_bar_not_detected_mid_trend():
+    # Same raw SOS conditions as SOS_BAR/test_detects_sos (breaks resistance,
+    # high volume, closes near high) -- but appended to a monotonic uptrend
+    # instead of an established range. Before this gate, this would misfire
+    # as SOS on ordinary trend continuation; now it's suppressed entirely
+    # (contrast with test_detects_sos, where the identical relative shape
+    # fires normally against a genuine flat range).
+    trend_continuation_bar = dict(open=121.0, high=125.0, low=120.5, close=124.0, volume=1800.0)
+    assert last_event(trending_bars() + [trend_continuation_bar]) is None
+
+
 # --- Phase classification via the analyze() entrypoint ---
 
 def test_phase_accumulation_from_spring():
@@ -196,6 +263,16 @@ def test_trace_bar_covers_all_eight_detector_types():
     assert {t.type for t in traces} == {
         SELLING_CLIMAX, BUYING_CLIMAX, SPRING, UPTHRUST, SOS, SOW, NO_DEMAND, NO_SUPPLY,
     }
+
+
+def test_trace_bar_explains_mid_trend_rejection():
+    trend_continuation_bar = dict(open=121.0, high=125.0, low=120.5, close=124.0, volume=1800.0)
+    feat = compute_features(_to_df(trending_bars() + [trend_continuation_bar]))
+    traces = trace_bar(feat.iloc[-1], DEFAULT_CONFIG)
+    sos = next(t for t in traces if t.type == SOS)
+    assert sos.matched is False
+    range_check = sos.checks[-1]  # is_ranging is appended last in every detector's check list
+    assert range_check.passed is False
 
 
 def test_trace_bar_reports_insufficient_data_for_early_bars():

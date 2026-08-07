@@ -84,6 +84,10 @@ _TERM = {
 
 _LABEL = {
     "insufficient_data": {"vi": "Đủ dữ liệu nền", "en": "Enough baseline data"},
+    "range_established": {
+        "vi": "Đang trong vùng tích lũy/phân phối (không phải xu hướng)",
+        "en": "Within an established range (not mid-trend)",
+    },
     "vol_climax": {"vi": "Volume cao trào", "en": "Climactic volume"},
     "wide_spread": {"vi": "Spread rộng", "en": "Wide spread"},
     "narrow_spread": {"vi": "Spread hẹp", "en": "Narrow spread"},
@@ -131,6 +135,7 @@ def trace_bar(row: pd.Series, cfg: WyckoffConfig = DEFAULT_CONFIG, language: str
     resistance = row["resistance"]
     vr = row["vol_ratio"]
     sr = row["spread_ratio"]
+    er = row["efficiency_ratio"]
 
     def lbl(key: str) -> str:
         return _t(_LABEL, key, language)
@@ -138,7 +143,7 @@ def trace_bar(row: pd.Series, cfg: WyckoffConfig = DEFAULT_CONFIG, language: str
     def term(key: str) -> str:
         return _t(_TERM, key, language)
 
-    if pd.isna(support) or pd.isna(resistance) or pd.isna(vr) or pd.isna(sr):
+    if pd.isna(support) or pd.isna(resistance) or pd.isna(vr) or pd.isna(sr) or pd.isna(er):
         insufficient_detail = (
             "Chưa đủ nến trước đó để tính hỗ trợ/kháng cự/volume trung bình"
             if language != "en"
@@ -155,6 +160,8 @@ def trace_bar(row: pd.Series, cfg: WyckoffConfig = DEFAULT_CONFIG, language: str
     below_support = support * (1 - BREAK_EPS)
     above_resistance = resistance * (1 + BREAK_EPS)
     has_prev = not pd.isna(prev_close)
+    is_ranging = er <= cfg.trend_efficiency_max
+    c_range = Check(lbl("range_established"), is_ranging, _cmp(er, is_ranging, "<=", cfg.trend_efficiency_max))
 
     traces: list[DetectorTrace] = []
 
@@ -163,50 +170,52 @@ def trace_bar(row: pd.Series, cfg: WyckoffConfig = DEFAULT_CONFIG, language: str
     c2 = Check(lbl("wide_spread"), sr >= cfg.wide_spread_mult, _cmp(sr, sr >= cfg.wide_spread_mult, ">=", cfg.wide_spread_mult, "x"))
     c3 = Check(lbl("support_touch"), low <= support, f"low {low:.2f} {'<=' if low <= support else '>'} {term('support')} {support:.2f}")
     c4 = Check(lbl("close_recover"), cloc >= 0.4, _cmp(cloc, cloc >= 0.4, ">=", 0.4))
-    traces.append(DetectorTrace(SELLING_CLIMAX, all(c.passed for c in (c1, c2, c3, c4)), [c1, c2, c3, c4]))
+    traces.append(DetectorTrace(SELLING_CLIMAX, all(c.passed for c in (c1, c2, c3, c4, c_range)), [c1, c2, c3, c4, c_range]))
 
     # Buying Climax
     c1 = Check(lbl("vol_climax"), vr >= cfg.climax_vol_mult, _cmp(vr, vr >= cfg.climax_vol_mult, ">=", cfg.climax_vol_mult, "x"))
     c2 = Check(lbl("wide_spread"), sr >= cfg.wide_spread_mult, _cmp(sr, sr >= cfg.wide_spread_mult, ">=", cfg.wide_spread_mult, "x"))
     c3 = Check(lbl("resistance_touch"), high >= resistance, f"high {high:.2f} {'>=' if high >= resistance else '<'} {term('resistance')} {resistance:.2f}")
     c4 = Check(lbl("close_weak"), cloc <= 0.6, _cmp(cloc, cloc <= 0.6, "<=", 0.6))
-    traces.append(DetectorTrace(BUYING_CLIMAX, all(c.passed for c in (c1, c2, c3, c4)), [c1, c2, c3, c4]))
+    traces.append(DetectorTrace(BUYING_CLIMAX, all(c.passed for c in (c1, c2, c3, c4, c_range)), [c1, c2, c3, c4, c_range]))
 
     # Spring
     c1 = Check(lbl("support_break"), low < below_support, f"low {low:.2f} {'<' if low < below_support else '>='} {term('support')} {support:.2f}")
     c2 = Check(lbl("close_recover_above_support"), close > support, f"close {close:.2f} {'>' if close > support else '<='} {term('support')} {support:.2f}")
     c3 = Check(lbl("close_upper_half"), cloc >= 0.5, _cmp(cloc, cloc >= 0.5, ">=", 0.5))
-    traces.append(DetectorTrace(SPRING, all(c.passed for c in (c1, c2, c3)), [c1, c2, c3]))
+    traces.append(DetectorTrace(SPRING, all(c.passed for c in (c1, c2, c3, c_range)), [c1, c2, c3, c_range]))
 
     # Upthrust
     c1 = Check(lbl("resistance_break"), high > above_resistance, f"high {high:.2f} {'>' if high > above_resistance else '<='} {term('resistance')} {resistance:.2f}")
     c2 = Check(lbl("close_fall_below_resistance"), close < resistance, f"close {close:.2f} {'<' if close < resistance else '>='} {term('resistance')} {resistance:.2f}")
     c3 = Check(lbl("close_lower_half"), cloc <= 0.5, _cmp(cloc, cloc <= 0.5, "<=", 0.5))
-    traces.append(DetectorTrace(UPTHRUST, all(c.passed for c in (c1, c2, c3)), [c1, c2, c3]))
+    traces.append(DetectorTrace(UPTHRUST, all(c.passed for c in (c1, c2, c3, c_range)), [c1, c2, c3, c_range]))
 
     # SOS
     c1 = Check(lbl("close_break_resistance"), close > above_resistance, f"close {close:.2f} {'>' if close > above_resistance else '<='} {term('resistance')} {resistance:.2f}")
     c2 = Check(lbl("vol_confirm"), vr >= cfg.sos_vol_mult, _cmp(vr, vr >= cfg.sos_vol_mult, ">=", cfg.sos_vol_mult, "x"))
-    c3 = Check(lbl("close_near_high"), cloc >= 0.7, _cmp(cloc, cloc >= 0.7, ">=", 0.7))
-    traces.append(DetectorTrace(SOS, all(c.passed for c in (c1, c2, c3)), [c1, c2, c3]))
+    c3 = Check(lbl("wide_spread"), sr >= cfg.wide_spread_mult, _cmp(sr, sr >= cfg.wide_spread_mult, ">=", cfg.wide_spread_mult, "x"))
+    c4 = Check(lbl("close_near_high"), cloc >= 0.7, _cmp(cloc, cloc >= 0.7, ">=", 0.7))
+    traces.append(DetectorTrace(SOS, all(c.passed for c in (c1, c2, c3, c4, c_range)), [c1, c2, c3, c4, c_range]))
 
     # SOW
     c1 = Check(lbl("close_break_support"), close < below_support, f"close {close:.2f} {'<' if close < below_support else '>='} {term('support')} {support:.2f}")
     c2 = Check(lbl("vol_confirm"), vr >= cfg.sos_vol_mult, _cmp(vr, vr >= cfg.sos_vol_mult, ">=", cfg.sos_vol_mult, "x"))
-    c3 = Check(lbl("close_near_low"), cloc <= 0.3, _cmp(cloc, cloc <= 0.3, "<=", 0.3))
-    traces.append(DetectorTrace(SOW, all(c.passed for c in (c1, c2, c3)), [c1, c2, c3]))
+    c3 = Check(lbl("wide_spread"), sr >= cfg.wide_spread_mult, _cmp(sr, sr >= cfg.wide_spread_mult, ">=", cfg.wide_spread_mult, "x"))
+    c4 = Check(lbl("close_near_low"), cloc <= 0.3, _cmp(cloc, cloc <= 0.3, "<=", 0.3))
+    traces.append(DetectorTrace(SOW, all(c.passed for c in (c1, c2, c3, c4, c_range)), [c1, c2, c3, c4, c_range]))
 
     # No Demand
     c1 = Check(lbl("up_bar_vs_prev"), has_prev and close > prev_close, f"close > {term('prev_session')}" if has_prev else term("no_prev_session"))
     c2 = Check(lbl("narrow_spread"), sr <= cfg.narrow_spread_mult, _cmp(sr, sr <= cfg.narrow_spread_mult, "<=", cfg.narrow_spread_mult, "x"))
     c3 = Check(lbl("low_vol"), vr <= cfg.low_vol_mult, _cmp(vr, vr <= cfg.low_vol_mult, "<=", cfg.low_vol_mult, "x"))
-    traces.append(DetectorTrace(NO_DEMAND, all(c.passed for c in (c1, c2, c3)), [c1, c2, c3]))
+    traces.append(DetectorTrace(NO_DEMAND, all(c.passed for c in (c1, c2, c3, c_range)), [c1, c2, c3, c_range]))
 
     # No Supply
     c1 = Check(lbl("down_bar_vs_prev"), has_prev and close < prev_close, f"close < {term('prev_session')}" if has_prev else term("no_prev_session"))
     c2 = Check(lbl("narrow_spread"), sr <= cfg.narrow_spread_mult, _cmp(sr, sr <= cfg.narrow_spread_mult, "<=", cfg.narrow_spread_mult, "x"))
     c3 = Check(lbl("low_vol"), vr <= cfg.low_vol_mult, _cmp(vr, vr <= cfg.low_vol_mult, "<=", cfg.low_vol_mult, "x"))
-    traces.append(DetectorTrace(NO_SUPPLY, all(c.passed for c in (c1, c2, c3)), [c1, c2, c3]))
+    traces.append(DetectorTrace(NO_SUPPLY, all(c.passed for c in (c1, c2, c3, c_range)), [c1, c2, c3, c_range]))
 
     return traces
 
@@ -214,7 +223,13 @@ def trace_bar(row: pd.Series, cfg: WyckoffConfig = DEFAULT_CONFIG, language: str
 def _classify_bar(row: pd.Series, cfg: WyckoffConfig, language: str = "vi") -> tuple[str, str] | None:
     support = row["support"]
     resistance = row["resistance"]
-    if pd.isna(support) or pd.isna(resistance) or pd.isna(row["vol_ratio"]) or pd.isna(row["spread_ratio"]):
+    if (
+        pd.isna(support)
+        or pd.isna(resistance)
+        or pd.isna(row["vol_ratio"])
+        or pd.isna(row["spread_ratio"])
+        or pd.isna(row["efficiency_ratio"])
+    ):
         return None
 
     close = row["close"]
@@ -229,23 +244,19 @@ def _classify_bar(row: pd.Series, cfg: WyckoffConfig, language: str = "vi") -> t
     above_resistance = resistance * (1 + BREAK_EPS)
     en = language == "en"
 
-    # 1. Spring: dips below support but closes back above it.
-    if low < below_support and close > support and cloc >= 0.5:
-        note = (
-            f"Breaks below support {support:.2f} then closes back at {close:.2f}"
-            if en else f"Thủng hỗ trợ {support:.2f} rồi đóng cửa hồi lại {close:.2f}"
-        )
-        return SPRING, note
+    # All 8 detectors below only apply against an established trading range --
+    # a rolling 20-bar min/max alone can't tell a genuine accumulation/
+    # distribution range from an ordinary pullback mid-trend, which is exactly
+    # how Spring/Upthrust/SOS/etc. used to fire on trend noise.
+    if row["efficiency_ratio"] > cfg.trend_efficiency_max:
+        return None
 
-    # 2. Upthrust: pokes above resistance but closes back below it.
-    if high > above_resistance and close < resistance and cloc <= 0.5:
-        note = (
-            f"Exceeds resistance {resistance:.2f} then closes back down at {close:.2f}"
-            if en else f"Vượt kháng cự {resistance:.2f} rồi đóng cửa tụt về {close:.2f}"
-        )
-        return UPTHRUST, note
-
-    # 3. Selling Climax: climactic volume + wide spread near/below support, recovery close.
+    # 1. Selling Climax: climactic volume + wide spread near/below support,
+    # recovery close. Checked before Spring -- Spring has no volume condition
+    # of its own, so a genuine SC with a strong recovery close (cloc >= 0.5)
+    # also satisfies Spring's price-only conditions; without volume as the
+    # tiebreaker the cleanest, most convincing Selling Climaxes were being
+    # mislabeled as Springs.
     if vr >= cfg.climax_vol_mult and sr >= cfg.wide_spread_mult and low <= support and cloc >= 0.4:
         note = (
             f"Volume spike ({vr:.1f}x) at the bottom, closing recovery"
@@ -253,7 +264,8 @@ def _classify_bar(row: pd.Series, cfg: WyckoffConfig, language: str = "vi") -> t
         )
         return SELLING_CLIMAX, note
 
-    # 4. Buying Climax: climactic volume + wide spread near/above resistance, weak close.
+    # 2. Buying Climax: climactic volume + wide spread near/above resistance,
+    # weak close. Checked before Upthrust for the same reason as SC vs Spring.
     if vr >= cfg.climax_vol_mult and sr >= cfg.wide_spread_mult and high >= resistance and cloc <= 0.6:
         note = (
             f"Volume spike ({vr:.1f}x) at the top, closing weakness"
@@ -261,16 +273,34 @@ def _classify_bar(row: pd.Series, cfg: WyckoffConfig, language: str = "vi") -> t
         )
         return BUYING_CLIMAX, note
 
-    # 5. SOS: strong close above resistance, high volume, close near high.
-    if close > above_resistance and vr >= cfg.sos_vol_mult and cloc >= 0.7:
+    # 3. Spring: dips below support but closes back above it.
+    if low < below_support and close > support and cloc >= 0.5:
+        note = (
+            f"Breaks below support {support:.2f} then closes back at {close:.2f}"
+            if en else f"Thủng hỗ trợ {support:.2f} rồi đóng cửa hồi lại {close:.2f}"
+        )
+        return SPRING, note
+
+    # 4. Upthrust: pokes above resistance but closes back below it.
+    if high > above_resistance and close < resistance and cloc <= 0.5:
+        note = (
+            f"Exceeds resistance {resistance:.2f} then closes back down at {close:.2f}"
+            if en else f"Vượt kháng cự {resistance:.2f} rồi đóng cửa tụt về {close:.2f}"
+        )
+        return UPTHRUST, note
+
+    # 5. SOS: strong close above resistance, high volume, wide spread (a
+    # decisive breakout expands range, not just closes a hair above the
+    # level), close near high.
+    if close > above_resistance and vr >= cfg.sos_vol_mult and sr >= cfg.wide_spread_mult and cloc >= 0.7:
         note = (
             f"Breaks out above resistance {resistance:.2f} with {vr:.1f}x volume"
             if en else f"Bứt phá kháng cự {resistance:.2f} với volume {vr:.1f}x"
         )
         return SOS, note
 
-    # 6. SOW: weak close below support, high volume, close near low.
-    if close < below_support and vr >= cfg.sos_vol_mult and cloc <= 0.3:
+    # 6. SOW: weak close below support, high volume, wide spread, close near low.
+    if close < below_support and vr >= cfg.sos_vol_mult and sr >= cfg.wide_spread_mult and cloc <= 0.3:
         note = (
             f"Breaks below support {support:.2f} with {vr:.1f}x volume"
             if en else f"Gãy hỗ trợ {support:.2f} với volume {vr:.1f}x"

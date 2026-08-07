@@ -23,9 +23,14 @@ def compute_features(
     """Add derived columns used by the event detectors.
 
     Adds: spread, vol_ma, spread_ma, vol_ratio, spread_ratio, close_loc,
-    prev_close, support, resistance. ``support``/``resistance`` are the rolling
-    min-low / max-high of *prior* bars (shifted by 1) so the current bar can
-    break the established range (spring / upthrust).
+    prev_close, support, resistance, efficiency_ratio. ``support``/
+    ``resistance`` are the rolling min-low / max-high of *prior* bars (shifted
+    by 1) so the current bar can break the established range (spring /
+    upthrust). ``efficiency_ratio`` (Kaufman-style: net move / total path
+    length over the same prior window) measures whether that window was
+    actually ranging (low ratio, price oscillating) vs. trending (high ratio,
+    move mostly one-directional) -- used to gate detectors that only make
+    sense against a real trading range.
     """
     out = df.copy().reset_index(drop=True)
 
@@ -42,6 +47,15 @@ def compute_features(
     out["prev_close"] = out["close"].shift(1)
     out["support"] = out["low"].rolling(range_lookback, min_periods=_MIN_PERIODS).min().shift(1)
     out["resistance"] = out["high"].rolling(range_lookback, min_periods=_MIN_PERIODS).max().shift(1)
+
+    bar_moves = out["close"].diff().abs()
+    path_length = bar_moves.rolling(range_lookback, min_periods=_MIN_PERIODS).sum().shift(1)
+    net_move = (out["close"].shift(1) - out["close"].shift(1 + range_lookback)).abs()
+    # A window with zero total movement (path_length == 0) is trivially fully
+    # ranging (ratio 0), not undefined -- only a genuinely too-short history
+    # (path_length itself NaN) should stay NaN ("not enough data yet").
+    efficiency_ratio = net_move / path_length
+    out["efficiency_ratio"] = efficiency_ratio.mask(path_length == 0, 0.0)
 
     return out
 

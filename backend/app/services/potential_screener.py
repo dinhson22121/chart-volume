@@ -1,10 +1,17 @@
-"""AI-only "growth potential" screener -- deliberately bypasses every
-quantitative strategy (Wyckoff/SMC/SonicR). Feeds raw crawled OHLCV candles
-straight to whichever AI provider is configured (Anthropic/Codex/Ollama/
-Antigravity) in batches of BATCH_SIZE tickers per call, and asks the AI to
-score/explain growth potential purely from its own reading of the price and
-volume data -- no phase, confidence, or signal from any strategy engine is
-ever included in the prompt.
+"""AI "growth potential" screener -- grounded in the SAME Wyckoff phase/
+event/money-flow output the rest of the app trusts, not the AI's own
+independent reading of raw candles. Feeds each ticker's real analyze()
+result (phase, confidence, driving events) and money-flow read
+(app.services.money_flow) to whichever AI provider is configured
+(Anthropic/Codex/Ollama/Antigravity) in batches of BATCH_SIZE tickers per
+call, and asks it to score/explain growth potential by CITING that evidence
+-- not to invent a phase or signal of its own. A short recent-candle tail is
+still included for color/reference, but it is no longer the AI's only input.
+
+Previously this deliberately bypassed every quantitative strategy and told
+the AI not to use any named method -- changed after the user found that
+output unconvincing ("giống như 1 bài tập... không trust được"): real,
+verified signals now do the grounding instead.
 
 A full run across every tracked symbol means one real AI call per batch
 (latency of several seconds to tens of seconds each), so this follows the
@@ -17,18 +24,29 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlmodel import Session, select
 
+import app.wyckoff as wyckoff_module
 from app.ai import narrative as narrative_mod
 from app.models import Candle, PotentialScreenResult, Symbol, Timeframe
-from app.services import activity_log, settings_service
+from app.services import activity_log, money_flow, settings_service
+from app.wyckoff import AnalysisResult
 
 logger = logging.getLogger("chart_volume.potential_screener")
 
 BATCH_SIZE = 10
-CANDLES_PER_SYMBOL = 30  # recent daily bars sent to the AI per ticker
+# Recent daily bars sent per ticker -- large enough for a real analyze() read
+# (Volume Profile needs 50 bars, the trend-efficiency gate needs ~21 bars of
+# warm-up) plus a meaningful recent-events window, not just enough for a raw
+# candle dump.
+CANDLES_PER_SYMBOL = 90
+# How many of the most recent raw candles are still shown to the AI for
+# color/reference alongside the real evidence -- short on purpose, since the
+# evidence block (not raw candles) is meant to do the grounding now.
+RECENT_CANDLES_SHOWN = 10
 
 _lock = threading.Lock()
 _state: dict = {
@@ -84,31 +102,105 @@ def _candle_lines(candles: list[Candle]) -> str:
     )
 
 
-def _build_batch_prompt(entries: list[tuple[Symbol, list[Candle]]], language: str) -> str:
-    symbol_blocks = "\n\n".join(
-        f"### {symbol.ticker} ({symbol.display_symbol or symbol.ticker})\n{_candle_lines(candles)}"
-        for symbol, candles in entries
+@dataclass
+class SymbolEvidence:
+    """One ticker's real, verified technical evidence -- what the AI is
+    grounded in, instead of guessing from raw candles alone."""
+
+    symbol: Symbol
+    candles: list[Candle]
+    wyckoff: AnalysisResult
+    flow: money_flow.MoneyFlowResult
+
+
+def build_symbol_evidence(symbol: Symbol, candles: list[Candle]) -> SymbolEvidence:
+    return SymbolEvidence(
+        symbol=symbol, candles=candles,
+        wyckoff=wyckoff_module.analyze(candles), flow=money_flow.analyze_money_flow(candles),
     )
+
+
+def _wyckoff_evidence_text(result: AnalysisResult, language: str) -> str:
+    en = language == "en"
+    if result.phase == "Insufficient data":
+        return "Wyckoff: not enough history yet" if en else "Wyckoff: chưa đủ dữ liệu lịch sử"
+
+    lines = [
+        (f"Wyckoff phase: {result.phase} (confidence {result.confidence:.2f})" if en
+         else f"Giai đoạn Wyckoff: {result.phase} (độ tin cậy {result.confidence:.2f})")
+    ]
+    if result.drivers:
+        lines.append(("Drivers: " if en else "Yếu tố dẫn dắt: ") + ", ".join(result.drivers))
+    recent_events = result.events[-3:]
+    if recent_events:
+        event_lines = "; ".join(
+            f"{e.type} @ {e.ts:%Y-%m-%d} (price {e.price:.4g})"
+            + (" [volume-confirmed]" if getattr(e, "volume_confirmed", None) else "")
+            for e in recent_events
+        )
+        lines.append(("Recent events: " if en else "Sự kiện gần đây: ") + event_lines)
+    lines.append(
+        f"Support/Resistance: {result.levels.support:.4g}/{result.levels.resistance:.4g}"
+        if en else f"Hỗ trợ/Kháng cự: {result.levels.support:.4g}/{result.levels.resistance:.4g}"
+    )
+    return "\n".join(lines)
+
+
+def _money_flow_evidence_text(result: money_flow.MoneyFlowResult, language: str) -> str:
+    en = language == "en"
+    label = {
+        money_flow.NET_INFLOW: "net inflow" if en else "vào ròng",
+        money_flow.NET_OUTFLOW: "net outflow" if en else "ra ròng",
+        money_flow.NET_NEUTRAL: "neutral" if en else "trung tính",
+    }[result.net_signal]
+    if en:
+        return (
+            f"Money flow (last {result.recent_window} sessions): {result.recent_in_count} inflow day(s), "
+            f"{result.recent_out_count} outflow day(s) -> {label}"
+        )
+    return (
+        f"Dòng tiền ({result.recent_window} phiên gần nhất): {result.recent_in_count} phiên vào, "
+        f"{result.recent_out_count} phiên ra -> {label}"
+    )
+
+
+def _evidence_block(evidence: SymbolEvidence, language: str) -> str:
+    symbol = evidence.symbol
+    recent = evidence.candles[-RECENT_CANDLES_SHOWN:]
+    return "\n".join([
+        f"### {symbol.ticker} ({symbol.display_symbol or symbol.ticker})",
+        _wyckoff_evidence_text(evidence.wyckoff, language),
+        _money_flow_evidence_text(evidence.flow, language),
+        "Recent candles:" if language == "en" else "Nến gần đây:",
+        _candle_lines(recent),
+    ])
+
+
+def _build_batch_prompt(entries: list[SymbolEvidence], language: str) -> str:
+    symbol_blocks = "\n\n".join(_evidence_block(e, language) for e in entries)
     if language == "en":
         return (
-            "You are an experienced discretionary trader. For EACH of the tickers below, judge its "
-            "growth potential using ONLY the raw price/volume data shown -- do NOT apply or name any "
-            "specific technical method (no Wyckoff, no SMC, no Sonic R, no RSI/MACD/etc.), just read the "
-            "raw data yourself and form your own independent judgment.\n\n"
+            "You are an experienced discretionary trader. For EACH ticker below, you are given its REAL "
+            "Wyckoff phase/confidence/events and technical money-flow reading, plus a short recent-candle "
+            "tail for reference. Score its growth potential and write your reason by CITING this given "
+            "evidence (phase, driving events, money flow) -- do NOT invent a phase, event, or signal that "
+            "isn't in the evidence shown, and do NOT ignore it in favor of your own independent read of the "
+            "raw candles.\n\n"
             f"{symbol_blocks}\n\n"
             "Reply with ONLY a valid JSON array, no other text, no markdown code fence:\n"
             '[{"ticker": "<exact ticker as given above>", "score": <0-100 integer, growth potential>, '
-            '"reason": "<2-3 sentence explanation in English>"}]'
+            '"reason": "<2-3 sentence explanation in English, referencing the evidence above>"}]'
         )
     return (
-        "Bạn là một nhà giao dịch giàu kinh nghiệm. Với MỖI mã dưới đây, hãy tự đánh giá tiềm năng tăng giá "
-        "CHỈ dựa vào dữ liệu giá/khối lượng thô bên dưới -- KHÔNG áp dụng hay nhắc tên bất kỳ phương pháp/chỉ báo "
-        "kỹ thuật cụ thể nào (không Wyckoff, không SMC, không Sonic R, không RSI/MACD...), tự đọc dữ liệu thô và "
-        "đưa ra nhận định độc lập của riêng bạn.\n\n"
+        "Bạn là một nhà giao dịch giàu kinh nghiệm. Với MỖI mã dưới đây, bạn được cung cấp giai đoạn/độ tin "
+        "cậy/sự kiện Wyckoff THẬT và chỉ số dòng tiền kỹ thuật, kèm vài nến gần nhất để tham khảo. Hãy chấm "
+        "điểm tiềm năng tăng giá và viết lý do DỰA VÀO bằng chứng đã cho (giai đoạn, sự kiện dẫn dắt, dòng "
+        "tiền) -- KHÔNG tự bịa ra giai đoạn/sự kiện/tín hiệu không có trong bằng chứng bên dưới, và KHÔNG bỏ "
+        "qua bằng chứng để tự đọc nến thô theo ý riêng.\n\n"
         f"{symbol_blocks}\n\n"
         "Trả lời DUY NHẤT bằng một mảng JSON hợp lệ, không kèm text nào khác, không bọc markdown code fence:\n"
         '[{"ticker": "<đúng mã như trên>", "score": <số nguyên 0-100, tiềm năng tăng giá>, '
-        '"reason": "<lý do 2-3 câu bằng tiếng Việt>"}]'
+        '"reason": "<lý do 2-3 câu bằng tiếng Việt, có nhắc tới bằng chứng ở trên>"}]'
     )
 
 
@@ -206,7 +298,10 @@ def run_potential_screen(session: Session, trigger: str = "manual") -> dict:
         for i in range(0, len(symbols), BATCH_SIZE):
             batch = symbols[i : i + BATCH_SIZE]
             candles_by_ticker = _recent_candles_by_ticker(session, [s.ticker for s in batch])
-            entries = [(s, candles_by_ticker[s.ticker]) for s in batch if candles_by_ticker.get(s.ticker)]
+            entries = [
+                build_symbol_evidence(s, candles_by_ticker[s.ticker])
+                for s in batch if candles_by_ticker.get(s.ticker)
+            ]
             if not entries:
                 continue
             batch_count += 1
@@ -219,10 +314,10 @@ def run_potential_screen(session: Session, trigger: str = "manual") -> dict:
                 last_batch_error = str(exc)
                 continue
             parsed = _parse_batch_response(raw)
-            for symbol, _candles in entries:
-                result = parsed.get(symbol.ticker.upper())
+            for evidence in entries:
+                result = parsed.get(evidence.symbol.ticker.upper())
                 if result:
-                    _upsert_result(session, symbol.ticker, result["score"], result["reason"])
+                    _upsert_result(session, evidence.symbol.ticker, result["score"], result["reason"])
                     scored += 1
             session.commit()
             _state["scored"] = scored

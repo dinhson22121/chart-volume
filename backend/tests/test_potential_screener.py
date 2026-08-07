@@ -46,7 +46,8 @@ def test_tracked_symbols_matches_dashboard_universe(session):
 
 
 def test_recent_candles_by_ticker_caps_and_orders_chronologically(session):
-    _seed_candles(session, "FPT", n=50)
+    n = potential_screener.CANDLES_PER_SYMBOL + 20
+    _seed_candles(session, "FPT", n=n)
 
     by_ticker = potential_screener._recent_candles_by_ticker(session, ["FPT"])
 
@@ -54,7 +55,7 @@ def test_recent_candles_by_ticker_caps_and_orders_chronologically(session):
     assert len(candles) == potential_screener.CANDLES_PER_SYMBOL
     assert candles[0].bucket_start < candles[-1].bucket_start  # chronological
     # the most recent CANDLES_PER_SYMBOL bars -- last one is the latest seeded bar
-    assert candles[-1].bucket_start == pd.Timestamp("2025-02-19").to_pydatetime()
+    assert candles[-1].bucket_start == (pd.Timestamp("2025-01-01") + pd.Timedelta(days=n - 1)).to_pydatetime()
 
 
 def test_recent_candles_by_ticker_avoids_n_plus_1_across_batch(session, mocker):
@@ -67,24 +68,35 @@ def test_recent_candles_by_ticker_avoids_n_plus_1_across_batch(session, mocker):
     assert spy.call_count == 1  # one query for the whole batch, not one per ticker
 
 
-def test_build_batch_prompt_instructs_against_named_strategies_but_carries_no_strategy_output(session):
-    # The prompt legitimately NAMES the strategies once, to tell the AI not to
-    # use them (e.g. "không Wyckoff, không SMC...") -- that's expected. What
-    # must NEVER appear is actual quantitative-engine OUTPUT (phase/confidence/
-    # signal-type strings), which would mean strategy results leaked in.
-    _seed_candles(session, "FPT", n=5)
+def test_build_batch_prompt_grounds_in_real_wyckoff_and_money_flow_evidence(session):
+    # Reversed from the old design: the prompt must now carry REAL strategy
+    # output (phase/confidence/events), not just raw OHLCV -- and must
+    # instruct the AI to cite it, not to ignore/avoid it.
+    _seed_candles(session, "FPT", n=60)
     symbol = Symbol(ticker="FPT", display_symbol="FPT", is_vn30=True)
     candles = potential_screener._recent_candles_by_ticker(session, ["FPT"])["FPT"]
+    evidence = potential_screener.build_symbol_evidence(symbol, candles)
 
-    prompt_vi = potential_screener._build_batch_prompt([(symbol, candles)], "vi")
-    prompt_en = potential_screener._build_batch_prompt([(symbol, candles)], "en")
+    prompt_vi = potential_screener._build_batch_prompt([evidence], "vi")
+    prompt_en = potential_screener._build_batch_prompt([evidence], "en")
 
     for prompt in (prompt_vi, prompt_en):
-        assert "wyckoff" in prompt.lower()  # named once, in the "don't use this" instruction
-        for leaked_output in ("confidence", "Accumulation", "Distribution", "BOS_Bull", "CHoCH", "phase"):
-            assert leaked_output not in prompt
-        # only raw OHLCV made it into the prompt
-        assert "O=" in prompt and "H=" in prompt and "C=" in prompt and "V=" in prompt
+        assert "wyckoff" in prompt.lower()
+        assert evidence.wyckoff.phase in prompt  # real phase output, not hidden
+        assert f"{evidence.wyckoff.confidence:.2f}" in prompt
+        assert "O=" in prompt and "H=" in prompt and "C=" in prompt and "V=" in prompt  # still some raw color
+
+
+def test_build_batch_prompt_handles_insufficient_history_gracefully(session):
+    _seed_candles(session, "FPT", n=5)  # below wyckoff.MIN_BARS=15
+    symbol = Symbol(ticker="FPT", display_symbol="FPT", is_vn30=True)
+    candles = potential_screener._recent_candles_by_ticker(session, ["FPT"])["FPT"]
+    evidence = potential_screener.build_symbol_evidence(symbol, candles)
+
+    prompt = potential_screener._build_batch_prompt([evidence], "vi")
+
+    assert evidence.wyckoff.phase == "Insufficient data"
+    assert "chưa đủ dữ liệu" in prompt  # honest about the gap, doesn't crash or fabricate a phase
 
 
 def test_parse_batch_response_valid_json():

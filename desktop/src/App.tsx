@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api/client";
-import type { Analysis, Candle, StrategyOption, SymbolItem, Timeframe } from "./types";
+import type { Analysis, Candle, MoneyFlowResult, StrategyOption, SymbolItem, Timeframe } from "./types";
 import { Watchlist, type WatchlistTab } from "./components/watchlist/Watchlist";
 import { CandleChart } from "./components/chart/CandleChart";
 import { AnalysisPanel } from "./components/analysis/AnalysisPanel";
@@ -39,6 +39,7 @@ export default function App({ onLicenseCleared }: Props) {
 
   const [candles, setCandles] = useState<Candle[]>([]);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [moneyFlow, setMoneyFlow] = useState<MoneyFlowResult | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -115,15 +116,18 @@ export default function App({ onLicenseCleared }: Props) {
   const loadData = useCallback(async (ticker: string, tf: Timeframe) => {
     setDataError(null);
     try {
-      const [candleData, analysisData] = await Promise.all([
+      const [candleData, analysisData, moneyFlowData] = await Promise.all([
         api.getCandles(ticker, tf),
         api.getAnalysis(ticker, tf).catch(() => null), // 404 before first refresh is fine
+        api.getMoneyFlow(ticker, tf).catch(() => null),
       ]);
       setCandles(candleData);
       setAnalysis(analysisData);
+      setMoneyFlow(moneyFlowData);
     } catch (e) {
       setCandles([]);
       setAnalysis(null);
+      setMoneyFlow(null);
       setDataError(e instanceof Error ? e.message : t("app.error.loadData"));
     }
   }, [t]);
@@ -178,6 +182,7 @@ export default function App({ onLicenseCleared }: Props) {
 
       setAnalysis(await api.getAnalysis(selected, timeframe).catch(() => null));
       setCandles(await api.getCandles(selected, timeframe));
+      setMoneyFlow(await api.getMoneyFlow(selected, timeframe).catch(() => null));
       await loadSymbols();
       // A refresh can open (or close) a scenario, so the sidebar highlight
       // has to be re-read rather than waiting for a strategy/timeframe change.
@@ -386,7 +391,7 @@ export default function App({ onLicenseCleared }: Props) {
         </main>
 
         <aside className="panel panel--aside analysis-panel-wrap">
-          <AnalysisPanel analysis={analysis} loading={refreshing && !analysis} error={null} />
+          <AnalysisPanel analysis={analysis} moneyFlow={moneyFlow} loading={refreshing && !analysis} error={null} />
         </aside>
       </div>
 

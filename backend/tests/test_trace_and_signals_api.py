@@ -64,7 +64,7 @@ def test_trace_missing_bar_is_404(client, auth_header, mocker):
 
 
 def test_trace_rejects_unsupported_strategy(client, auth_header, mocker):
-    # Sonic R has no decision-tracing support in v1 -- must degrade gracefully
+    # Sonic R has no decision-tracing support -- must degrade gracefully
     # to a 400 rather than error out.
     _refresh_fpt(client, auth_header, mocker)
     client.put("/settings", json={"strategy": "sonicr"}, headers=auth_header)
@@ -73,6 +73,28 @@ def test_trace_rejects_unsupported_strategy(client, auth_header, mocker):
         "/analysis/FPT/trace?timeframe=daily&bar_ts=2025-01-01T00:00:00", headers=auth_header
     )
     assert resp.status_code == 400
+
+
+def test_trace_supports_smc_and_returns_its_own_detector_types(client, auth_header, mocker):
+    # SMC has its own tracer (app.smc.trace) reading different features and
+    # config from Wyckoff's -- switching strategy must route to it, not 400.
+    _refresh_fpt(client, auth_header, mocker)
+    candles = client.get("/candles/FPT?timeframe=daily", headers=auth_header).json()
+    client.put("/settings", json={"strategy": "smc"}, headers=auth_header)
+
+    resp = client.get(
+        f"/analysis/FPT/trace?timeframe=daily&bar_ts={candles[-1]['bucket_start']}", headers=auth_header
+    )
+
+    assert resp.status_code == 200
+    detectors = resp.json()["detectors"]
+    # SMC vocabulary, never Wyckoff's -- and each row keeps the shared shape
+    # the UI renders (see app.api.analysis.get_trace).
+    assert detectors
+    assert not any(d["type"] in {"Spring", "Upthrust", "SC", "BC"} for d in detectors)
+    for d in detectors:
+        assert isinstance(d["matched"], bool)
+        assert all({"label", "passed", "detail"} <= set(c) for c in d["checks"])
 
 
 def test_signal_stats_requires_token(client):

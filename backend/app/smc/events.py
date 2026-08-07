@@ -89,6 +89,13 @@ class SMCEvent:
     # no zone-shaped concept of its own.
     zone_low: float | None = None
     zone_high: float | None = None
+    # BOS/CHoCH only (both structure tiers): the swing high/low that this
+    # break actually broke -- its own timestamp and price, so chart rendering
+    # can draw a dashed line from that swing point to this event's own
+    # (ts, price), i.e. the candle that broke it. None for every other event
+    # type, which has no "broken level" concept of its own.
+    structure_level_ts: datetime | None = None
+    structure_level_price: float | None = None
 
 
 def _ts_at(df: pd.DataFrame, i: int):
@@ -105,6 +112,86 @@ def _columns(df: pd.DataFrame, *names: str) -> tuple[np.ndarray, ...]:
     return tuple(df[name].to_numpy() for name in names)
 
 
+class _StructureStep(NamedTuple):
+    """One bar's view of the BOS/CHoCH state machine (see _walk_structure).
+
+    ``active_*`` is the state as it stood BEFORE this bar was evaluated (so a
+    tracer can say "the level in play was X"), while ``broke_*``/``*_is_choch``
+    record what this bar actually did to it."""
+
+    index: int
+    trend_before: str | None  # None | "bullish" | "bearish"
+    active_high: tuple[int, float] | None  # (swing bar index, swing price)
+    active_low: tuple[int, float] | None
+    broke_high: tuple[int, float] | None
+    high_is_choch: bool
+    broke_low: tuple[int, float] | None
+    low_is_choch: bool
+
+
+def _walk_structure(df: pd.DataFrame, swing_high_col: str, swing_low_col: str):
+    """The BOS/CHoCH state machine itself, yielding one _StructureStep per bar.
+
+    Walks confirmed swing highs/lows in chronological order: a break happens
+    whenever price closes beyond the most recently "active" swing level, and
+    that level is consumed immediately so the same break can't keep
+    re-triggering before a new swing point forms. Whether a break reads as
+    CHoCH (reversal) or BOS (continuation) depends on the structure trend at
+    that moment -- including the case where a single bar breaks BOTH sides,
+    where the low-side decision sees the trend the high-side break just set.
+
+    Extracted as the SINGLE source of truth for this machine so the decision
+    tracer (see trace_bar) reports exactly what the detector did, rather than
+    re-deriving the state from a parallel implementation that could drift."""
+    highs, lows, closes = _columns(df, "high", "low", "close")
+    swing_highs = [(i, highs[i]) for i in np.flatnonzero(df[swing_high_col].to_numpy())]
+    swing_lows = [(i, lows[i]) for i in np.flatnonzero(df[swing_low_col].to_numpy())]
+
+    structure_trend: str | None = None
+    next_high_idx = 0
+    next_low_idx = 0
+    # (swing bar index, swing price) -- keeping the index alongside the price
+    # (not just the price) is what lets an emitted BOS/CHoCH event point back
+    # to exactly which swing bar it broke, for chart rendering.
+    active_high: tuple[int, float] | None = None
+    active_low: tuple[int, float] | None = None
+
+    for i in range(len(df)):
+        close = closes[i]
+
+        # Advance to the most recent CONFIRMED swing high/low strictly before i.
+        while next_high_idx < len(swing_highs) and swing_highs[next_high_idx][0] < i:
+            active_high = swing_highs[next_high_idx]
+            next_high_idx += 1
+        while next_low_idx < len(swing_lows) and swing_lows[next_low_idx][0] < i:
+            active_low = swing_lows[next_low_idx]
+            next_low_idx += 1
+
+        trend_before = structure_trend
+        snapshot_high, snapshot_low = active_high, active_low
+        broke_high: tuple[int, float] | None = None
+        broke_low: tuple[int, float] | None = None
+        high_is_choch = False
+        low_is_choch = False
+
+        if active_high is not None and close > active_high[1]:
+            broke_high = active_high
+            high_is_choch = structure_trend != "bullish"
+            structure_trend = "bullish"
+            active_high = None  # consumed -- wait for the next confirmed swing high
+
+        if active_low is not None and close < active_low[1]:
+            broke_low = active_low
+            low_is_choch = structure_trend != "bearish"
+            structure_trend = "bearish"
+            active_low = None
+
+        yield _StructureStep(
+            i, trend_before, snapshot_high, snapshot_low,
+            broke_high, high_is_choch, broke_low, low_is_choch,
+        )
+
+
 def _detect_structure_tier(
     df: pd.DataFrame,
     swing_high_col: str,
@@ -115,73 +202,60 @@ def _detect_structure_tier(
     choch_bear: str,
     language: str = "vi",
 ) -> list[SMCEvent]:
-    """Walks confirmed swing highs/lows in chronological order, emitting BOS
-    (break of structure -- continuation) or CHoCH (change of character --
-    reversal) whenever price closes beyond the most recently "active" swing
-    level. A broken level is consumed immediately so the same break can't
-    keep re-triggering before a new swing point forms.
+    """Turns _walk_structure's per-bar steps into BOS/CHoCH events.
 
     Parameterized on which swing_high/swing_low columns to read and which
     event-type strings to emit -- see module docstring on the two structure
     tiers this drives (``_detect_structure``/``_detect_major_structure``)."""
     en = language == "en"
     events: list[SMCEvent] = []
-    highs, lows, closes = _columns(df, "high", "low", "close")
-    swing_highs = [(i, highs[i]) for i in np.flatnonzero(df[swing_high_col].to_numpy())]
-    swing_lows = [(i, lows[i]) for i in np.flatnonzero(df[swing_low_col].to_numpy())]
+    closes = df["close"].to_numpy()
 
-    structure_trend: str | None = None  # None | "bullish" | "bearish"
-    next_high_idx = 0
-    next_low_idx = 0
-    active_high: float | None = None
-    active_low: float | None = None
-
-    for i in range(len(df)):
+    for step in _walk_structure(df, swing_high_col, swing_low_col):
+        i = step.index
         close = closes[i]
 
-        # Advance to the most recent CONFIRMED swing high/low strictly before i.
-        while next_high_idx < len(swing_highs) and swing_highs[next_high_idx][0] < i:
-            active_high = swing_highs[next_high_idx][1]
-            next_high_idx += 1
-        while next_low_idx < len(swing_lows) and swing_lows[next_low_idx][0] < i:
-            active_low = swing_lows[next_low_idx][1]
-            next_low_idx += 1
-
-        if active_high is not None and close > active_high:
-            if structure_trend != "bullish":
+        if step.broke_high is not None:
+            high_idx, high_price = step.broke_high
+            if step.high_is_choch:
                 note = (
                     "Break above the last swing high while structure was bearish/undefined -- trend reversal"
                     if en
                     else "Phá vỡ đỉnh swing gần nhất trong khi xu hướng đang giảm/chưa rõ -- đổi chiều xu hướng"
                 )
-                events.append(SMCEvent(choch_bull, i, _ts_at(df, i), float(close), note))
+                event_type = choch_bull
             else:
                 note = (
-                    f"Closes above the last swing high {active_high:.2f} -- uptrend continues"
+                    f"Closes above the last swing high {high_price:.2f} -- uptrend continues"
                     if en
-                    else f"Đóng cửa vượt đỉnh swing gần nhất {active_high:.2f} -- xu hướng tăng tiếp diễn"
+                    else f"Đóng cửa vượt đỉnh swing gần nhất {high_price:.2f} -- xu hướng tăng tiếp diễn"
                 )
-                events.append(SMCEvent(bos_bull, i, _ts_at(df, i), float(close), note))
-            structure_trend = "bullish"
-            active_high = None  # consumed -- wait for the next confirmed swing high
+                event_type = bos_bull
+            events.append(SMCEvent(
+                event_type, i, _ts_at(df, i), float(close), note,
+                structure_level_ts=_ts_at(df, high_idx), structure_level_price=float(high_price),
+            ))
 
-        if active_low is not None and close < active_low:
-            if structure_trend != "bearish":
+        if step.broke_low is not None:
+            low_idx, low_price = step.broke_low
+            if step.low_is_choch:
                 note = (
                     "Break below the last swing low while structure was bullish/undefined -- trend reversal"
                     if en
                     else "Phá vỡ đáy swing gần nhất trong khi xu hướng đang tăng/chưa rõ -- đổi chiều xu hướng"
                 )
-                events.append(SMCEvent(choch_bear, i, _ts_at(df, i), float(close), note))
+                event_type = choch_bear
             else:
                 note = (
-                    f"Closes below the last swing low {active_low:.2f} -- downtrend continues"
+                    f"Closes below the last swing low {low_price:.2f} -- downtrend continues"
                     if en
-                    else f"Đóng cửa phá đáy swing gần nhất {active_low:.2f} -- xu hướng giảm tiếp diễn"
+                    else f"Đóng cửa phá đáy swing gần nhất {low_price:.2f} -- xu hướng giảm tiếp diễn"
                 )
-                events.append(SMCEvent(bos_bear, i, _ts_at(df, i), float(close), note))
-            structure_trend = "bearish"
-            active_low = None
+                event_type = bos_bear
+            events.append(SMCEvent(
+                event_type, i, _ts_at(df, i), float(close), note,
+                structure_level_ts=_ts_at(df, low_idx), structure_level_price=float(low_price),
+            ))
 
     return events
 

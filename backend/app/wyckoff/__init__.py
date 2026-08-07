@@ -32,6 +32,16 @@ __all__ = [
 
 MIN_BARS = 15
 
+# NOTE: a MIN_RR_RATIO=3.0 was added and removed again the same day (see git
+# history) -- it was backtest-"validated" using scenario_backtest.walk_events()
+# output that wasn't filtered to is_bullish, so it silently included
+# untradeable bearish-scenario R-multiples (the live app's real
+# trade_scenario._create_scenarios path is bullish-only, spot/long-only).
+# Re-measured bullish-only, it crushed the VN30 holdout sample from n=62 to
+# n=6 -- far too small to trust in either direction. Don't re-add a
+# MIN_RR_RATIO for Wyckoff without re-sweeping through a script that filters
+# `scenario.is_bullish` before scoring.
+
 
 @dataclass
 class Levels:
@@ -77,6 +87,13 @@ class AnalysisResult:
                 "zone_low": getattr(e, "zone_low", None),
                 "zone_high": getattr(e, "zone_high", None),
                 "mitigated": getattr(e, "mitigated", False),
+                # BOS/CHoCH only (see app.smc.events.SMCEvent) -- the broken
+                # swing point's own timestamp/price, None for every other
+                # event type across every strategy.
+                "structure_level_ts": (
+                    sl_ts.isoformat() if (sl_ts := getattr(e, "structure_level_ts", None)) else None
+                ),
+                "structure_level_price": getattr(e, "structure_level_price", None),
             }
             for e in self.events
         ]

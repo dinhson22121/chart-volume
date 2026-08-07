@@ -10,8 +10,16 @@ from sqlmodel import Session, select
 
 from app.auth import require_token
 from app.db import get_session
-from app.models import AssetClass, Analysis, Symbol, Timeframe
-from app.services import ingest, settings_service, signal_outcomes, sonicr_indicators, trace_service, trade_scenario
+from app.models import AssetClass, Analysis, Candle, Symbol, Timeframe
+from app.services import (
+    ingest,
+    money_flow,
+    settings_service,
+    signal_outcomes,
+    sonicr_indicators,
+    trace_service,
+    trade_scenario,
+)
 from app.strategies import registry as strategy_registry
 from app.services.analysis import run_analysis
 from app.validation import is_valid_ticker
@@ -22,7 +30,7 @@ _STOCK_TIMEFRAMES = {Timeframe.DAILY, Timeframe.HALF_SESSION, Timeframe.WEEK}
 _CRYPTO_TIMEFRAMES = {Timeframe.DAILY, Timeframe.HOUR_1, Timeframe.HOUR_4, Timeframe.WEEK}
 _VALID_TIMEFRAMES = _STOCK_TIMEFRAMES | _CRYPTO_TIMEFRAMES
 _TIMEFRAMES_BY_ASSET_CLASS = {AssetClass.STOCK: _STOCK_TIMEFRAMES, AssetClass.CRYPTO: _CRYPTO_TIMEFRAMES}
-_TRACE_SUPPORTED_STRATEGIES = {"wyckoff"}
+_TRACE_SUPPORTED_STRATEGIES = trace_service.SUPPORTED_STRATEGIES
 
 # Pegged assets whose price never trends: an "Accumulation"/"Bullish
 # Structure" phase on a stablecoin is statistical noise around the peg, not
@@ -334,6 +342,23 @@ def get_indicators(
     return sonicr_indicators.get_indicator_series(session, ticker, timeframe)
 
 
+@router.get("/{ticker}/money-flow")
+def get_money_flow(
+    ticker: str,
+    timeframe: str = Query(Timeframe.DAILY),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Technical volume/price-based money-flow read (app.services.money_flow)
+    -- computed fresh from stored candles, no persistence needed, same shape
+    as get_indicators."""
+    _validate_tf(timeframe)
+    ticker = _validate_ticker(ticker)
+    candles = session.exec(
+        select(Candle).where(Candle.ticker == ticker, Candle.timeframe == timeframe).order_by(Candle.bucket_start)
+    ).all()
+    return money_flow.result_as_dict(money_flow.analyze_money_flow(candles))
+
+
 @router.get("/{ticker}/trace")
 def get_trace(
     ticker: str,
@@ -348,7 +373,7 @@ def get_trace(
         raise HTTPException(
             status_code=400, detail=f"decision tracing not supported for strategy: {active_strategy}"
         )
-    traces = trace_service.get_bar_trace(session, ticker, timeframe, bar_ts)
+    traces = trace_service.get_bar_trace(session, ticker, timeframe, bar_ts, active_strategy)
     if traces is None:
         raise HTTPException(status_code=404, detail="no candle found at that timestamp")
     return {

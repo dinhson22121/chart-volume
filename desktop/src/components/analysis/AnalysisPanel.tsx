@@ -1,4 +1,4 @@
-import type { Analysis } from "../../types";
+import type { Analysis, MoneyFlowResult } from "../../types";
 import { phaseColor, phaseLabel, signalLabel } from "../../lib/wyckoff";
 import { formatPrice } from "../../lib/price";
 import { formatDateTime } from "../../lib/datetime";
@@ -7,11 +7,18 @@ import "./analysis.css";
 
 interface Props {
   analysis: Analysis | null;
+  moneyFlow: MoneyFlowResult | null;
   loading: boolean;
   error: string | null;
 }
 
-export function AnalysisPanel({ analysis, loading, error }: Props) {
+const MONEY_FLOW_BADGE_CLASS: Record<MoneyFlowResult["net_signal"], string> = {
+  inflow: "ap-mtf-badge--aligned",
+  outflow: "ap-mtf-badge--conflicting",
+  neutral: "ap-mtf-badge",
+};
+
+export function AnalysisPanel({ analysis, moneyFlow, loading, error }: Props) {
   const { t, language } = useI18n();
 
   if (loading) {
@@ -53,6 +60,22 @@ export function AnalysisPanel({ analysis, loading, error }: Props) {
             </span>
           )}
         </header>
+
+        {moneyFlow && (
+          <section className="ap-section">
+            <h4 className="ap-section__title">{t("analysis.section.moneyFlow")}</h4>
+            <span className={`ap-mtf-badge ${MONEY_FLOW_BADGE_CLASS[moneyFlow.net_signal]}`}>
+              {t(`analysis.moneyFlow.${moneyFlow.net_signal}`)}
+            </span>
+            <p className="faint mono">
+              {t("analysis.moneyFlow.summary", {
+                inCount: moneyFlow.recent_in_count,
+                outCount: moneyFlow.recent_out_count,
+                window: moneyFlow.recent_window,
+              })}
+            </p>
+          </section>
+        )}
 
         <div className="ap-levels">
           <div className="ap-level">

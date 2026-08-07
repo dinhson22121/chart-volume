@@ -48,13 +48,19 @@ def test_analyze_events_are_compatible_with_events_as_dicts():
     assert len(dicts) == len(result.events)
     for d in dicts:
         # volume_confirmed is Wyckoff-only (see app.wyckoff.volume_profile);
-        # zone_low/zone_high/mitigated are SMC Order-Block-only (see
-        # app.smc.events.SMCEvent) -- all default via getattr since SonicEvent
-        # has none of these attributes.
-        assert set(d.keys()) == {"type", "ts", "price", "note", "volume_confirmed", "zone_low", "zone_high", "mitigated"}
+        # zone_low/zone_high/mitigated and structure_level_ts/price are SMC-only
+        # (see app.smc.events.SMCEvent) -- all default via getattr since
+        # SonicEvent has none of these attributes.
+        assert set(d.keys()) == {
+            "type", "ts", "price", "note", "volume_confirmed",
+            "zone_low", "zone_high", "mitigated",
+            "structure_level_ts", "structure_level_price",
+        }
         assert d["volume_confirmed"] is None
         assert d["zone_low"] is None
         assert d["zone_high"] is None
+        assert d["structure_level_ts"] is None
+        assert d["structure_level_price"] is None
         assert d["mitigated"] is False
 
 

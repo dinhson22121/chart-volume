@@ -1,13 +1,14 @@
 import json
 from datetime import datetime
 
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
 from app.api.analysis import _actionable_signals
 from app.db import get_session
 from app.main import app
-from app.models import Analysis, Timeframe
+from app.models import Analysis, Candle, Timeframe
 
 
 @pytest.fixture
@@ -77,3 +78,44 @@ def test_get_analysis_response_includes_filtered_actionable_signals(client, sess
     body = resp.json()
     assert len(body["signals"]) == 3  # full list untouched (chart markers, signal_outcomes)
     assert [s["type"] for s in body["actionable_signals"]] == ["Spring"]
+
+
+# --- /{ticker}/money-flow: technical volume/price money-flow read (app.services.money_flow) ---
+
+def test_get_money_flow_returns_analysis_of_stored_candles(client, session, auth_header):
+    t0 = pd.Timestamp("2025-01-01")
+    for i in range(10):
+        session.add(
+            Candle(
+                ticker="FPT", timeframe=Timeframe.DAILY,
+                bucket_start=(t0 + pd.Timedelta(days=i)).to_pydatetime(),
+                open=100.0, high=101.0, low=99.0, close=100.0, volume=1000.0,
+            )
+        )
+    session.add(
+        Candle(
+            ticker="FPT", timeframe=Timeframe.DAILY,
+            bucket_start=(t0 + pd.Timedelta(days=10)).to_pydatetime(),
+            open=100.0, high=103.0, low=100.0, close=102.0, volume=2500.0,  # 2.5x volume, +2% -> inflow
+        )
+    )
+    session.commit()
+
+    resp = client.get("/analysis/FPT/money-flow", headers=auth_header)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["net_signal"] == "inflow"
+    assert body["recent_in_count"] == 1
+    assert len(body["events"]) == 1
+    assert body["events"][0]["type"] == "MoneyFlowIn"
+
+
+def test_get_money_flow_with_no_candles_returns_neutral_empty_result(client, session, auth_header):
+    resp = client.get("/analysis/NOPE/money-flow", headers=auth_header)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["net_signal"] == "neutral"
+    assert body["events"] == []
+    assert body["as_of"] is None

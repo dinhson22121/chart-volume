@@ -9,6 +9,7 @@ import type {
   DrawingShape,
   IndicatorSeries,
   ConfigLogPage,
+  MoneyFlowResult,
   OllamaPullEvent,
   OllamaStatus,
   PotentialScreenRow,
@@ -78,6 +79,8 @@ export const api = {
     req<BarTrace>(`/analysis/${ticker}/trace?timeframe=${timeframe}&bar_ts=${encodeURIComponent(barTs)}`),
   getIndicators: (ticker: string, timeframe: Timeframe) =>
     req<IndicatorSeries>(`/analysis/${ticker}/indicators?timeframe=${timeframe}`),
+  getMoneyFlow: (ticker: string, timeframe: Timeframe) =>
+    req<MoneyFlowResult>(`/analysis/${ticker}/money-flow?timeframe=${timeframe}`),
   getDrawings: (ticker: string, timeframe: Timeframe) =>
     req<{ shapes: DrawingShape[] }>(`/drawings/${ticker}?timeframe=${timeframe}`),
   saveDrawings: (ticker: string, timeframe: Timeframe, shapes: DrawingShape[]) =>

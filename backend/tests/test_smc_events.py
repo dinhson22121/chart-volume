@@ -92,6 +92,62 @@ def test_second_break_after_choch_is_bos_bull():
     assert bos[0].price == 122.0
 
 
+def test_choch_bull_records_the_swing_high_it_broke():
+    # Same fixture as test_first_break_of_a_swing_high_is_choch_bull_not_bos:
+    # swing high confirmed at index 11 (value 112, high 112.5), broken when
+    # close first exceeds it at index 20 -- structure_level_* should point
+    # back to that swing bar, not the breaking bar's own (ts, price).
+    values = [110, 108, 106, 104, 102, 100, 102, 104, 106, 108, 110, 112, 110, 108, 106, 104, 103, 105, 108, 111, 113]
+    feat = compute_features(_df(*_zigzag(values)), CFG)
+    events = detect_events(feat, CFG)
+
+    choch = _by_type(events, CHOCH_BULL)[0]
+    assert choch.structure_level_price == 112.5
+    assert choch.structure_level_ts == pd.Timestamp("2025-01-01") + pd.Timedelta(days=11)
+    assert choch.structure_level_ts < choch.ts
+    assert choch.structure_level_price < choch.price
+
+
+def test_bos_bull_records_the_swing_high_it_broke():
+    # Same fixture as test_second_break_after_choch_is_bos_bull: the swing
+    # high BOS_Bull breaks is confirmed at index 23 (value 119, high 119.5).
+    values = [
+        110, 108, 106, 104, 102, 100,
+        102, 104, 106, 108, 110, 112,
+        110, 108, 106, 104, 103,
+        105, 108, 111, 113, 115, 117, 119,
+        117, 115, 113, 112, 111,
+        113, 116, 119, 122, 125,
+    ]
+    feat = compute_features(_df(*_zigzag(values)), CFG)
+    events = detect_events(feat, CFG)
+
+    bos = _by_type(events, BOS_BULL)[0]
+    assert bos.structure_level_price == 119.5
+    assert bos.structure_level_ts == pd.Timestamp("2025-01-01") + pd.Timedelta(days=23)
+
+
+def test_non_structure_events_have_no_structure_level():
+    # Same fixture as test_bullish_order_block_anchors_to_last_down_candle_before_bos.
+    values = [
+        110, 108, 106, 104, 102, 100,
+        102, 104, 106, 108, 110, 112,
+        110, 108, 106, 104, 103,
+        105, 108, 111, 113, 115, 117, 119,
+        117, 115, 113, 112, 111,
+    ]
+    opens, highs, lows, closes = _zigzag(values)
+    opens.append(113.0); closes.append(112.0); highs.append(113.5); lows.append(111.5)  # noqa: E702
+    for v in (116, 119, 122, 125):
+        opens.append(v - 0.3); closes.append(v); highs.append(v + 0.5); lows.append(v - 0.5)  # noqa: E702
+    feat = compute_features(_df(opens, highs, lows, closes), CFG)
+    events = detect_events(feat, CFG)
+
+    ob = _by_type(events, BULLISH_OB)
+    assert ob  # sanity: this fixture does produce an order block
+    assert all(e.structure_level_ts is None and e.structure_level_price is None for e in ob)
+
+
 def test_first_break_of_a_swing_low_is_choch_bear():
     values = [
         90, 92, 94, 96, 98, 100,  # up to swing high ~100

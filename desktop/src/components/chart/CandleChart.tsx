@@ -12,7 +12,7 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { api } from "../../api/client";
-import type { Analysis, Candle, DrawingShape, IndicatorSeries } from "../../types";
+import type { Analysis, Candle, DrawingShape, IndicatorSeries, Signal } from "../../types";
 import { signalIsBullish, signalIsEntry, zoneLabel } from "../../lib/wyckoff";
 import { formatPrice, priceMinMove } from "../../lib/price";
 import { useI18n } from "../../i18n/I18nContext";
@@ -103,6 +103,7 @@ export function CandleChart({ candles, analysis, onBarClick }: Props) {
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const zoneSeriesRef = useRef<ISeriesApi<"Baseline">[]>([]);
   const drawingSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
+  const structureLineSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
   const [indicators, setIndicators] = useState<IndicatorSeries | null>(null);
   const [isDrawingMode, setIsDrawingMode] = useState(false);
   const [shapes, setShapes] = useState<DrawingShape[]>([]);
@@ -220,6 +221,14 @@ export function CandleChart({ candles, analysis, onBarClick }: Props) {
       priceLinesRef.current = [];
       zoneSeriesRef.current = [];
       drawingSeriesRef.current = [];
+      // Must be cleared here like every other series ref: chart.remove()
+      // above invalidates every series that belonged to it, and a later
+      // removeSeries() call with one of those stale handles throws. An
+      // uncaught throw inside a useEffect unmounts the whole React tree
+      // (there's no error boundary above this), which shows up as a fully
+      // black window -- not just a missing chart. StrictMode's
+      // mount/unmount/remount in dev makes it fire every single time.
+      structureLineSeriesRef.current = [];
     };
   }, []);
 
@@ -319,7 +328,10 @@ export function CandleChart({ candles, analysis, onBarClick }: Props) {
       })),
     );
 
-    // Clear previous price lines / zone bands.
+    // Clear previous price lines / zone bands. Structure-break lines are NOT
+    // touched here -- they're owned entirely by their own effect below, and
+    // removing them from two places leaves the other holding stale series
+    // handles (removeSeries on those throws, which unmounts the whole tree).
     priceLinesRef.current.forEach((line) => candleSeries.removePriceLine(line));
     priceLinesRef.current = [];
     if (chartRef.current) {
@@ -477,6 +489,7 @@ export function CandleChart({ candles, analysis, onBarClick }: Props) {
           addZoneBand(chart, candles, s.zone_low, s.zone_high, bullish ? ZONE_FILL.bullOb : ZONE_FILL.bearOb),
         );
       }
+
     }
 
     // Entry / SL / TP lines for the active (or last) trade scenario.
@@ -545,6 +558,52 @@ export function CandleChart({ candles, analysis, onBarClick }: Props) {
       return series;
     });
   }, [shapes]);
+
+  // Market structure breaks (SMC BOS/CHoCH, both tiers) -- a horizontal
+  // dashed line held flat at the broken swing high/low's own price
+  // (app.smc.events.SMCEvent.structure_level_price), running from when that
+  // swing point formed to the candle that broke it -- not a diagonal line
+  // up/down to the breaking candle's own (different) price, which would
+  // misread as a trend line rather than a level. Own effect (not folded into
+  // the big candles/analysis effect above), same shape as the user-drawing
+  // effect right above -- capped to the most recent MAX_STRUCTURE_LINES
+  // events, since a full ticker history can carry 40+ of these.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    structureLineSeriesRef.current.forEach((series) => chart.removeSeries(series));
+    structureLineSeriesRef.current = [];
+
+    const MAX_STRUCTURE_LINES = 20;
+    const STRUCTURE_TYPES = new Set([
+      "BOS_Bull", "BOS_Bear", "CHoCH_Bull", "CHoCH_Bear",
+      "SwingBOS_Bull", "SwingBOS_Bear", "SwingCHoCH_Bull", "SwingCHoCH_Bear",
+    ]);
+    const isStructureSignal = (
+      s: Signal,
+    ): s is Signal & { ts: string; structure_level_ts: string; structure_level_price: number } =>
+      STRUCTURE_TYPES.has(s.type) && !!s.ts && s.structure_level_ts != null && s.structure_level_price != null;
+    const structureSignals = (analysis?.signals ?? []).filter(isStructureSignal);
+
+    structureLineSeriesRef.current = structureSignals.slice(-MAX_STRUCTURE_LINES).flatMap((s) => {
+      const levelTime = toTime(s.structure_level_ts);
+      const breakTime = toTime(s.ts);
+      if (!Number.isFinite(levelTime) || !Number.isFinite(breakTime) || levelTime >= breakTime) return [];
+      const series = chart.addLineSeries({
+        color: signalIsBullish(s.type) ? COLORS.bull : COLORS.bear,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      });
+      series.setData([
+        { time: levelTime, value: s.structure_level_price },
+        { time: breakTime, value: s.structure_level_price },
+      ]);
+      return [series];
+    });
+  }, [analysis]);
 
   return (
     <div className="chart-wrap">

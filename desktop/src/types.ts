@@ -46,6 +46,12 @@ export interface Signal {
   zone_low?: number | null;
   zone_high?: number | null;
   mitigated?: boolean;
+  // SMC BOS/CHoCH only (see app.smc.events.SMCEvent) -- the swing high/low
+  // this event broke: its own timestamp and price, so a chart can draw a
+  // line from that swing point to this event's own (ts, price). null for
+  // every other event type.
+  structure_level_ts?: string | null;
+  structure_level_price?: number | null;
 }
 
 export interface SmcZones {
@@ -109,6 +115,23 @@ export interface Analysis {
   vp_alignment?: "confirmed" | "unconfirmed" | null;
   created_at: string;
   scenario: TradeScenario | null;
+}
+
+export interface MoneyFlowEvent {
+  type: "MoneyFlowIn" | "MoneyFlowOut";
+  ts: string;
+  price: number;
+  volume_ratio: number;
+  price_change_pct: number;
+}
+
+export interface MoneyFlowResult {
+  net_signal: "inflow" | "outflow" | "neutral";
+  recent_in_count: number;
+  recent_out_count: number;
+  recent_window: number;
+  as_of: string | null;
+  events: MoneyFlowEvent[];
 }
 
 export interface TraceCheck {
